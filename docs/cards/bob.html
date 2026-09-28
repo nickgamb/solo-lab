@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bob Demo Card</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="card.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="masthead">
+    <h1>Bob Demo Card</h1>
+    <p class="standfirst">Bob's agent works for Bob, never as Bob. Every tool call carries two identities, and no token travels further than it has to.</p>
+  </header>
+  <section class="screens">
+    <div class="screen left">
+      <span class="side">Left screen</span>
+      <span class="what">Terminal</span>
+      <span class="detail">~/Documents/GitHub/solo-lab</span>
+    </div>
+    <div class="screen right">
+      <span class="side">Right screen</span>
+      <span class="what">kagent, signed in as Bob</span>
+      <span class="detail">https://kagent.sterling.lab</span>
+    </div>
+  </section>
+
+  <section class="setup">
+    <h2>Pre-demo setup</h2>
+    <p class="setup-note">From cold to ready: three commands, about 25 minutes the first time, and much less after that, because image caches outlive the cluster.</p>
+    <div class="table-scroll">
+      <table>
+        <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
+        <thead><tr><th>#</th><th>Run this</th><th>What it does</th></tr></thead>
+        <tbody>
+        <tr class="term">
+          <td class="num">1</td>
+          <td class="act">
+            <span class="where">Once per machine</span>
+            <div class="cmdwrap"><code class="cmd">make machine-setup</code></div>
+          </td>
+          <td class="say">One sudo. It makes <strong>*.lab</strong> resolve on your Mac and trusts the lab CA, which is name-constrained to <code>.lab</code>, so it can't vouch for any real domain. The CA survives rebuilds, so you never do this again.</td>
+        </tr>
+        <tr class="term">
+          <td class="num">2</td>
+          <td class="act">
+            <span class="where">Build the platform</span>
+            <div class="cmdwrap"><code class="cmd">make up</code></div>
+          </td>
+          <td class="say">Builds kind with Istio ambient, kgateway, agentgateway, kagent + kmcp, Agent Substrate, Keycloak, and observability. Every party gets its own namespaces, identities and hostnames.</td>
+        </tr>
+        <tr class="term">
+          <td class="num">3</td>
+          <td class="act">
+            <span class="where">Bring up story 1</span>
+            <div class="cmdwrap"><code class="cmd">make bob &amp;&amp; make bob-verify</code></div>
+          </td>
+          <td class="say">Deploys Bob's agent and his workspace (kmcp) behind an agentgateway waypoint, plus Ledgerline Research as a separate company. The verify run must end with <strong>12/12 checks passed</strong>.</td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="setup-after">Then open <strong>https://kagent.sterling.lab</strong> on the right screen and start the run-through. Pick agent <strong>sv-agents / bob-assistant</strong>.</p>
+    <div class="models-block">
+      <span class="after-label">Switching the model</span>
+      <div class="models">
+        <div class="model">
+          <span class="model-label">Default: local, on your GPU</span>
+          <div class="cmdwrap"><code class="cmd">make llm LLM_PROVIDER=ollama</code></div>
+        </div>
+        <div class="model">
+          <span class="model-label">A hosted model (key in .env)</span>
+          <div class="cmdwrap"><code class="cmd">make llm LLM_PROVIDER=anthropic</code></div>
+        </div>
+      </div>
+    </div>
+  </section>
+  <hr class="rule">
+
+  <section class="runthrough">
+    <h2>The run-through</h2>
+    <p class="run-note">kagent on the right and the terminal on the left. Bob asks, and the platform decides.</p>
+    <div class="table-scroll">
+      <table>
+        <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
+        <thead><tr><th>#</th><th>Do this</th><th>Say this</th></tr></thead>
+        <tbody>
+        <tr class="port">
+          <td class="num">1</td>
+          <td class="act">
+            <span class="where">Browser</span>
+            <span class="click">Open kagent, then sign in as <strong>bob / bob-demo</strong></span>
+          </td>
+          <td class="say">
+            <span class="chip tier">Sign-in</span>
+            <span class="lede">The app never sees Bob's password.</span>
+            The kgateway edge runs the login against Sterling &amp; Vance's Keycloak, then hands kagent Bob's access token and ID token. kagent only proves who he is to it.
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">2</td>
+          <td class="act">
+            <span class="where">kagent</span>
+            <div class="cmdwrap"><code class="cmd">Who are you acting for, and what does the workspace see? Use whoami.</code></div>
+          </td>
+          <td class="say">
+            <span class="chip through">Delegated</span>
+            <span class="lede">Acting for bob. Issued to mcp-waypoint. Audience bob-workspace. 120 seconds.</span>
+            Bob's own token never reached the tool. The waypoint in front of Bob's tools swapped it (RFC 8693) for a token that only this workspace accepts, for two minutes. <strong>Steal it and you get Bob's workspace for two minutes, and nothing else.</strong>
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">3</td>
+          <td class="act">
+            <span class="where">kagent</span>
+            <div class="cmdwrap"><code class="cmd">List my clients and their stage.</code></div>
+          </td>
+          <td class="say">
+            <span class="chip through">Two identities</span>
+            <span class="lede">Bob's book, and only because both halves checked out.</span>
+            The waypoint allows the call only when the caller's <em>workload</em> is one of the firm's agents (its SPIFFE identity, from the mesh) <em>and</em> the <em>user</em> is an advisor (Bob's token). Either half alone is refused.
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">4</td>
+          <td class="act">
+            <span class="where">kagent</span>
+            <div class="cmdwrap"><code class="cmd">Log a follow-up for Marcus Webb: schedule his annual review.</code></div>
+            <span class="click">Then <span class="btn approve">Approve</span> in the chat</span>
+          </td>
+          <td class="say">
+            <span class="chip held">Bob approves</span>
+            <span class="lede">Reads are automatic. Writes wait for Bob.</span>
+            The agent stops and asks. Nothing is written until Bob says yes, and the entry records who asked (bob) and who carried it out (the waypoint).
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">5</td>
+          <td class="act">
+            <span class="where">kagent</span>
+            <div class="cmdwrap"><code class="cmd">Export my whole book, with identifiers.</code></div>
+          </td>
+          <td class="say">
+            <span class="chip refused">Not his to ask</span>
+            <span class="lede">For Bob, that tool doesn't exist.</span>
+            <code>export_book</code> is compliance-only, so the waypoint's per-tool policy removes it from the list the agent sees. A prompt can't reach a tool the agent was never shown.
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">6</td>
+          <td class="act">
+            <span class="where">kagent</span>
+            <div class="cmdwrap"><code class="cmd">What is Ledgerline's view on technology, and which Ledgerline account am I using?</code></div>
+          </td>
+          <td class="say">
+            <span class="chip through">Cross App Access</span>
+            <span class="lede">Another company answers, as its own account for Bob.</span>
+            Ledgerline is a SaaS Sterling &amp; Vance subscribes to. The firm's IdP issued an ID-JAG for that one approved connection, and Ledgerline turned it into a five-minute token of its own. <strong>There's no consent screen and no shared credential, and the agent never held either token.</strong>
+          </td>
+        </tr>
+        <tr class="term">
+          <td class="num">7</td>
+          <td class="act">
+            <span class="where">Terminal</span>
+            <div class="cmdwrap"><code class="cmd">make bob-verify</code></div>
+          </td>
+          <td class="say">
+            <span class="chip refused">Every bypass fails</span>
+            <span class="lede">Twelve checks, all from real mesh identities.</span>
+            The checks try the right user from the wrong workload, a call with no user token, dialing a pod past the waypoint, skipping the ID token, and walking straight to Ledgerline with Bob's own token. <strong>Each one is refused by a different layer.</strong>
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">8</td>
+          <td class="act">
+            <span class="where">Browser</span>
+            <span class="click">Open <strong>https://kiali.ops.lab</strong>, then the Traffic Graph</span>
+          </td>
+          <td class="say">
+            <span class="chip tier">Where it ran</span>
+            <span class="lede">Agents, waypoint, tools and egress: every hop is mTLS with a named identity.</span>
+            Nothing talks pod to pod across companies. The firm meets Ledgerline only at the edge, the way two companies meet on the internet.
+          </td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+<script src="card.js"></script>
+</body>
+</html>
