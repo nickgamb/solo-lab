@@ -118,6 +118,14 @@ values_for() {  # values_for <dir> <name> <edition>
   done
 }
 
+# lab_image <repo:tag> <build.sh>: build a patched image (tools/*) into the lab
+# registry unless it's already there. The registry outlives clusters.
+lab_image() {
+  curl -sfI -o /dev/null "http://localhost:$LAB_REGISTRY_PORT/v2/${1%:*}/manifests/${1##*:}" \
+    -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+    || { step "Building $1 ($2)"; bash "$LAB_ROOT/$2"; }
+}
+
 need_cluster() { K get --raw /readyz >/dev/null 2>&1 || die "cluster $KCTX is not reachable — run: make cluster"; }
 
 # lab_secret <NAME>: a random secret generated once and kept in .lab/secrets.env

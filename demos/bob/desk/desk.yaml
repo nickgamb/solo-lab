@@ -1,0 +1,115 @@
+# The advisor desk: three small agents any S&V advisor can use, on their own
+# worker pool and their own identity:
+#   spiffe://cluster.local/ns/sv-agents/sa/advisor-desk
+# Same party and namespace as Bob's agent, so the firm's policies apply to
+# them unchanged: an agent workload acting for an advisor may read the
+# workspace and reach Ledgerline. What names bob-assistant (the U4A adapter,
+# Alice's data) stays closed to them.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: advisor-desk, namespace: sv-agents}
+---
+apiVersion: ate.dev/v1alpha1
+kind: WorkerPool
+metadata:
+  name: advisor-desk
+  namespace: sv-agents
+  labels: {kagent.dev/worker-pool: advisor-desk}
+spec:
+  replicas: 2
+  ateomImage: localhost:5001/kagent-dev/substrate/ateom-gvisor:v0.0.9-lab.1
+  template:
+    serviceAccountName: advisor-desk
+    annotations:
+      istio.io/reroute-virtual-interfaces: ateom0   # actor egress through ztunnel, as the worker
+      ambient.istio.io/dns-capture: "false"         # the actor's DNS is forwarded, not local
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: substrate-env-sources-desk, namespace: sv-agents}
+rules:
+- {apiGroups: [""], resources: [secrets], resourceNames: [meeting-prep, market-brief, compliance-check, llm-via-gateway], verbs: [get]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: substrate-env-sources-desk, namespace: sv-agents}
+subjects: [{kind: ServiceAccount, name: ate-api-server, namespace: ate-system}]
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: substrate-env-sources-desk}
+---
+apiVersion: kagent.dev/v1alpha2
+kind: SandboxAgent
+metadata: {name: meeting-prep, namespace: sv-agents, labels: {lab.solo.io/desk: advisors}}
+spec:
+  substrate:
+    workerPoolRef: {name: advisor-desk}
+  type: Declarative
+  description: "Prepares the signed-in advisor for a client meeting: profile, recent notes, and an agenda."
+  declarative:
+    modelConfig: firm-llm
+    systemMessage: |
+      You prepare a Sterling & Vance advisor for a client meeting, acting for
+      the advisor who is signed in. Use only what the workspace tools return;
+      if something is missing, say so.
+      For the client named: call get_client and get_meeting_notes, then reply with
+      1. the client in two lines (goals, risk profile),
+      2. what was discussed last and anything left open,
+      3. a short agenda of three points.
+      Keep it under 200 words. You cannot change anything in the workspace.
+    deployment:
+      env: [{name: KAGENT_PROPAGATE_TOKEN, value: "true"}]
+    tools:
+    - type: McpServer
+      mcpServer:
+        apiGroup: kagent.dev
+        kind: RemoteMCPServer
+        name: bob-workspace
+        toolNames: [list_clients, get_client, get_meeting_notes]
+---
+apiVersion: kagent.dev/v1alpha2
+kind: SandboxAgent
+metadata: {name: market-brief, namespace: sv-agents, labels: {lab.solo.io/desk: advisors}}
+spec:
+  substrate:
+    workerPoolRef: {name: advisor-desk}
+  type: Declarative
+  description: "A short market brief for a sector or a symbol, from Ledgerline Research."
+  declarative:
+    modelConfig: firm-llm
+    systemMessage: |
+      You write short market briefs for Sterling & Vance advisors from Ledgerline
+      Research, an external provider the firm subscribes to. Use sector_outlook
+      for a sector and research_note for a symbol. Quote Ledgerline's rating and
+      reasoning, attribute them to Ledgerline, and add nothing of your own about
+      prices or performance. Three to five sentences.
+    deployment:
+      env: [{name: KAGENT_PROPAGATE_TOKEN, value: "true"}]
+    tools:
+    - type: McpServer
+      mcpServer:
+        apiGroup: kagent.dev
+        kind: RemoteMCPServer
+        name: ledgerline-research
+        toolNames: [sector_outlook, research_note]
+        allowedHeaders: [x-id-token]   # the subject of the Cross App Access exchange
+---
+apiVersion: kagent.dev/v1alpha2
+kind: SandboxAgent
+metadata: {name: compliance-check, namespace: sv-agents, labels: {lab.solo.io/desk: advisors}}
+spec:
+  substrate:
+    workerPoolRef: {name: advisor-desk}
+  type: Declarative
+  description: "Checks a draft client message against the firm's communication rules before it goes out."
+  declarative:
+    modelConfig: firm-llm
+    systemMessage: |
+      You review draft messages that Sterling & Vance advisors want to send to
+      clients, against the firm's communication rules:
+      - no promised or guaranteed returns, and no "risk-free" language;
+      - past performance is never presented as a predictor;
+      - a recommendation says it depends on the client's objectives and risk profile;
+      - no account numbers, tax IDs or other clients' information;
+      - third-party research is attributed to its source.
+      Reply with PASS or REVISE, then one line per issue quoting the words at
+      fault, then a corrected draft if you said REVISE. You have no tools and
+      see nothing but the draft.

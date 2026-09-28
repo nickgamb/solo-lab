@@ -2,7 +2,7 @@
 # adapter. Everything else is story 1's agent, unchanged.
 resources: [../../bob/agent]
 patches:
-- target: {group: kagent.dev, kind: Agent, name: bob-assistant, namespace: sv-agents}
+- target: {group: kagent.dev, kind: SandboxAgent, name: bob-assistant, namespace: sv-agents}
   patch: |-
     - op: add
       path: /spec/declarative/tools/-

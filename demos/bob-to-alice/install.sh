@@ -64,5 +64,5 @@ ok "https://portal.$ALICE_DOMAIN  https://as.$ALICE_DOMAIN  https://gateway.$MER
 
 step "Bob's agent: one more tool (kustomize overlay on story 1's agent)"
 K apply -k "$D/agent" >/dev/null
-wait_for "bob-assistant Ready" 60 5 K wait agent/bob-assistant -n sv-agents --for=condition=Ready --timeout=2s
+wait_for "bob-assistant Ready" 60 5 K wait sandboxagent/bob-assistant -n sv-agents --for=condition=Ready --timeout=2s
 ok "Alice: https://portal.$ALICE_DOMAIN (alice / alice-demo). Bob: https://kagent.$SV_DOMAIN"

@@ -10,13 +10,16 @@ providers:
       baseUrl: http://ai-gateway.agentgateway-system/v1
 
 controller:
-  # kagent v0.10.2 + ID token forwarding (tools/kagent-idtoken, upstream PR
-  # candidate). Same runtime-image digests as the release; drop this override
-  # once the feature ships upstream.
+  # kagent v0.10.2 + tools/kagent (upstream PR candidates): ID token forwarding
+  # and two SandboxAgent fixes (callback auth in the Go ADK, suspend race). The
+  # controller pins the patched golang-adk by digest; other runtimes are the release's.
   image:
     registry: localhost:5001
     repository: kagent-dev/kagent/controller
-    tag: 0.10.2-idtoken.1
+    tag: 0.10.2-lab.3
+  goAgentImage:
+    registry: localhost:5001
+    tag: 0.10.2-lab.3
   auth:
     mode: trusted-proxy
     userIdClaim: preferred_username
@@ -35,14 +38,22 @@ controller:
     atenetRouterURL: http://atenet-router.ate-system.svc:80
     ateApiInsecure: true
     defaultWorkerPool:
-      name: kagent-default
+      name: kagent-ops
 
+# The platform's own agents (below) run here, as kagent-ops: actors carry
+# their worker's identity, and a pool with its own ServiceAccount only serves
+# its own namespace (tools/substrate-mesh). Other namespaces bring their pool.
 substrateWorkerPool:
   create: true
-  name: kagent-default
+  name: kagent-ops
   replicas: 2
-  ateomImage: ghcr.io/kagent-dev/substrate/ateom-gvisor:v${SUBSTRATE_VERSION}
+  ateomImage: localhost:5001/kagent-dev/substrate/ateom-gvisor:v0.0.9-lab.1
   sandboxClass: gvisor
+  template:
+    serviceAccountName: kagent-ops
+    annotations:
+      istio.io/reroute-virtual-interfaces: ateom0   # actor egress through ztunnel, as the worker
+      ambient.istio.io/dns-capture: "false"         # the actor's DNS is forwarded, not local
 
 ui:
   auth:
@@ -73,13 +84,15 @@ otel:
         endpoint: http://otel-collector.observability.svc.cluster.local:4317
         insecure: true
 
-# Built-in agents: the platform set. Cilium/Argo agents target components this
-# lab doesn't run; observability-agent needs a Grafana service-account token.
-k8s-agent: {enabled: true}
-kgateway-agent: {enabled: true}
-istio-agent: {enabled: true}
-helm-agent: {enabled: true}
-promql-agent: {enabled: true}
+# Built-in agents: the chart only makes kind Agent, so install.sh renders the
+# platform set (k8s, kgateway, istio, helm, promql) as SandboxAgents instead.
+# Cilium/Argo agents target components this lab doesn't run; observability-agent
+# needs a Grafana service-account token.
+k8s-agent: {enabled: false}
+kgateway-agent: {enabled: false}
+istio-agent: {enabled: false}
+helm-agent: {enabled: false}
+promql-agent: {enabled: false}
 observability-agent: {enabled: false}
 argo-rollouts-agent: {enabled: false}
 cilium-policy-agent: {enabled: false}

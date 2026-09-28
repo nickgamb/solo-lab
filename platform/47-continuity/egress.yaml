@@ -1,0 +1,15 @@
+# S&V's egress waypoint. The continuity controller binds one ServiceEntry per
+# external upstream IdP to it (istio.io/use-waypoint), so Keycloak's and the
+# controller's back-channel calls to e.g. Auth0 leave the mesh here, under S&V
+# policy (platform/80-mesh-policy) — and a partition of that upstream is one
+# DENY policy targeting its ServiceEntry.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: egress-waypoint
+  namespace: sv-egress
+  labels: {istio.io/waypoint-for: service}
+spec:
+  gatewayClassName: istio-waypoint
+  listeners:
+  - {name: mesh, port: 15008, protocol: HBONE}

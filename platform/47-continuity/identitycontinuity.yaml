@@ -1,0 +1,29 @@
+# S&V's login chain: Auth0 while it is healthy, else the firm's own accounts.
+# Keycloak stays the only issuer relying parties trust either way. Installed
+# once; after that the spec belongs to its operators (the Observatory's rule
+# builder edits it), so re-running the layer does not reset it.
+apiVersion: continuity.lab.solo.io/v1alpha1
+kind: IdentityContinuity
+metadata:
+  name: sterling-vance
+  namespace: sv-identity
+spec:
+  broker:
+    keycloak:
+      url: http://keycloak.sv-identity.svc
+      realm: sterling-vance
+      credentialsRef: {name: continuity-controller}
+  egress: {namespace: sv-egress, waypoint: egress-waypoint}
+  tiers:
+  - name: auth0
+    displayName: Auth0
+    type: oidc
+    oidc:
+      issuer: ${AUTH0_ISSUER}
+      clientSecretRef: {name: upstream-auth0}   # client-id + client-secret, from .env
+    failoverWhen: {unreachable: true, serverError: true, invalidDiscovery: true, latencyAboveMs: 2000}
+  - name: keycloak
+    displayName: Sterling & Vance (local)
+    type: local
+  health: {intervalSeconds: 5, timeoutSeconds: 2, unhealthyThreshold: 2, healthyThreshold: 3}
+  failback: Automatic

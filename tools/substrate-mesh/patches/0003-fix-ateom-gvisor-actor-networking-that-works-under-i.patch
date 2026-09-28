@@ -1,0 +1,331 @@
+From a29187a6fb6989a060d0628d7bf65e7adb36f4b0 Mon Sep 17 00:00:00 2001
+From: Nick Gamb <nick.gamb@solo.io>
+Date: Mon, 28 Sep 2026 14:02:32 -0700
+Subject: [PATCH 3/3] fix(ateom-gvisor): actor networking that works under
+ in-pod traffic capture
+
+Under a CNI or service mesh that captures traffic inside the pod netns
+(Istio ambient, for one), actors never become ready and never serve:
+
+- ateom's own connections to the actor (readyz) are locally generated, so
+  the mesh's OUTPUT redirect captures them and they never reach the veth.
+- Inbound traffic to the worker's :80 is DNAT'd in PREROUTING to the actor
+  veth, racing the mesh's own inbound redirect at the same hook. Whichever
+  wins, a meshed caller loses: the DNAT bypasses mTLS and authorization, and
+  a mesh that terminates the connection delivers it to a local socket on
+  :80 where nothing listens.
+
+This change:
+
+- relays inbound connections to :80 from a userspace listener in ateom to
+  the actor, instead of the PREROUTING DNAT. Inbound traffic ends on a local
+  socket like any pod's, so whatever terminates or authorizes it first keeps
+  working. Without a mesh the path is the same as before, minus the NAT.
+- pins worker-local connections to the actor veth IP with a no-op DNAT in
+  ateom's table at priority dstnat-50. The kernel applies only the first NAT
+  binding a connection gets, so later redirects (the mesh's) never see them.
+
+Actor egress is unchanged (masquerade). A mesh can take it over per pod,
+e.g. Istio's istio.io/reroute-virtual-interfaces: ateom0, which the new
+WorkerPool template annotations can set.
+---
+ cmd/ateom-gvisor/inbound.go |  85 +++++++++++++++++++++++++++
+ cmd/ateom-gvisor/main.go    | 113 +++++++++---------------------------
+ 2 files changed, 114 insertions(+), 84 deletions(-)
+ create mode 100644 cmd/ateom-gvisor/inbound.go
+
+diff --git a/cmd/ateom-gvisor/inbound.go b/cmd/ateom-gvisor/inbound.go
+new file mode 100644
+index 0000000..e65f326
+--- /dev/null
++++ b/cmd/ateom-gvisor/inbound.go
+@@ -0,0 +1,85 @@
++// Copyright 2026 Google LLC
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//	http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++//go:build linux
++
++package main
++
++import (
++	"context"
++	"errors"
++	"io"
++	"log/slog"
++	"net"
++	"strconv"
++	"time"
++)
++
++// serveActorInbound relays connections to the worker pod's actor port to the
++// active actor. A userspace relay, rather than a PREROUTING DNAT, means inbound
++// traffic reaches a local socket like any other pod's: whatever the CNI or a
++// service mesh does to inbound connections (mTLS termination, authorization,
++// source-IP preservation through transparent sockets) keeps working, because
++// the connection it delivers ends here and not on a forwarded interface.
++//
++// The worker runs at most one actor at a time, so the relay always dials the
++// actor veth IP; with no active actor the dial fails and the connection closes.
++func serveActorInbound(ctx context.Context, port int) error {
++	lis, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(port)))
++	if err != nil {
++		return err
++	}
++	go func() {
++		<-ctx.Done()
++		lis.Close()
++	}()
++	go func() {
++		for {
++			conn, err := lis.Accept()
++			if err != nil {
++				if errors.Is(err, net.ErrClosed) {
++					return
++				}
++				slog.WarnContext(ctx, "Actor inbound accept failed", slog.Any("err", err))
++				continue
++			}
++			go relayToActor(ctx, conn, port)
++		}
++	}()
++	return nil
++}
++
++func relayToActor(ctx context.Context, in net.Conn, port int) {
++	defer in.Close()
++	d := net.Dialer{Timeout: 5 * time.Second}
++	out, err := d.DialContext(ctx, "tcp", net.JoinHostPort(actorVethIP, strconv.Itoa(port)))
++	if err != nil {
++		slog.DebugContext(ctx, "Actor inbound dial failed", slog.Any("err", err))
++		return
++	}
++	defer out.Close()
++
++	done := make(chan struct{}, 2)
++	pipe := func(dst, src net.Conn) {
++		_, _ = io.Copy(dst, src)
++		if tc, ok := dst.(*net.TCPConn); ok {
++			_ = tc.CloseWrite()
++		}
++		done <- struct{}{}
++	}
++	go pipe(out, in)
++	go pipe(in, out)
++	<-done
++	<-done
++}
+diff --git a/cmd/ateom-gvisor/main.go b/cmd/ateom-gvisor/main.go
+index 84fc2b3..c12d22f 100644
+--- a/cmd/ateom-gvisor/main.go
++++ b/cmd/ateom-gvisor/main.go
+@@ -37,7 +37,6 @@ import (
+ 	"github.com/agent-substrate/substrate/internal/serverboot"
+ 	"github.com/agent-substrate/substrate/internal/version"
+ 	"github.com/google/nftables"
+-	"github.com/google/nftables/binaryutil"
+ 	"github.com/google/nftables/expr"
+ 	"github.com/hashicorp/go-reap"
+ 	"github.com/spf13/pflag"
+@@ -67,6 +66,7 @@ const (
+ 	actorVethGateway  = "169.254.17.1"
+ 	actorVethIP       = "169.254.17.2"
+ 	actorNftTableName = "ateom_actor"
++	actorPort         = 80
+ )
+ 
+ func main() {
+@@ -127,6 +127,10 @@ func do(ctx context.Context) error {
+ 		return fmt.Errorf("while opening unix socket: %w", err)
+ 	}
+ 
++	if err := serveActorInbound(ctx, actorPort); err != nil {
++		return fmt.Errorf("while starting actor inbound relay: %w", err)
++	}
++
+ 	// Create a new network namespace that we will pass to gVisor.  gVisor will
+ 	// read the addresses and routes off of every link in the namespace, then
+ 	// remove all the addresses and handle injecting packets into the interfaces
+@@ -448,8 +452,8 @@ func (s *AteomService) setupActorNetwork(ctx context.Context) (retErr error) {
+ 	//
+ 	// The nftables rules installed here are a compatibility bridge for the
+ 	// current router assumptions: actor egress is masqueraded behind the worker
+-	// pod IP, and inbound traffic to the worker pod's HTTP port is DNAT'd to the
+-	// actor veth IP.
++	// pod IP. Inbound traffic to the worker pod's HTTP port is relayed to the
++	// actor veth IP by ateom itself (serveActorInbound).
+ 	//
+ 	// Clean up stale state from a failed prior activation before creating the
+ 	// next actor-side network. The worker currently runs one actor at a time.
+@@ -460,11 +464,6 @@ func (s *AteomService) setupActorNetwork(ctx context.Context) (retErr error) {
+ 		}
+ 	}()
+ 
+-	podIP, err := podIPv4()
+-	if err != nil {
+-		return fmt.Errorf("while resolving pod IPv4 address: %w", err)
+-	}
+-
+ 	hostAddr, err := parseAddr(hostVethCIDR)
+ 	if err != nil {
+ 		return err
+@@ -506,7 +505,7 @@ func (s *AteomService) setupActorNetwork(ctx context.Context) (retErr error) {
+ 	if err := enableIPv4Forwarding(); err != nil {
+ 		return err
+ 	}
+-	if err := installActorNftablesRules(podIP); err != nil {
++	if err := installActorNftablesRules(); err != nil {
+ 		return err
+ 	}
+ 
+@@ -629,29 +628,6 @@ func (s *AteomService) cleanupActorNetworkOrExit(ctx context.Context, msg string
+ 	}
+ }
+ 
+-func podIPv4() (net.IP, error) {
+-	// Resolve the worker pod IPv4 address from the pod namespace's real eth0.
+-	// Because eth0 now stays in the pod namespace, this IP remains available for
+-	// both normal worker connectivity and the temporary inbound DNAT rule.
+-	eth0Link, err := netlink.LinkByName("eth0")
+-	if err != nil {
+-		return nil, fmt.Errorf("while getting pod eth0: %w", err)
+-	}
+-	addrs, err := netlink.AddrList(eth0Link, netlink.FAMILY_V4)
+-	if err != nil {
+-		return nil, fmt.Errorf("while listing pod eth0 addresses: %w", err)
+-	}
+-	for _, addr := range addrs {
+-		if addr.IP == nil {
+-			continue
+-		}
+-		if ip := addr.IP.To4(); ip != nil {
+-			return ip, nil
+-		}
+-	}
+-	return nil, fmt.Errorf("pod eth0 has no IPv4 address")
+-}
+-
+ func parseAddr(cidr string) (*netlink.Addr, error) {
+ 	addr, err := netlink.ParseAddr(cidr)
+ 	if err != nil {
+@@ -671,7 +647,7 @@ func enableIPv4Forwarding() error {
+ 	return nil
+ }
+ 
+-func installActorNftablesRules(podIP net.IP) error {
++func installActorNftablesRules() error {
+ 	// Install a dedicated nftables table for the active actor. Keeping all
+ 	// rules in an ateom-owned table makes cleanup simple and avoids mutating
+ 	// Kubernetes or CNI-managed chains directly.
+@@ -682,10 +658,12 @@ func installActorNftablesRules(podIP net.IP) error {
+ 	//
+ 	// The temporary compatibility rules do three things:
+ 	//
++	//   * output: pin worker-local connections to the actor (readyz, the
++	//     inbound relay) to the actor veth IP. The kernel runs only the first
++	//     NAT binding for a connection, so an in-pod redirect installed by a
++	//     CNI or service mesh (e.g. Istio ambient) never captures them.
+ 	//   * postrouting: masquerade actor egress from 169.254.17.2 behind the worker
+ 	//     pod IP so replies route back to the pod.
+-	//   * prerouting: DNAT traffic sent to the worker pod IP on TCP/80 to the
+-	//     actor veth IP on TCP/80, preserving existing inbound behavior.
+ 	//   * forward: accept forwarded packets between the actor veth and pod eth0.
+ 	//
+ 	// This is not the final egress policy path. The later AgentGateway phase
+@@ -702,38 +680,27 @@ func installActorNftablesRules(podIP net.IP) error {
+ 	}
+ 	c.AddTable(table)
+ 
+-	prerouting := c.AddChain(&nftables.Chain{
+-		Name:     "prerouting",
++	output := c.AddChain(&nftables.Chain{
++		Name:     "output",
+ 		Table:    table,
+ 		Type:     nftables.ChainTypeNAT,
+-		Hooknum:  nftables.ChainHookPrerouting,
+-		Priority: nftables.ChainPriorityNATDest,
++		Hooknum:  nftables.ChainHookOutput,
++		Priority: nftables.ChainPriorityRef(*nftables.ChainPriorityNATDest - 50),
+ 	})
+-	// TODO: Support inbound UDP DNAT for actors that expose UDP protocols such
+-	// as QUIC.
+-	// TODO: Replace the hard-coded HTTP port with the actor's configured
+-	// inbound ports, either by adding one rule per port or by matching a set.
+-	preroutingExprs := append(ipDestinationEqual(podIP.String()), tcpDestinationPortEqual(80)...)
+-	preroutingExprs = append(preroutingExprs,
+-		&expr.Immediate{
+-			Register: 1,
+-			Data:     net.ParseIP(actorVethIP).To4(),
+-		},
+-		&expr.Immediate{
+-			Register: 2,
+-			Data:     binaryutil.BigEndian.PutUint16(80),
+-		},
+-		&expr.NAT{
+-			Type:        expr.NATTypeDestNAT,
+-			Family:      unix.NFPROTO_IPV4,
+-			RegAddrMin:  1,
+-			RegProtoMin: 2,
+-		},
+-	)
+ 	c.AddRule(&nftables.Rule{
+ 		Table: table,
+-		Chain: prerouting,
+-		Exprs: preroutingExprs,
++		Chain: output,
++		Exprs: append(ipDestinationEqual(actorVethIP),
++			&expr.Immediate{
++				Register: 1,
++				Data:     net.ParseIP(actorVethIP).To4(),
++			},
++			&expr.NAT{
++				Type:       expr.NATTypeDestNAT,
++				Family:     unix.NFPROTO_IPV4,
++				RegAddrMin: 1,
++			},
++		),
+ 	})
+ 
+ 	postrouting := c.AddChain(&nftables.Chain{
+@@ -818,28 +785,6 @@ func ipPayloadEqual(offset uint32, ip string) []expr.Any {
+ 	}
+ }
+ 
+-func tcpDestinationPortEqual(port uint16) []expr.Any {
+-	return []expr.Any{
+-		&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1},
+-		&expr.Cmp{
+-			Op:       expr.CmpOpEq,
+-			Register: 1,
+-			Data:     []byte{unix.IPPROTO_TCP},
+-		},
+-		&expr.Payload{
+-			DestRegister: 1,
+-			Base:         expr.PayloadBaseTransportHeader,
+-			Offset:       2,
+-			Len:          2,
+-		},
+-		&expr.Cmp{
+-			Op:       expr.CmpOpEq,
+-			Register: 1,
+-			Data:     binaryutil.BigEndian.PutUint16(port),
+-		},
+-	}
+-}
+-
+ func createNetNSWithoutSwitching(ctx context.Context, name string) (netns.NsHandle, error) {
+ 	runtime.LockOSThread()
+ 	defer runtime.UnlockOSThread()
+-- 
+2.55.0
+

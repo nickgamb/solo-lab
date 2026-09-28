@@ -29,7 +29,7 @@ step "Refused"
 check 'Unknown tool|isError": true|http": 40[13]' "export_book: hidden from advisors (compliance only)"               sv-agents $GW call export_book '{}' --token "$BOB"
 check 'http": 40[13]|isError": true'            "agent with no user token (discovery lane is controller-only)" sv-agents $GW call whoami '{}'
 check 'http": 40[13]|isError": true'            "right user, wrong workload (observability)"  observability $GW call whoami '{}' --token "$BOB"
-check 'http": 40[13]|RBAC|isError": true|refused|reset|Connection' \
+check 'http": 40[13]|RBAC|isError": true|refused|reset|Broken pipe|Connection' \
                                                 "skip the waypoint: dial a pod IP with Bob's token" sv-agents "http://$POD_IP:3000/mcp" call whoami '{}' --token "$BOB"
 XAA=http://ai-gateway.agentgateway-system/xaa/ledgerline/mcp
 step "Cross App Access: Bob's agent -> Ledgerline Research (ID-JAG)"

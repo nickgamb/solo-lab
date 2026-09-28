@@ -3,9 +3,9 @@
 # enforced by ztunnel at L4; a caller with no identity (outside the mesh)
 # matches no principal and is refused.
 #
-# Namespaces whose callers are all meshed are STRICT. kagent and
-# agentgateway-system stay PERMISSIVE for Agent Substrate: its gVisor workers
-# and atenet run unmeshed in ate-system (see docs/ARCHITECTURE.md).
+# Every S&V namespace is STRICT. Agents run on Agent Substrate: an actor's
+# calls leave through its worker pod, as the pool's ServiceAccount, and reach
+# the actor only through Substrate's router (see docs/ARCHITECTURE.md).
 apiVersion: security.istio.io/v1
 kind: PeerAuthentication
 metadata: {name: strict, namespace: sv-identity}
@@ -13,11 +13,27 @@ spec: {mtls: {mode: STRICT}}
 ---
 apiVersion: security.istio.io/v1
 kind: PeerAuthentication
+metadata: {name: strict, namespace: kagent}
+spec: {mtls: {mode: STRICT}}
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: strict, namespace: agentgateway-system}
+spec: {mtls: {mode: STRICT}}
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
 metadata: {name: strict, namespace: sv-agents}
 spec: {mtls: {mode: STRICT}}
 ---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: strict, namespace: sv-egress}
+spec: {mtls: {mode: STRICT}}
+---
 # Keycloak: the edge (browsers, SSO token calls), the firm's gateways (JWKS,
-# token exchange), and the platform UIs that use S&V workforce SSO.
+# token exchange), the platform UIs that use S&V workforce SSO, and the
+# continuity controller (admin API: upstream IdPs, login redirector).
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata: {name: keycloak-callers, namespace: sv-identity}
@@ -35,6 +51,31 @@ spec:
         - cluster.local/ns/observability/sa/kps-grafana
         - cluster.local/ns/istio-system/sa/kiali
         - cluster.local/ns/agentregistry/sa/agentregistry
+        - cluster.local/ns/sv-identity/sa/continuity-controller
+---
+# The continuity controller only calls out (Keycloak, upstreams, kube API).
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: continuity-controller-callers, namespace: sv-identity}
+spec:
+  selector: {matchLabels: {app: continuity-controller}}
+  action: ALLOW          # no rules: nothing in the mesh may call it
+---
+# The firm's way out: only its IdP (brokered logins' back-channel) and the
+# continuity controller (health probes) may reach upstream IdPs on the internet.
+# A tier's partition is a DENY on its ServiceEntry, evaluated before this.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: egress-callers, namespace: sv-egress}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: egress-waypoint}]
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/sv-identity/sa/keycloak
+        - cluster.local/ns/sv-identity/sa/continuity-controller
 ---
 # kagent controller (:8083) trusts forwarded JWT claims WITHOUT verifying the
 # signature (trusted-proxy mode), so this fence is what makes that safe: only
@@ -49,7 +90,7 @@ spec:
   # Entries in one `from` are OR'd; fields inside one `source` are AND'd.
   - from:
     - source: {principals: [cluster.local/ns/observability/sa/kps-prometheus]}  # metrics
-    - source: {namespaces: [kagent]}      # UI, built-in agents, tools, substrate workers
+    - source: {namespaces: [kagent]}      # UI, tools, the ops agents (kagent-ops workers)
     - source: {namespaces: [sv-agents]}   # the firm's agents
 ---
 apiVersion: security.istio.io/v1
@@ -61,11 +102,21 @@ spec:
   rules:
   - from: [{source: {principals: [cluster.local/ns/kgateway-system/sa/edge]}}]
 ---
-# Bob's (and every advisor's) agents: reached only by the kagent controller.
+# The ops agents' workers: reached only through Substrate's router.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
-metadata: {name: agents-only-from-controller, namespace: sv-agents}
+metadata: {name: ops-workers-callers, namespace: kagent}
+spec:
+  selector: {matchLabels: {ate.dev/worker-pool: kagent-ops}}
+  action: ALLOW
+  rules: [{from: [{source: {principals: [cluster.local/ns/ate-system/sa/atenet-router]}}]}]
+---
+# Bob's (and every advisor's) agents: reached only through Substrate's router,
+# which only the kagent controller may use (platform/50-substrate/mesh.yaml).
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: agents-only-via-substrate, namespace: sv-agents}
 spec:
   action: ALLOW          # namespace-wide: every workload in sv-agents
   rules:
-  - from: [{source: {principals: [cluster.local/ns/kagent/sa/kagent-controller]}}]
+  - from: [{source: {principals: [cluster.local/ns/ate-system/sa/atenet-router]}}]

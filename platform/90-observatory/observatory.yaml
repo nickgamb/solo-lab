@@ -1,0 +1,155 @@
+# The Observatory at https://observatory.${OPS_DOMAIN}: the platform's single
+# pane of glass. Platform admins sign in at the edge against the ops realm
+# (its own Keycloak, in ops-identity); the edge forwards their access token
+# and the observatory verifies it again before acting as them.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: observatory
+  namespace: observatory
+  labels: {app: observatory}
+spec:
+  # One replica: the live view (recent traffic, rates) is in memory and
+  # rebuilt from the cluster and the collector's stream on restart.
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: observatory}}
+  template:
+    metadata:
+      labels: {app: observatory}
+    spec:
+      serviceAccountName: observatory
+      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      containers:
+      - name: observatory
+        image: ${OBSERVATORY_IMAGE}
+        env:
+        - {name: OIDC_ISSUER, value: "https://idp.${OPS_DOMAIN}/realms/ops"}
+        - {name: OIDC_JWKS_URL, value: "http://keycloak.ops-identity.svc/realms/ops/protocol/openid-connect/certs"}
+        - {name: OIDC_AUDIENCE, value: observatory}
+        - {name: ADMIN_GROUP, value: observatory-admins}
+        - {name: PROMETHEUS_URL, value: "http://kps-prometheus.observability.svc:9090"}
+        ports:
+        - {name: http, containerPort: 8080}
+        - {name: otlp, containerPort: 4318}
+        readinessProbe:
+          httpGet: {path: /healthz, port: http}
+          periodSeconds: 5
+        resources:
+          requests: {cpu: 50m, memory: 96Mi}
+          limits: {memory: 512Mi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: observatory
+  namespace: observatory
+  labels: {app: observatory}
+spec:
+  selector: {app: observatory}
+  ports:
+  - {name: http, port: 80, targetPort: http}
+  - {name: otlp, port: 4318, targetPort: otlp, appProtocol: http}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: observatory
+  namespace: observatory
+spec:
+  parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-ops}]
+  hostnames: ["observatory.${OPS_DOMAIN}"]
+  rules:
+  - backendRefs: [{name: observatory, port: 80}]
+    timeouts: {request: 0s}          # the live stream stays open
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: GatewayExtension
+metadata:
+  name: observatory-sso
+  namespace: observatory
+spec:
+  type: OAuth2
+  oauth2:
+    backendRef: {kind: Service, name: keycloak, namespace: ops-identity, port: 80}
+    issuerURI: https://idp.${OPS_DOMAIN}/realms/ops
+    authorizationEndpoint: https://idp.${OPS_DOMAIN}/realms/ops/protocol/openid-connect/auth
+    tokenEndpoint: https://idp.${OPS_DOMAIN}/realms/ops/protocol/openid-connect/token
+    endSessionEndpoint: https://idp.${OPS_DOMAIN}/realms/ops/protocol/openid-connect/logout
+    redirectURI: https://observatory.${OPS_DOMAIN}/oauth2/redirect
+    logoutPath: /logout
+    credentials:
+      clientID: observatory
+      clientSecretRef: {name: observatory-oidc}
+    scopes: [openid, profile, email]
+    forwardAccessToken: true
+    cookies:
+      sameSite: Lax
+    jwt:
+      jwksURI: https://idp.${OPS_DOMAIN}/realms/ops/protocol/openid-connect/certs
+      jwksBackendRef: {kind: Service, name: keycloak, namespace: ops-identity, port: 80}
+      accessToken:
+        audiences: [observatory]
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: observatory-sso
+  namespace: observatory
+spec:
+  targetRefs:
+  - {group: gateway.networking.k8s.io, kind: HTTPRoute, name: observatory}
+  oauth2:
+    extensionRef: {name: observatory-sso}
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: observatory-sso-to-keycloak
+  namespace: ops-identity
+spec:
+  from: [{group: gateway.kgateway.dev, kind: GatewayExtension, namespace: observatory}]
+  to: [{group: "", kind: Service, name: keycloak}]
+---
+# Zero trust: the UI only from the edge, telemetry only from the collector.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: strict, namespace: observatory}
+spec: {mtls: {mode: STRICT}}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: observatory-callers, namespace: observatory}
+spec:
+  selector: {matchLabels: {app: observatory}}
+  action: ALLOW
+  rules:
+  - from: [{source: {principals: [cluster.local/ns/kgateway-system/sa/edge]}}]
+    to: [{operation: {ports: ["8080"]}}]
+  - from: [{source: {principals: [cluster.local/ns/observability/sa/otel-collector]}}]
+    to: [{operation: {ports: ["4318"]}}]
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: strict, namespace: ops-identity}
+spec: {mtls: {mode: STRICT}}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: keycloak-callers, namespace: ops-identity}
+spec:
+  selector: {matchLabels: {app: keycloak}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/kgateway-system/sa/edge       # browsers, and the edge's OAuth2 filter
+        - cluster.local/ns/observatory/sa/observatory    # JWKS
+        - cluster.local/ns/istio-system/sa/istiod
+  - from: [{source: {principals: [cluster.local/ns/observability/sa/kps-prometheus]}}]
+    to: [{operation: {ports: ["9000"]}}]

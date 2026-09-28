@@ -24,8 +24,8 @@ nuke: ## delete the cluster AND the image caches
 	@./scripts/cluster-down.sh --all
 
 ## ---- demos (all installed by `make up`; cards in docs/cards) ---------------
-verify: ## every story's enforcement checks
-	@./demos/bob/verify.sh && ./demos/bob-to-alice/verify.sh
+verify: ## every story's enforcement checks, then identity continuity
+	@./demos/bob/verify.sh && ./demos/bob-to-alice/verify.sh && ./platform/47-continuity/verify.sh
 reset: ## rewind every demo to a first run (grants, terms, agent key, follow-ups)
 	@./scripts/reset.sh
 

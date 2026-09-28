@@ -6,4 +6,4 @@ D="$(cd "$(dirname "$0")" && pwd)"
 need_cluster
 step "Sterling & Vance mesh baseline"
 apply_tmpl "$D/sterling-vance.yaml"
-ok "STRICT: sv-identity sv-agents sv-mcp; identity-scoped ALLOWs on Keycloak, kagent, agents"
+ok "STRICT: sv-identity sv-agents sv-egress kagent agentgateway-system; identity-scoped ALLOWs on Keycloak, kagent, agents, egress"

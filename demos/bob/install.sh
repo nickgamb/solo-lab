@@ -28,7 +28,14 @@ step "Sterling & Vance: workspace, waypoint, agent, Cross App Access"
 K create secret generic ledgerline-client -n agentgateway-system \
   --from-literal=clientSecret="$(lab_secret LL_SVKAGENT_CLIENT_SECRET)" --dry-run=client -o yaml | K apply -f - >/dev/null
 for f in "$D"/manifests/*.yaml; do apply_tmpl "$f"; done
+# Bob's agent is a SandboxAgent; an Agent of the same name (older labs) must go first.
+K delete agent bob-assistant -n sv-agents --ignore-not-found --wait >/dev/null
 K apply -k "$D/agent" >/dev/null
 rollout sv-mcp deploy/bob-workspace deploy/mcp-waypoint
-wait_for "bob-assistant Ready" 60 5 K wait agent/bob-assistant -n sv-agents --for=condition=Ready --timeout=2s
+wait_for "bob-assistant Ready" 60 5 K wait sandboxagent/bob-assistant -n sv-agents --for=condition=Ready --timeout=2s
+K apply -k "$D/desk" >/dev/null
+for a in meeting-prep market-brief compliance-check; do
+  wait_for "$a Ready" 60 5 K wait "sandboxagent/$a" -n sv-agents --for=condition=Ready --timeout=2s
+done
+ok "advisor desk (sv-agents/sa/advisor-desk): meeting-prep, market-brief, compliance-check"
 ok "sign in at https://kagent.$SV_DOMAIN as bob / bob-demo, chat with sv-agents/bob-assistant"

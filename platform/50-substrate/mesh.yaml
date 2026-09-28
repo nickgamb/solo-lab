@@ -1,0 +1,44 @@
+# Agent Substrate in the mesh. Every hop that carries a user's token is mTLS
+# with a SPIFFE identity: kagent controller -> atenet-router -> worker (the
+# actor), and kagent controller -> ate-api. ate-api's own auth accepts any
+# ServiceAccount token for its audience and authorizes nothing (0.0.9), so
+# who may drive the control plane is decided here.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: strict, namespace: ate-system}
+spec: {mtls: {mode: STRICT}}
+---
+# Substrate's own components talk among themselves (valkey, rustfs, atelet,
+# dns). Nothing outside ate-system reaches them unless named below.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: substrate-internal, namespace: ate-system}
+spec:
+  action: ALLOW
+  rules: [{from: [{source: {namespaces: [ate-system]}}]}]
+---
+# The router reaches any actor by name, so only the kagent controller may use it.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: atenet-router-callers, namespace: ate-system}
+spec:
+  selector: {matchLabels: {app: atenet-router}}
+  action: ALLOW
+  rules: [{from: [{source: {principals: [cluster.local/ns/kagent/sa/kagent-controller]}}]}]
+---
+# The control plane: the kagent controller (actors, templates), and the
+# Observatory reading runtime state (ListActors, ListWorkers) as itself. ate-api
+# terminates TLS itself, so this is L4: whoever is listed gets the whole
+# Control service, not just the List calls.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: ate-api-callers, namespace: ate-system}
+spec:
+  selector: {matchLabels: {app: ate-api-server}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/kagent/sa/kagent-controller
+        - cluster.local/ns/observatory/sa/observatory

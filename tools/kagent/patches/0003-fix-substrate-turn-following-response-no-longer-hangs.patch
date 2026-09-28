@@ -1,0 +1,233 @@
+From a3f49ce22ed4ebbb21347bfbae0fcac57084a910 Mon Sep 17 00:00:00 2001
+From: Nick Gamb <nick.gamb@solo.io>
+Date: Mon, 28 Sep 2026 14:41:20 -0700
+Subject: [PATCH] fix(substrate): a turn that follows a response closely no
+ longer hangs
+
+When a SandboxAgent response closes, the controller schedules a suspend of
+the session actor. A next message sent right away (a HITL approval, say)
+races it:
+
+- if the turn arrives while the suspend runs, EnsureSessionActor sees
+  SUSPENDING, doesn't resume, and waits for RUNNING until it times out
+  (2 minutes, "not reachable via atenet-router");
+- if it arrives just before, the suspend checkpoints the actor under it.
+
+The session transport now counts in-flight turns per session. A suspend
+holds the session's lock while it checks and suspends; a new turn registers,
+then waits out a suspend in progress. So a scheduled suspend skips a session
+with a newer turn in flight, and a turn never starts under a suspend. For
+suspends this controller didn't start (another replica), EnsureSessionActor
+waits out SUSPENDING and then resumes.
+---
+ .../a2a/substrate_sandbox_transport.go        | 73 ++++++++++++++++++-
+ .../a2a/substrate_sandbox_transport_test.go   | 43 +++++++++++
+ .../sandboxbackend/substrate/agent_actor.go   | 14 ++++
+ 3 files changed, 128 insertions(+), 2 deletions(-)
+
+diff --git a/go/core/internal/a2a/substrate_sandbox_transport.go b/go/core/internal/a2a/substrate_sandbox_transport.go
+index 8d9ed64..359425d 100644
+--- a/go/core/internal/a2a/substrate_sandbox_transport.go
++++ b/go/core/internal/a2a/substrate_sandbox_transport.go
+@@ -26,6 +26,71 @@ type substrateSandboxSessionRoundTripper struct {
+ 	actorBackend *substrate.SandboxAgentActorBackend
+ 	base         http.RoundTripper
+ 	db           database.Client
++	turns        sessionTurns
++}
++
++// sessionTurns tracks in-flight turns per session. Every turn's end schedules
++// a suspend, which must never land on a newer turn of the same session (a
++// HITL approval, or the next message, sent the moment a response closes). A
++// suspend holds the session's lock while it checks for turns and suspends; a
++// new turn registers, then waits out any suspend in progress. So a turn starts
++// either before the suspend, which then skips, or after it, and resumes.
++type sessionTurns struct {
++	mu sync.Mutex
++	m  map[string]*sessionTurn
++}
++
++type sessionTurn struct {
++	sync.Mutex     // held while this session's actor is being suspended
++	active     int // guarded by sessionTurns.mu
++}
++
++func (s *sessionTurns) begin(id string) {
++	s.mu.Lock()
++	if s.m == nil {
++		s.m = map[string]*sessionTurn{}
++	}
++	st := s.m[id]
++	if st == nil {
++		st = &sessionTurn{}
++		s.m[id] = st
++	}
++	st.active++
++	s.mu.Unlock()
++	st.Lock()
++	st.Unlock() //nolint:staticcheck // only waiting out a suspend in progress
++}
++
++func (s *sessionTurns) end(id string) {
++	s.mu.Lock()
++	if st := s.m[id]; st != nil && st.active > 0 {
++		st.active--
++	}
++	s.mu.Unlock()
++}
++
++// suspendIdle runs suspend unless a turn of the session is in flight.
++func (s *sessionTurns) suspendIdle(id string, suspend func()) {
++	s.mu.Lock()
++	st := s.m[id]
++	if st != nil && st.active > 0 {
++		s.mu.Unlock()
++		return
++	}
++	if st != nil {
++		st.Lock()
++	}
++	s.mu.Unlock()
++	suspend()
++	if st == nil {
++		return
++	}
++	st.Unlock()
++	s.mu.Lock()
++	if st.active == 0 && s.m[id] == st {
++		delete(s.m, id)
++	}
++	s.mu.Unlock()
+ }
+ 
+ func newSubstrateSandboxSessionRoundTripper(
+@@ -79,8 +144,10 @@ func (t *substrateSandboxSessionRoundTripper) RoundTrip(req *http.Request) (*htt
+ 			"failed to ensure session row; continuing without it", "sessionID", sessionID)
+ 	}
+ 
++	t.turns.begin(sessionID)
+ 	res, err := t.actorBackend.EnsureSessionActor(req.Context(), t.sandboxAgent, sessionID)
+ 	if err != nil {
++		t.turns.end(sessionID)
+ 		return nil, err
+ 	}
+ 
+@@ -93,6 +160,7 @@ func (t *substrateSandboxSessionRoundTripper) RoundTrip(req *http.Request) (*htt
+ 
+ 	resp, err := actorRT.RoundTrip(req)
+ 	if err != nil {
++		t.turns.end(sessionID)
+ 		t.scheduleSuspendSession(sessionID)
+ 		return nil, err
+ 	}
+@@ -102,6 +170,7 @@ func (t *substrateSandboxSessionRoundTripper) RoundTrip(req *http.Request) (*htt
+ 	resp.Body = &suspendSessionActorOnClose{
+ 		ReadCloser: resp.Body,
+ 		suspend: func() {
++			t.turns.end(sessionID)
+ 			t.scheduleSuspendSession(sessionID)
+ 		},
+ 	}
+@@ -136,11 +205,11 @@ func (t *substrateSandboxSessionRoundTripper) scheduleSuspendSession(sessionID s
+ 	if t == nil || t.actorBackend == nil || t.sandboxAgent == nil {
+ 		return
+ 	}
+-	go func() {
++	go t.turns.suspendIdle(sessionID, func() {
+ 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+ 		defer cancel()
+ 		_ = t.actorBackend.SuspendSessionActor(ctx, t.sandboxAgent, sessionID)
+-	}()
++	})
+ }
+ 
+ type suspendSessionActorOnClose struct {
+diff --git a/go/core/internal/a2a/substrate_sandbox_transport_test.go b/go/core/internal/a2a/substrate_sandbox_transport_test.go
+index 6edd7ad..ff8b5a3 100644
+--- a/go/core/internal/a2a/substrate_sandbox_transport_test.go
++++ b/go/core/internal/a2a/substrate_sandbox_transport_test.go
+@@ -14,6 +14,49 @@ import (
+ 	"github.com/kagent-dev/kagent/go/core/internal/dbtest"
+ )
+ 
++func TestSessionTurns_SuspendNeverLandsOnANewerTurn(t *testing.T) {
++	t.Parallel()
++	var turns sessionTurns
++
++	// A suspend scheduled while a newer turn is in flight is skipped.
++	turns.begin("s")
++	ran := false
++	turns.suspendIdle("s", func() { ran = true })
++	if ran {
++		t.Fatal("suspend ran while a turn was in flight")
++	}
++	turns.end("s")
++	turns.suspendIdle("s", func() { ran = true })
++	if !ran {
++		t.Fatal("suspend skipped with no turn in flight")
++	}
++
++	// A turn that arrives during a suspend waits for it to finish.
++	inSuspend, release := make(chan struct{}), make(chan struct{})
++	var suspended atomic.Bool
++	go turns.suspendIdle("s", func() {
++		close(inSuspend)
++		<-release
++		suspended.Store(true)
++	})
++	<-inSuspend
++	started := make(chan struct{})
++	go func() {
++		turns.begin("s")
++		close(started)
++	}()
++	select {
++	case <-started:
++		t.Fatal("turn started during a suspend")
++	default:
++	}
++	close(release)
++	<-started
++	if !suspended.Load() {
++		t.Fatal("turn started before the suspend finished")
++	}
++}
++
+ func TestSuspendSessionActorOnClose(t *testing.T) {
+ 	t.Parallel()
+ 
+diff --git a/go/core/pkg/sandboxbackend/substrate/agent_actor.go b/go/core/pkg/sandboxbackend/substrate/agent_actor.go
+index 6cfa518..f3ea629 100644
+--- a/go/core/pkg/sandboxbackend/substrate/agent_actor.go
++++ b/go/core/pkg/sandboxbackend/substrate/agent_actor.go
+@@ -5,6 +5,7 @@ import (
+ 	"crypto/sha256"
+ 	"fmt"
+ 	"strings"
++	"time"
+ 
+ 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
+ 	"github.com/kagent-dev/kagent/go/api/v1alpha2"
+@@ -82,6 +83,19 @@ func (b *SandboxAgentActorBackend) EnsureSessionActor(ctx context.Context, sa *v
+ 		}
+ 	}
+ 
++	// A suspend still in flight (e.g. the previous turn's, from another
++	// controller replica) holds the actor's lock: let it finish, then resume.
++	for actor.GetStatus() == ateapipb.Actor_STATUS_SUSPENDING {
++		select {
++		case <-ctx.Done():
++			return sandboxbackend.EnsureResult{}, fmt.Errorf("substrate actor %q still suspending: %w", actorID, ctx.Err())
++		case <-time.After(defaultActorReachabilityInterval):
++		}
++		if actor, err = b.client.GetActor(ctx, atespace, actorID); err != nil {
++			return sandboxbackend.EnsureResult{}, fmt.Errorf("substrate GetActor %q: %w", actorID, err)
++		}
++	}
++
+ 	switch actor.GetStatus() {
+ 	case ateapipb.Actor_STATUS_SUSPENDED, ateapipb.Actor_STATUS_UNSPECIFIED,
+ 		ateapipb.Actor_STATUS_PAUSED, ateapipb.Actor_STATUS_PAUSING:
+-- 
+2.55.0
+

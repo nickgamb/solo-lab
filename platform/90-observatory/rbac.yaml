@@ -1,0 +1,34 @@
+# The observatory reads the cluster as itself (no Secrets) and writes only as
+# the signed-in admin: it impersonates observatory:<user> with the user's
+# groups prefixed observatory:, and RBAC decides what that person may change.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: observatory, namespace: observatory}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: observatory-read}
+rules:
+- apiGroups: [""]
+  resources: [namespaces, nodes, pods, services]
+  verbs: [get, list, watch]
+- apiGroups: [apps, gateway.networking.k8s.io, gateway.kgateway.dev, agentgateway.dev, kagent.dev, ate.dev,
+    security.istio.io, networking.istio.io, postgresql.cnpg.io, continuity.lab.solo.io]
+  resources: ["*"]
+  verbs: [get, list, watch]
+- apiGroups: [""]
+  resources: [users, groups]
+  verbs: [impersonate]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: observatory-read}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: observatory-read}
+subjects: [{kind: ServiceAccount, name: observatory, namespace: observatory}]
+---
+# Platform admins (group observatory-admins in the ops realm) run the lab.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: observatory-admins}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-admin}
+subjects: [{apiGroup: rbac.authorization.k8s.io, kind: Group, name: "observatory:observatory-admins"}]

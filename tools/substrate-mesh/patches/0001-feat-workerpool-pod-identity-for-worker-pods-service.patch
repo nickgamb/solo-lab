@@ -1,0 +1,314 @@
+From 8ac11133428f8bcb56406253c131047819b61171 Mon Sep 17 00:00:00 2001
+From: Nick Gamb <nick.gamb@solo.io>
+Date: Mon, 28 Sep 2026 14:02:32 -0700
+Subject: [PATCH 1/3] feat(workerpool): pod identity for worker pods
+ (serviceAccountName, labels, annotations)
+
+An actor's traffic leaves through its worker pod, so the worker pod's
+ServiceAccount is the workload identity every call the actor makes carries
+(for example a service mesh's SPIFFE ID, or cloud workload identity). Today
+every worker runs as the namespace's default ServiceAccount and a pool can't
+say otherwise, nor can it annotate its pods for the CNI or mesh.
+
+WorkerPoolPodTemplate gains:
+
+- serviceAccountName: the ServiceAccount the worker pods run as.
+- labels: added to the worker pods. ate.dev/worker-pool stays owned by the
+  pool (CEL: reserved), and the controller always stamps it.
+- annotations: added to the worker pods, e.g. to tell a mesh how to treat
+  the actor's veth (Istio: istio.io/reroute-virtual-interfaces: ateom0).
+
+The Deployment is still server-side applied, so removing a field from the
+pool removes it from the pods.
+---
+ .../templates/ate.dev_workerpools.yaml        | 28 ++++++++++++++++-
+ .../internal/controllers/workerpool_apply.go  | 24 ++++++++++++---
+ .../controllers/workerpool_apply_test.go      | 23 ++++++++++++++
+ .../generated/ate.dev_workerpools.yaml        | 28 ++++++++++++++++-
+ pkg/api/v1alpha1/workerpool_types.go          | 30 +++++++++++++++++--
+ .../v1alpha1/workerpool_validation_test.go    | 19 ++++++++++++
+ pkg/api/v1alpha1/zz_generated.deepcopy.go     | 14 +++++++++
+ 7 files changed, 157 insertions(+), 9 deletions(-)
+
+diff --git a/charts/substrate-crds/templates/ate.dev_workerpools.yaml b/charts/substrate-crds/templates/ate.dev_workerpools.yaml
+index 246af4b..5f87c82 100644
+--- a/charts/substrate-crds/templates/ate.dev_workerpools.yaml
++++ b/charts/substrate-crds/templates/ate.dev_workerpools.yaml
+@@ -96,9 +96,27 @@ spec:
+                   SandboxClass is used.
+                 type: string
+               template:
+-                description: Template holds optional pod scheduling and resource settings
++                description: |-
++                  Template holds optional pod identity, scheduling and resource settings
+                   for worker pods.
+                 properties:
++                  annotations:
++                    additionalProperties:
++                      type: string
++                    description: |-
++                      Annotations are added to the worker pods, e.g. to tell a CNI or service
++                      mesh how to treat the actor's virtual interface.
++                    type: object
++                  labels:
++                    additionalProperties:
++                      type: string
++                    description: |-
++                      Labels are added to the worker pods. The pool's own selector label
++                      (ate.dev/worker-pool) is reserved.
++                    type: object
++                    x-kubernetes-validations:
++                    - message: ate.dev/worker-pool is reserved
++                      rule: '!(''ate.dev/worker-pool'' in self)'
+                   nodeAffinity:
+                     description: |-
+                       NodeAffinity scheduling rules for the worker pods. Mapped to
+@@ -368,6 +386,14 @@ spec:
+                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                         type: object
+                     type: object
++                  serviceAccountName:
++                    description: |-
++                      ServiceAccountName is the ServiceAccount the worker pods run as. An
++                      actor's traffic leaves through its worker pod, so this is the workload
++                      identity (e.g. a mesh's SPIFFE ID) the actor's calls carry. Defaults to
++                      the namespace's default ServiceAccount.
++                    maxLength: 253
++                    type: string
+                   tolerations:
+                     description: Tolerations for the worker pods.
+                     items:
+diff --git a/cmd/atecontroller/internal/controllers/workerpool_apply.go b/cmd/atecontroller/internal/controllers/workerpool_apply.go
+index faa94f5..2e80b58 100644
+--- a/cmd/atecontroller/internal/controllers/workerpool_apply.go
++++ b/cmd/atecontroller/internal/controllers/workerpool_apply.go
+@@ -75,13 +75,26 @@ func buildDeploymentApplyConfig(wp *atev1alpha1.WorkerPool) *appsv1ac.Deployment
+ 			WithReplicas(wp.Spec.Replicas).
+ 			WithSelector(metav1ac.LabelSelector().
+ 				WithMatchLabels(map[string]string{"ate.dev/worker-pool": wp.Name})).
+-			WithTemplate(corev1ac.PodTemplateSpec().
+-				WithLabels(map[string]string{
+-					"ate.dev/worker-pool": wp.Name,
+-				}).
++			WithTemplate(podTemplateMetaApply(corev1ac.PodTemplateSpec(), wp).
+ 				WithSpec(podSpecAC)))
+ }
+ 
++// podTemplateMetaApply sets the worker pod labels and annotations: the pool's
++// template metadata, with the selector label always owned by the pool.
++func podTemplateMetaApply(ac *corev1ac.PodTemplateSpecApplyConfiguration, wp *atev1alpha1.WorkerPool) *corev1ac.PodTemplateSpecApplyConfiguration {
++	labels := map[string]string{}
++	if tmpl := wp.Spec.Template; tmpl != nil {
++		for k, v := range tmpl.Labels {
++			labels[k] = v
++		}
++		if len(tmpl.Annotations) > 0 {
++			ac.WithAnnotations(tmpl.Annotations)
++		}
++	}
++	labels["ate.dev/worker-pool"] = wp.Name
++	return ac.WithLabels(labels)
++}
++
+ // maybeApplyMicroVMPodShape adds the /dev/kvm device and node placement a
+ // micro-VM (kata + cloud-hypervisor) worker pool needs, on top of any
+ // pod-template settings. No-op unless sandboxClass is the micro-VM class.
+@@ -145,6 +158,9 @@ func applyWorkerPoolPodTemplate(
+ 		return
+ 	}
+ 
++	if tmpl.ServiceAccountName != "" {
++		podSpecAC.WithServiceAccountName(tmpl.ServiceAccountName)
++	}
+ 	if tmpl.NodeSelector != nil {
+ 		podSpecAC.WithNodeSelector(tmpl.NodeSelector)
+ 	}
+diff --git a/cmd/atecontroller/internal/controllers/workerpool_apply_test.go b/cmd/atecontroller/internal/controllers/workerpool_apply_test.go
+index 1cdc972..9993336 100644
+--- a/cmd/atecontroller/internal/controllers/workerpool_apply_test.go
++++ b/cmd/atecontroller/internal/controllers/workerpool_apply_test.go
+@@ -209,6 +209,29 @@ func TestBuildDeploymentApplyConfig(t *testing.T) {
+ 	}
+ }
+ 
++// TestWorkerPoolPodIdentity asserts the pod template's identity fields reach
++// the worker pods, and that the pool's selector label can't be overridden.
++func TestWorkerPoolPodIdentity(t *testing.T) {
++	wp := testWorkerPoolApplyConfig(&atev1alpha1.WorkerPoolPodTemplate{
++		ServiceAccountName: "agent-sa",
++		Labels:             map[string]string{"team": "advisors", "ate.dev/worker-pool": "other"},
++		Annotations:        map[string]string{"istio.io/reroute-virtual-interfaces": "ateom0"},
++	})
++	got := buildDeploymentApplyConfig(wp).Spec.Template
++
++	if sa := got.Spec.ServiceAccountName; sa == nil || *sa != "agent-sa" {
++		t.Errorf("serviceAccountName = %v, want agent-sa", sa)
++	}
++	wantLabels := map[string]string{"team": "advisors", "ate.dev/worker-pool": wp.Name}
++	if diff := cmp.Diff(wantLabels, got.Labels); diff != "" {
++		t.Errorf("labels mismatch (-want +got):\n%s", diff)
++	}
++	wantAnnotations := map[string]string{"istio.io/reroute-virtual-interfaces": "ateom0"}
++	if diff := cmp.Diff(wantAnnotations, got.Annotations); diff != "" {
++		t.Errorf("annotations mismatch (-want +got):\n%s", diff)
++	}
++}
++
+ // TestMicroVMPodShape asserts the micro-VM sandbox class adds the /dev/kvm
+ // device (volume + container mount) and node placement (nodeSelector +
+ // toleration on ate.dev/sandboxClass); other classes get none of it.
+diff --git a/manifests/ate-install/generated/ate.dev_workerpools.yaml b/manifests/ate-install/generated/ate.dev_workerpools.yaml
+index 35dee75..a9ee593 100644
+--- a/manifests/ate-install/generated/ate.dev_workerpools.yaml
++++ b/manifests/ate-install/generated/ate.dev_workerpools.yaml
+@@ -97,9 +97,27 @@ spec:
+                   SandboxClass is used.
+                 type: string
+               template:
+-                description: Template holds optional pod scheduling and resource settings
++                description: |-
++                  Template holds optional pod identity, scheduling and resource settings
+                   for worker pods.
+                 properties:
++                  annotations:
++                    additionalProperties:
++                      type: string
++                    description: |-
++                      Annotations are added to the worker pods, e.g. to tell a CNI or service
++                      mesh how to treat the actor's virtual interface.
++                    type: object
++                  labels:
++                    additionalProperties:
++                      type: string
++                    description: |-
++                      Labels are added to the worker pods. The pool's own selector label
++                      (ate.dev/worker-pool) is reserved.
++                    type: object
++                    x-kubernetes-validations:
++                    - message: ate.dev/worker-pool is reserved
++                      rule: '!(''ate.dev/worker-pool'' in self)'
+                   nodeAffinity:
+                     description: |-
+                       NodeAffinity scheduling rules for the worker pods. Mapped to
+@@ -369,6 +387,14 @@ spec:
+                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                         type: object
+                     type: object
++                  serviceAccountName:
++                    description: |-
++                      ServiceAccountName is the ServiceAccount the worker pods run as. An
++                      actor's traffic leaves through its worker pod, so this is the workload
++                      identity (e.g. a mesh's SPIFFE ID) the actor's calls carry. Defaults to
++                      the namespace's default ServiceAccount.
++                    maxLength: 253
++                    type: string
+                   tolerations:
+                     description: Tolerations for the worker pods.
+                     items:
+diff --git a/pkg/api/v1alpha1/workerpool_types.go b/pkg/api/v1alpha1/workerpool_types.go
+index 64a62e9..bcc508f 100644
+--- a/pkg/api/v1alpha1/workerpool_types.go
++++ b/pkg/api/v1alpha1/workerpool_types.go
+@@ -19,9 +19,32 @@ import (
+ 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+ )
+ 
+-// WorkerPoolPodTemplate defines optional scheduling and resource settings for
+-// worker pods. NodeAffinity is mapped to spec.affinity.nodeAffinity on the pod.
++// WorkerPoolPodTemplate defines optional identity, scheduling and resource
++// settings for worker pods. NodeAffinity is mapped to
++// spec.affinity.nodeAffinity on the pod.
+ type WorkerPoolPodTemplate struct {
++	// Labels are added to the worker pods. The pool's own selector label
++	// (ate.dev/worker-pool) is reserved.
++	//
++	// +optional
++	// +kubebuilder:validation:XValidation:rule="!('ate.dev/worker-pool' in self)",message="ate.dev/worker-pool is reserved"
++	Labels map[string]string `json:"labels,omitempty"`
++
++	// Annotations are added to the worker pods, e.g. to tell a CNI or service
++	// mesh how to treat the actor's virtual interface.
++	//
++	// +optional
++	Annotations map[string]string `json:"annotations,omitempty"`
++
++	// ServiceAccountName is the ServiceAccount the worker pods run as. An
++	// actor's traffic leaves through its worker pod, so this is the workload
++	// identity (e.g. a mesh's SPIFFE ID) the actor's calls carry. Defaults to
++	// the namespace's default ServiceAccount.
++	//
++	// +optional
++	// +kubebuilder:validation:MaxLength=253
++	ServiceAccountName string `json:"serviceAccountName,omitempty"`
++
+ 	// NodeSelector is a selector which must be true for the pod to fit on a node.
+ 	//
+ 	// +optional
+@@ -62,7 +85,8 @@ type WorkerPoolSpec struct {
+ 	// +required
+ 	AteomImage string `json:"ateomImage"`
+ 
+-	// Template holds optional pod scheduling and resource settings for worker pods.
++	// Template holds optional pod identity, scheduling and resource settings
++	// for worker pods.
+ 	//
+ 	// +optional
+ 	Template *WorkerPoolPodTemplate `json:"template,omitempty"`
+diff --git a/pkg/api/v1alpha1/workerpool_validation_test.go b/pkg/api/v1alpha1/workerpool_validation_test.go
+index ab6dc0a..9cb78a5 100644
+--- a/pkg/api/v1alpha1/workerpool_validation_test.go
++++ b/pkg/api/v1alpha1/workerpool_validation_test.go
+@@ -84,6 +84,25 @@ func TestWorkerPoolValidation(t *testing.T) {
+ 			}
+ 		},
+ 		wantErr: false,
++	}, {
++		name: "pod identity",
++		mutate: func(wp *WorkerPool) {
++			wp.Spec.Template = &WorkerPoolPodTemplate{
++				ServiceAccountName: "agent-sa",
++				Labels:             map[string]string{"team": "advisors"},
++				Annotations:        map[string]string{"example.com/capture": "ateom0"},
++			}
++		},
++		wantErr: false,
++	}, {
++		name: "reserved worker pool label",
++		mutate: func(wp *WorkerPool) {
++			wp.Spec.Template = &WorkerPoolPodTemplate{
++				Labels: map[string]string{"ate.dev/worker-pool": "other"},
++			}
++		},
++		wantErr: true,
++		errMsg:  "ate.dev/worker-pool is reserved",
+ 	}, {
+ 		name: "too many tolerations",
+ 		mutate: func(wp *WorkerPool) {
+diff --git a/pkg/api/v1alpha1/zz_generated.deepcopy.go b/pkg/api/v1alpha1/zz_generated.deepcopy.go
+index e977908..584bb7a 100644
+--- a/pkg/api/v1alpha1/zz_generated.deepcopy.go
++++ b/pkg/api/v1alpha1/zz_generated.deepcopy.go
+@@ -527,6 +527,20 @@ func (in *WorkerPoolList) DeepCopyObject() runtime.Object {
+ // DeepCopyInto is an autogenerated deepcopy function, copying the receiver, writing into out. in must be non-nil.
+ func (in *WorkerPoolPodTemplate) DeepCopyInto(out *WorkerPoolPodTemplate) {
+ 	*out = *in
++	if in.Labels != nil {
++		in, out := &in.Labels, &out.Labels
++		*out = make(map[string]string, len(*in))
++		for key, val := range *in {
++			(*out)[key] = val
++		}
++	}
++	if in.Annotations != nil {
++		in, out := &in.Annotations, &out.Annotations
++		*out = make(map[string]string, len(*in))
++		for key, val := range *in {
++			(*out)[key] = val
++		}
++	}
+ 	if in.NodeSelector != nil {
+ 		in, out := &in.NodeSelector, &out.NodeSelector
+ 		*out = make(map[string]string, len(*in))
+-- 
+2.55.0
+

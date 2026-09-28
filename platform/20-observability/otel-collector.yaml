@@ -28,7 +28,11 @@ config:
     otlphttp/prometheus:
       endpoint: http://kps-prometheus.observability.svc:9090/api/v1/otlp
       tls: {insecure: true}
-    debug: {verbosity: basic}
+    otlphttp/observatory:           # gateway access logs, live, to the observatory
+      endpoint: http://observatory.observatory.svc:4318
+      encoding: json
+      tls: {insecure: true}
+      retry_on_failure: {enabled: true, max_elapsed_time: 30s}
   service:
     pipelines:
       traces:
@@ -40,8 +44,8 @@ config:
         processors: [memory_limiter, k8sattributes, batch]
         exporters: [otlphttp/prometheus]
       logs:
-        # No log store yet (Loki is an add-on); accept and drop so emitters
-        # like kagent's OTel logs don't error.
+        # No log store (Loki is an add-on): logs stream to the observatory's
+        # live view; other emitters' logs (kagent) are accepted and dropped there.
         receivers: [otlp]
-        processors: [memory_limiter, batch]
-        exporters: [debug]
+        processors: [memory_limiter, k8sattributes, batch]
+        exporters: [otlphttp/observatory]

@@ -1,0 +1,42 @@
+.traffic { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 14px 18px 0; gap: 10px; }
+.tbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tbar > input { width: 320px; }
+.thead, .tline { display: grid; grid-template-columns: 96px 18px 84px minmax(0, 1.4fr) minmax(0, 1fr) 56px 60px; gap: 10px; align-items: center; }
+.thead { font: 500 10.5px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .05em; color: var(--text-subtle); padding: 0 12px; }
+.tscroll { flex: 1; min-height: 0; border: 1px solid var(--border); border-radius: var(--radius-sm) var(--radius-sm) 0 0; background: var(--surface-solid); }
+.trow { border-bottom: 1px solid var(--border-soft); }
+.trow.o-denied { box-shadow: inset 3px 0 0 var(--warn); }
+.trow.o-error { box-shadow: inset 3px 0 0 var(--bad); }
+.tline { width: 100%; background: transparent; border: 0; text-align: left; padding: 7px 12px; cursor: pointer; font-size: 12.5px; }
+.tline:hover { background: var(--surface-2); }
+.trow.open > .tline { background: var(--surface-2); }
+.ttime { font-size: 11px; }
+.tdir { font-size: 12px; text-align: center; }
+.tdir.out { color: var(--accent-2); }
+.tdir.in { color: var(--info); }
+.tk { justify-self: start; }
+.chip.k-mcp { color: var(--k-mcp); }
+.chip.k-a2a { color: var(--k-a2a); }
+.chip.k-llm { color: var(--k-llm); }
+.chip.k-oidc { color: var(--k-oidc); }
+.chip.k-substrate { color: var(--k-substrate); }
+.chip.k-continuity { color: var(--warn); }
+.tsum { font-family: var(--font-mono); font-size: 12px; }
+.tpath { font-size: 11.5px; }
+.tdur { font-size: 11px; text-align: right; }
+.tdetail { padding: 8px 14px 14px 118px; display: flex; flex-direction: column; gap: 10px; }
+.tdetail a { color: var(--accent-2); cursor: pointer; }
+.raw { margin: 0; max-height: 360px; background: var(--surface); border: 1px solid var(--border-soft); border-radius: 8px; padding: 10px; font: 400 11.5px/1.45 var(--font-mono); }
+.empty-list { padding: 40px; text-align: center; }
+
+/* compact rows in the details panel */
+.details .tline { grid-template-columns: 78px 14px 64px minmax(0, 1fr) 44px 44px; gap: 6px; padding: 5px 4px; }
+.details .tdetail { padding: 6px 4px 10px; }
+
+/* tokens */
+.tkey { display: inline-flex; align-items: center; gap: 2px; margin-right: 8px; padding: 1px 6px; border-radius: 99px; vertical-align: -2px;
+  color: var(--k-oidc); background: color-mix(in hsl, var(--k-oidc) 16%, transparent); font: 500 10.5px/1.4 var(--font-mono); }
+.token { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid color-mix(in hsl, var(--k-oidc) 40%, var(--border)); border-radius: 8px;
+  background: color-mix(in hsl, var(--k-oidc) 5%, var(--surface)); }
+.token .row { display: flex; align-items: center; gap: 8px; }
+.token .btn { align-self: flex-start; }

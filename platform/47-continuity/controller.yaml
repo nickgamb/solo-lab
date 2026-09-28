@@ -1,0 +1,120 @@
+# continuity-controller: S&V's component, next to the Keycloak it drives.
+# Reads its own credentials and each tier's client secret (sv-identity), owns
+# the ServiceEntries for external upstreams (sv-egress), and reads partition
+# policies anywhere (status only).
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: continuity-controller, namespace: sv-identity}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: continuity-controller, namespace: sv-identity}
+rules:
+- apiGroups: [continuity.lab.solo.io]
+  resources: [identitycontinuities]
+  verbs: [get, list, watch, update, patch]
+- apiGroups: [continuity.lab.solo.io]
+  resources: [identitycontinuities/status]
+  verbs: [get, update, patch]
+- apiGroups: [continuity.lab.solo.io]
+  resources: [identitycontinuities/finalizers]
+  verbs: [update]
+- apiGroups: [""]
+  resources: [secrets]           # watched as metadata; data read on demand
+  verbs: [get, list, watch]
+- apiGroups: [coordination.k8s.io]
+  resources: [leases]
+  verbs: [get, list, watch, create, update, patch]
+- apiGroups: ["", events.k8s.io]   # core: leader election; events.k8s.io: tier events
+  resources: [events]
+  verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: continuity-controller, namespace: sv-identity}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: continuity-controller}
+subjects: [{kind: ServiceAccount, name: continuity-controller, namespace: sv-identity}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: continuity-controller, namespace: sv-egress}
+rules:
+- apiGroups: [networking.istio.io]
+  resources: [serviceentries]
+  verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: continuity-controller, namespace: sv-egress}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: continuity-controller}
+subjects: [{kind: ServiceAccount, name: continuity-controller, namespace: sv-identity}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: continuity-controller-partitions}
+rules:
+- apiGroups: [security.istio.io]
+  resources: [authorizationpolicies]
+  verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: continuity-controller-partitions}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: continuity-controller-partitions}
+subjects: [{kind: ServiceAccount, name: continuity-controller, namespace: sv-identity}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: continuity-controller
+  namespace: sv-identity
+  labels: {app: continuity-controller}
+spec:
+  replicas: 2                     # one leader (Lease continuity.lab.solo.io), one warm standby
+  selector: {matchLabels: {app: continuity-controller}}
+  template:
+    metadata:
+      labels: {app: continuity-controller}
+    spec:
+      serviceAccountName: continuity-controller
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector: {matchLabels: {app: continuity-controller}}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+      - name: controller
+        image: ${CONTINUITY_IMAGE}
+        args: [--ca-file=/etc/lab-ca/ca.crt]
+        env:
+        - name: POD_NAMESPACE
+          valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+        ports:
+        - {name: metrics, containerPort: 8080}
+        - {name: health, containerPort: 8081}
+        livenessProbe:
+          httpGet: {path: /healthz, port: health}
+        readinessProbe:
+          httpGet: {path: /readyz, port: health}
+        resources:
+          requests: {cpu: 20m, memory: 48Mi}
+          limits: {memory: 128Mi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: [ALL]}
+        volumeMounts:
+        - {name: lab-ca, mountPath: /etc/lab-ca, readOnly: true}
+      volumes:
+      - name: lab-ca
+        configMap: {name: lab-ca-bundle}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: continuity-controller, namespace: sv-identity}
+spec:
+  minAvailable: 1
+  selector: {matchLabels: {app: continuity-controller}}

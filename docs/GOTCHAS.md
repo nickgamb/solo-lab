@@ -36,6 +36,8 @@
   `accessTokenScopes: []`.
 - **`oauthTokenExchange` forwards only bearer tokens.** An ID-token result (`N_A`)
   is rejected by design, so don't chain through it.
+- **Pointing the IdP redirector at a provider needs `manage-realm`.** Authenticator
+  configs are realm-level; `manage-identity-providers` alone gets a 403.
 - **Keycloak allows one client authenticator per client.** The edge and a gateway
   can't hold different credentials for the same client.
 
@@ -47,10 +49,34 @@
 - **The controller forwards only `Authorization` and `X-User-Id` to agents** (hence
   the ID-token patch).
 
+**Agent Substrate**
+- **In an ambient namespace, stock 0.0.9 actors never get ready.** ztunnel captures
+  ateom's readyz to the actor veth and inbound bypasses the mesh (tools/substrate-mesh).
+- **Worker pods need two annotations:** `istio.io/reroute-virtual-interfaces: ateom0`
+  (actor egress through ztunnel, else it leaves with no identity) and
+  `ambient.istio.io/dns-capture: "false"` (else the actor's DNS replies are dropped).
+- **Labelling ate-system ambient isn't enough.** istio-cni's `excludeNamespaces` wins
+  (it only logs a warning), and a changed exclude list needs an istio-cni-node restart.
+- **Worker selectors match pool labels across namespaces**, and every worker used to
+  run as `default`. Name pools uniquely; identity-bearing pools are namespace-private.
+- **ate-api authenticates any ServiceAccount token for its audience and authorizes
+  nothing.** Fence it (and the router, which reaches any actor by name) by identity.
+- **ate-api resolves an actor's secret env itself**, and the kagent chart only lets it
+  read Secrets in kagent's namespace. Each agent namespace grants its own (by name).
+- **Stock kagent 0.10.2 SandboxAgents 401 in trusted-proxy mode** (no ServiceAccount
+  token to call back with), and a turn sent as the previous one closes (a HITL
+  approval) can hang on its suspend. tools/kagent 0002 and 0003.
+- **SandboxAgents need a `contextId` on every A2A message**, at
+  `/api/a2a-sandboxes/<ns>/<name>`, and can't share a name with an Agent.
+- **A failed resume keeps its worker claimed** until that same session resumes or the
+  worker pod goes; the pool reports "no free workers". atelet's image cache is in
+  memory, so a restarted atelet's first pull can outlast the controller's 30s resume.
+
 **Platform**
 - **Substrate 0.0.9 is the pairing kagent 0.10.x vendors.** 0.0.13+ needs an
   out-of-band CA-pool bootstrap, and in-place 0.0.x upgrades corrupt valkey state.
 - **Istio 1.31 charts aren't on the GCS Helm repo.** They come from the verified
   release tarball.
+- **`port_forward` sets an EXIT trap.** A script's own cleanup trap must be set after it.
 - **macOS ships bash 3.2**: no `mapfile`, and empty arrays under `set -u` need
   `${a[@]+"${a[@]}"}`. zsh doesn't word-split `set -- $var`.

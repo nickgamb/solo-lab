@@ -1,0 +1,108 @@
+{
+  "realm": "ops",
+  "displayName": "Platform operations",
+  "enabled": true,
+  "sslRequired": "external",
+  "accessTokenLifespan": 300,
+  "groups": [
+    {
+      "name": "observatory-admins"
+    }
+  ],
+  "users": [
+    {
+      "id": "0b5e0000-0000-4000-8000-0000000000a1",
+      "username": "ops",
+      "email": "ops@${OPS_DOMAIN}",
+      "firstName": "Platform",
+      "lastName": "Operator",
+      "enabled": true,
+      "emailVerified": true,
+      "groups": [
+        "/observatory-admins"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "ops-demo",
+          "temporary": false
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "observatory",
+      "name": "Observatory",
+      "description": "The platform's single pane of glass. Signed in at the edge (kgateway OAuth2).",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${OBSERVATORY_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "https://observatory.${OPS_DOMAIN}/oauth2/redirect"
+      ],
+      "webOrigins": [
+        "https://observatory.${OPS_DOMAIN}"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "https://observatory.${OPS_DOMAIN}/*",
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "aud-observatory",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "observatory",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "components": {
+    "org.keycloak.keys.KeyProvider": [
+      {
+        "name": "lab-rs256",
+        "providerId": "rsa",
+        "subComponents": {},
+        "config": {
+          "priority": [
+            "200"
+          ],
+          "enabled": [
+            "true"
+          ],
+          "active": [
+            "true"
+          ],
+          "algorithm": [
+            "RS256"
+          ],
+          "privateKey": [
+            "${KC_REALM_RSA_KEY}"
+          ],
+          "certificate": [
+            "${KC_REALM_RSA_CERT}"
+          ]
+        }
+      }
+    ]
+  }
+}

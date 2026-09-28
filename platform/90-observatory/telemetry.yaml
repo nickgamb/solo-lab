@@ -1,0 +1,96 @@
+# Access logs from every gateway, over OTLP to the platform collector, which
+# fans them out to the observatory. Each record carries who called (SPIFFE
+# id, user, and the verified token's claims), what (MCP method and tool,
+# model), and where it went. Raw tokens are never logged.
+#
+# agentgateway: S&V's ai-gateway and MCP waypoint, and Meridian's gateway.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata: {name: access-log, namespace: agentgateway-system}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: ai-gateway}]
+  frontend:
+    accessLog:
+      attributes:
+        add:
+        # the claims of the token the JWT policy verified (agentgateway redacts
+        # the raw token); the observatory shows them on the request
+        - {name: jwt, expression: 'jwt'}
+        - {name: mcp.tool.name, expression: 'mcp.tool.name'}
+        # a user's ID token riding along for cross-app access: noted, not logged
+        - {name: token.x-id-token, expression: '"x-id-token" in request.headers'}
+      otlp:
+        url: http://otel-collector.observability.svc:4318
+        protocol: HTTP
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata: {name: access-log, namespace: sv-mcp}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: mcp-waypoint}]
+  frontend:
+    accessLog:
+      attributes:
+        add:
+        # the claims of the token the JWT policy verified (agentgateway redacts
+        # the raw token); the observatory shows them on the request
+        - {name: jwt, expression: 'jwt'}
+        - {name: mcp.tool.name, expression: 'mcp.tool.name'}
+        # a user's ID token riding along for cross-app access: noted, not logged
+        - {name: token.x-id-token, expression: '"x-id-token" in request.headers'}
+      otlp:
+        url: http://otel-collector.observability.svc:4318
+        protocol: HTTP
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata: {name: access-log, namespace: meridian}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: meridian}]
+  frontend:
+    accessLog:
+      attributes:
+        add:
+        # the claims of the token the JWT policy verified (agentgateway redacts
+        # the raw token); the observatory shows them on the request
+        - {name: jwt, expression: 'jwt'}
+        - {name: mcp.tool.name, expression: 'mcp.tool.name'}
+        # a user's ID token riding along for cross-app access: noted, not logged
+        - {name: token.x-id-token, expression: '"x-id-token" in request.headers'}
+      otlp:
+        url: http://otel-collector.observability.svc:4318
+        protocol: HTTP
+---
+# kgateway: the edge.
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: ListenerPolicy
+metadata: {name: access-log, namespace: kgateway-system}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: edge}]
+  default:
+    httpSettings:
+      accessLog:
+      - openTelemetry:
+          grpcService:
+            logName: edge
+            backendRef: {name: otel-collector, namespace: observability, port: 4317}
+          body: '%REQ(:METHOD)% %REQ(:AUTHORITY)%%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)% %RESPONSE_CODE%'
+          attributes:
+            values:
+            - {key: gateway, value: {stringValue: kgateway-system/edge}}
+            - {key: http.method, value: {stringValue: '%REQ(:METHOD)%'}}
+            - {key: http.host, value: {stringValue: '%REQ(:AUTHORITY)%'}}
+            - {key: http.path, value: {stringValue: '%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%'}}
+            - {key: http.status, value: {stringValue: '%RESPONSE_CODE%'}}
+            - {key: duration, value: {stringValue: '%DURATION%'}}
+            - {key: endpoint, value: {stringValue: '%UPSTREAM_HOST%'}}
+            - {key: src.addr, value: {stringValue: '%DOWNSTREAM_REMOTE_ADDRESS%'}}
+            - {key: route, value: {stringValue: '%ROUTE_NAME%'}}
+            - {key: response.flags, value: {stringValue: '%RESPONSE_FLAGS%'}}
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata: {name: edge-access-log, namespace: observability}
+spec:
+  from: [{group: gateway.kgateway.dev, kind: ListenerPolicy, namespace: kgateway-system}]
+  to: [{group: "", kind: Service, name: otel-collector}]

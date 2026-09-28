@@ -1,0 +1,3 @@
+# The advisor desk: Sterling & Vance's shared agents for every advisor, next to
+# Bob's own. They use the firm's tools that story 1 installs (../agent).
+resources: [desk.yaml]

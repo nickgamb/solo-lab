@@ -2,4 +2,4 @@ profile: ambient
 cni:
   # kind: defaults (/opt/cni/bin, /etc/cni/net.d) are correct. Getting these
   # wrong means pods silently never join the mesh.
-  excludeNamespaces: [istio-system, kube-system, ate-system]
+  excludeNamespaces: [istio-system, kube-system]

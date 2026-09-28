@@ -1,0 +1,32 @@
+.app { display: flex; flex-direction: column; height: 100%; }
+.top {
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+  padding: 10px 18px; border-bottom: 1px solid var(--border-soft);
+  background: color-mix(in hsl, var(--bg) 70%, transparent); backdrop-filter: blur(8px);
+  z-index: 10;
+}
+.brand { display: flex; align-items: center; gap: 12px; }
+.wordmark { display: inline-flex; color: var(--text); }
+.wordmark svg { width: 88px; height: auto; }
+.product { font: 500 17px/1 var(--font-heading); color: var(--text-muted); padding-left: 12px; border-left: 1px solid var(--border); }
+.tabs { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--border); border-radius: var(--pill); background: var(--surface); }
+.tab {
+  border: 0; background: transparent; padding: 7px 16px; border-radius: var(--pill); cursor: pointer;
+  font: 500 13px/1 var(--font-heading); color: var(--text-muted); transition: background var(--ease), color var(--ease);
+}
+.tab:hover { color: var(--text); }
+.tab.active { background: var(--accent); color: #fff; }
+.status { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.user { display: inline-flex; align-items: center; gap: 8px; padding-left: 8px; font-size: 13px; }
+.user a { text-decoration: none; font-size: 12px; }
+.avatar {
+  width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent-2); font: 600 12px/1 var(--font-heading);
+}
+.body { flex: 1; min-height: 0; position: relative; }
+
+@media (max-width: 900px) {
+  .top { grid-template-columns: 1fr; gap: 8px; }
+  .status, .brand { justify-content: center; }
+  .tabs { justify-self: center; }
+}

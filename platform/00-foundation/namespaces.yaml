@@ -1,5 +1,6 @@
 # Every namespace declares its party. Mesh membership, edge route admission
-# and mesh policy all key off these labels. See docs/ARCHITECTURE.md.
+# and mesh policy all key off these labels. See docs/ARCHITECTURE.md. One
+# namespace per party also names it for the observatory.
 #
 # Platform (neutral "cloud")
 apiVersion: v1
@@ -7,6 +8,7 @@ kind: Namespace
 metadata:
   name: kgateway-system
   labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient}
+  annotations: {observatory.solo.io/party-name: "Platform"}
 ---
 apiVersion: v1
 kind: Namespace
@@ -14,12 +16,24 @@ metadata:
   name: observability
   labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient}
 ---
-# Substrate: gVisor workers and atenet do their own networking; not meshed.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observatory
+  labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ops-identity
+  labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient}
+---
+# Agent Substrate: control plane and router (workers run in each agent namespace)
 apiVersion: v1
 kind: Namespace
 metadata:
   name: ate-system
-  labels: {lab.solo.io/party: platform}
+  labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient}
 ---
 # Sterling & Vance — Bob's firm, runs the Solo AI platform
 apiVersion: v1
@@ -27,6 +41,7 @@ kind: Namespace
 metadata:
   name: sv-identity
   labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient}
+  annotations: {observatory.solo.io/party-name: "Sterling & Vance"}
 ---
 apiVersion: v1
 kind: Namespace
@@ -59,6 +74,13 @@ metadata:
   # S&V's tools sit behind an agentgateway waypoint (demos/bob/manifests/20-waypoint.yaml)
   labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient, istio.io/use-waypoint: mcp-waypoint}
 ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sv-egress
+  # the firm's way out to internet services (egress waypoint, ServiceEntries)
+  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient}
+---
 # Alice — resource owner
 apiVersion: v1
 kind: Namespace
@@ -66,6 +88,7 @@ metadata:
   name: alice
   # waypoint opt-in is per workload (only uma-as needs L7 path rules)
   labels: {lab.solo.io/party: alice, istio.io/dataplane-mode: ambient}
+  annotations: {observatory.solo.io/party-name: "Alice"}
 ---
 apiVersion: v1
 kind: Namespace
@@ -80,6 +103,7 @@ metadata:
   name: meridian
   # waypoint opt-in is per workload (only uma-pep needs L7 path rules)
   labels: {lab.solo.io/party: meridian, istio.io/dataplane-mode: ambient}
+  annotations: {observatory.solo.io/party-name: "Meridian Wealth"}
 ---
 # Ledgerline Research — a SaaS research provider S&V subscribes to (Cross App Access)
 apiVersion: v1
@@ -87,6 +111,7 @@ kind: Namespace
 metadata:
   name: ledgerline
   labels: {lab.solo.io/party: ledgerline, istio.io/dataplane-mode: ambient, istio.io/use-waypoint: waypoint}
+  annotations: {observatory.solo.io/party-name: "Ledgerline Research"}
 ---
 apiVersion: v1
 kind: Namespace

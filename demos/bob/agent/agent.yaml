@@ -3,6 +3,8 @@
 #   spiffe://cluster.local/ns/sv-agents/sa/bob-assistant
 # That identity is half of every authorization decision about Bob's tools;
 # the other half is Bob's own token, which kagent propagates on each call.
+# It runs on Agent Substrate: one snapshot-backed actor per conversation, on
+# its own worker pool, whose pods run as that ServiceAccount.
 #
 # The agent holds no credentials of its own: no provider key (the firm's
 # ai-gateway injects it) and no tool token (the tools' waypoint mints a
@@ -42,13 +44,46 @@ spec:
   url: http://bob-workspace-mcp.sv-mcp.svc.cluster.local:3000/mcp
   timeout: 60s
 ---
+# An actor's calls leave through its worker pod, so the pool runs as Bob's
+# agent: every existing policy that names sv-agents/sa/bob-assistant applies.
+apiVersion: ate.dev/v1alpha1
+kind: WorkerPool
+metadata:
+  name: bob-assistant
+  namespace: sv-agents
+  labels: {kagent.dev/worker-pool: bob-assistant, lab.solo.io/owner: bob}
+spec:
+  replicas: 2
+  ateomImage: localhost:5001/kagent-dev/substrate/ateom-gvisor:v0.0.9-lab.1
+  template:
+    serviceAccountName: bob-assistant
+    annotations:
+      istio.io/reroute-virtual-interfaces: ateom0   # actor egress through ztunnel, as the worker
+      ambient.istio.io/dns-capture: "false"         # the actor's DNS is forwarded, not local
+---
+# Substrate resolves the actor's secret env at resume time: its config and the
+# gateway placeholder key. Nothing else in sv-agents.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: substrate-env-sources, namespace: sv-agents}
+rules:
+- {apiGroups: [""], resources: [secrets], resourceNames: [bob-assistant, llm-via-gateway], verbs: [get]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: substrate-env-sources, namespace: sv-agents}
+subjects: [{kind: ServiceAccount, name: ate-api-server, namespace: ate-system}]
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: substrate-env-sources}
+---
 apiVersion: kagent.dev/v1alpha2
-kind: Agent
+kind: SandboxAgent
 metadata:
   name: bob-assistant
   namespace: sv-agents
   labels: {lab.solo.io/owner: bob}
 spec:
+  substrate:
+    workerPoolRef: {name: bob-assistant}
   type: Declarative
   description: "Bob's advisory assistant at Sterling & Vance. Works his book of business, as Bob."
   declarative:
