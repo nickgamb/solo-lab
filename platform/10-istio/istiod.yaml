@@ -1,0 +1,34 @@
+profile: ambient
+global:
+  multiCluster:
+    clusterName: ${MESH_NAME}
+  network: ${MESH_NETWORK}
+meshConfig:
+  trustDomain: cluster.local
+  accessLogFile: /dev/stdout
+  accessLogEncoding: JSON
+  enableTracing: true
+  extensionProviders:
+  - name: otel-tracing
+    opentelemetry:
+      service: otel-collector.observability.svc.cluster.local
+      port: 4317
+  - name: otel-als
+    envoyOtelAls:
+      service: otel-collector.observability.svc.cluster.local
+      port: 4317
+pilot:
+  # HA control plane: 2 replicas spread across zones, HPA to 4
+  autoscaleEnabled: true
+  autoscaleMin: 2
+  autoscaleMax: 4
+  replicaCount: 2
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+  env:
+    PILOT_ENABLE_IP_AUTOALLOCATE: "true"
+  topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector: {matchLabels: {app: istiod}}

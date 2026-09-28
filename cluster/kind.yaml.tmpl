@@ -1,0 +1,42 @@
+# Rendered by scripts/cluster-up.sh (envsubst) to .lab/kind.yaml.
+#
+# - k8s 1.37 with certificates.k8s.io/v1beta1 on: Agent Substrate needs
+#   ClusterTrustBundle + PodCertificateRequest (on by default in 1.37; the API
+#   group version is not). Without it PodCertificate projected volumes are
+#   silently dropped and substrate's postgres dies on a missing server cert.
+# - 1 control-plane + ${KIND_WORKERS} workers across 3 zones, so replicas,
+#   topologySpreadConstraints, PDBs and Istio locality LB actually do something.
+# - containerd reads /etc/containerd/certs.d (mounted from .lab/certs.d) so every
+#   image pull goes through the pull-through caches, which outlive the cluster.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: ${LAB_NAME}
+runtimeConfig:
+  "certificates.k8s.io/v1beta1": "true"
+containerdConfigPatches:
+- |-
+  [plugins."io.containerd.grpc.v1.cri".registry]
+    config_path = "/etc/containerd/certs.d"
+kubeadmConfigPatches:
+- |
+  kind: KubeletConfiguration
+  serializeImagePulls: false
+  maxParallelImagePulls: 6
+nodes:
+- role: control-plane
+  image: ${KIND_NODE_IMAGE}
+  labels:
+    ingress-ready: "true"
+  extraMounts:
+  - hostPath: ${LAB_STATE}/certs.d
+    containerPath: /etc/containerd/certs.d
+    readOnly: true
+  extraPortMappings:
+  # edge gateway (kgateway) NodePorts -> localhost
+  - containerPort: 30080
+    hostPort: ${LAB_HTTP_PORT}
+    listenAddress: "127.0.0.1"
+  - containerPort: 30443
+    hostPort: ${LAB_HTTPS_PORT}
+    listenAddress: "127.0.0.1"
+${KIND_WORKER_NODES}

@@ -1,0 +1,3 @@
+licensing:
+  createSecret: true
+  licenseKey: ${SOLO_AGW_LICENSE_KEY}

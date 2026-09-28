@@ -1,0 +1,217 @@
+# sv-mcp's waypoint is an agentgateway: MCP-aware L7 inside the mesh.
+# Agents call bob-workspace-mcp.sv-mcp:3000 directly; ztunnel carries every
+# such call (HBONE, with the caller's SPIFFE ID) to this waypoint, so there is
+# no path to Bob's tools that skips it. Owned by S&V, lives with the tools.
+#
+#   who may call       an S&V agent WORKLOAD (source.identity, ns sv-agents)
+#                      acting for an advisor (verified S&V JWT, group advisors)
+#   what they may do   per-tool CEL: advisors get the read tools + log_followup;
+#                      export_book is compliance-only (filtered out of lists)
+#   what goes upstream NOT Bob's token: a fresh RFC 8693 token from S&V's
+#                      Keycloak, aud=bob-workspace, 120 s, minted for the call
+#
+# Two lanes, split by HTTPRoute header match:
+#   user lane       has a bearer token -> strict JWT, identity+group rule, per-tool
+#                   CEL, RFC 8693 exchange
+#   discovery lane  no token -> only the kagent controller's SPIFFE identity, no
+#                   exchange; it can list tools (for the UI), and any call it
+#                   attempts is refused by the server (no delegated token)
+apiVersion: ${AGW_PARAMS_API}
+kind: ${AGW_PARAMS_KIND}
+metadata:
+  name: mcp-waypoint
+  namespace: sv-mcp
+spec:
+  istio:
+    enabled: true
+  deployment:
+    spec:
+      replicas: 2
+      template:
+        metadata:
+          labels: {networking.istio.io/tunnel: http}
+        spec:
+          topologySpreadConstraints:
+          - maxSkew: 1
+            topologyKey: topology.kubernetes.io/zone
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels: {gateway.networking.k8s.io/gateway-name: mcp-waypoint}
+  podDisruptionBudget:
+    spec: {minAvailable: 1}
+  service:
+    spec: {type: ClusterIP}
+  resources:
+    requests: {cpu: 50m, memory: 96Mi}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: mcp-waypoint
+  namespace: sv-mcp
+  labels:
+    istio.io/waypoint-for: service
+  annotations:
+    # Traffic for the MCP port arrives only inside HBONE from ztunnel.
+    agentgateway.dev/internal-ports: "3000"
+spec:
+  gatewayClassName: ${AGW_CLASS}
+  infrastructure:
+    parametersRef: {group: ${AGW_PARAMS_GROUP}, kind: ${AGW_PARAMS_KIND}, name: mcp-waypoint}
+  listeners:
+  - {name: mesh, port: 15008, protocol: HBONE, allowedRoutes: {namespaces: {from: Same}}}
+  - {name: mcp, port: 3000, protocol: HTTP, allowedRoutes: {namespaces: {from: Same}}}
+---
+apiVersion: ${AGW_BACKEND_API}
+kind: ${AGW_BACKEND_KIND}
+metadata:
+  name: bob-workspace
+  namespace: sv-mcp
+  labels: {lab.solo.io/owner: bob}
+spec:
+  mcp:
+    targets:
+    - name: bob-workspace
+      static:
+        backendRef: {name: bob-workspace-mcp}
+        port: 3000
+        path: /mcp
+        protocol: StreamableHTTP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: bob-workspace
+  namespace: sv-mcp
+spec:
+  parentRefs: [{name: mcp-waypoint, sectionName: mcp}]
+  rules:
+  - matches:
+    - path: {type: PathPrefix, value: /mcp}
+      headers: [{name: authorization, type: RegularExpression, value: "^[Bb]earer .+"}]
+    backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: bob-workspace}]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: bob-workspace-discovery
+  namespace: sv-mcp
+spec:
+  parentRefs: [{name: mcp-waypoint, sectionName: mcp}]
+  rules:
+  - matches: [{path: {type: PathPrefix, value: /mcp}}]
+    backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: bob-workspace-discovery}]
+---
+apiVersion: ${AGW_BACKEND_API}
+kind: ${AGW_BACKEND_KIND}
+metadata:
+  name: bob-workspace-discovery
+  namespace: sv-mcp
+spec:
+  mcp:
+    targets:
+    - name: bob-workspace
+      static:
+        backendRef: {name: bob-workspace-mcp}
+        port: 3000
+        path: /mcp
+        protocol: StreamableHTTP
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata:
+  name: bob-workspace-discovery
+  namespace: sv-mcp
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: bob-workspace-discovery}]
+  traffic:
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+        - 'source.identity.namespace == "kagent" && source.identity.serviceAccount == "kagent-controller"'
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata:
+  name: bob-workspace-caller
+  namespace: sv-mcp
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: bob-workspace}]
+  traffic:
+    jwtAuthentication:
+      mode: Strict                # the user lane always carries a token
+      providers:
+      - issuer: https://idp.${SV_DOMAIN}/realms/sterling-vance
+        audiences: [mcp-waypoint]
+        jwks:
+          remote:
+            backendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}
+            jwksPath: /realms/sterling-vance/protocol/openid-connect/certs
+            cacheDuration: 5m
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+        # an S&V agent workload, acting for an advisor
+        - 'source.identity.namespace == "sv-agents" && "advisors" in jwt.groups'
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata:
+  name: bob-workspace-tools
+  namespace: sv-mcp
+spec:
+  targetRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: bob-workspace}]
+  backend:
+    mcp:
+      authorization:
+        action: Allow
+        policy:
+          matchExpressions:
+          - 'mcp.tool.name in ["whoami", "list_clients", "get_client", "get_meeting_notes", "log_followup"]'
+          - 'has(jwt.groups) && "compliance" in jwt.groups'
+    auth:
+      oauthTokenExchange:
+        backendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}
+        path: /realms/sterling-vance/protocol/openid-connect/token
+        grantType: TokenExchange
+        # The JWT policy strips Bob's token from the request (it never goes
+        # upstream); the exchange takes it from the already-verified claims.
+        subjectToken:
+          source: {expression: 'jwt.rawToken.unredacted()'}
+          tokenType: AccessToken
+        audiences: [bob-workspace]
+        clientAuth:
+          clientId: mcp-waypoint      # the waypoint's own OAuth identity
+          method: ClientSecretBasic
+          secretRef: {name: mcp-waypoint-oidc, key: clientSecret}
+---
+# The identity team lets S&V's gateways reach Keycloak (JWKS + token exchange).
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: gateways-to-keycloak
+  namespace: sv-identity
+spec:
+  from:
+  - {group: agentgateway.dev, kind: AgentgatewayPolicy, namespace: sv-mcp}
+  - {group: agentgateway.dev, kind: AgentgatewayPolicy, namespace: agentgateway-system}
+  to: [{group: "", kind: Service, name: keycloak}]
+---
+# Same tool surface on the discovery lane, so the UI never advertises a tool
+# the firm withholds from advisors.
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata:
+  name: bob-workspace-discovery-tools
+  namespace: sv-mcp
+spec:
+  targetRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: bob-workspace-discovery}]
+  backend:
+    mcp:
+      authorization:
+        action: Allow
+        policy:
+          matchExpressions:
+          - 'mcp.tool.name in ["whoami", "list_clients", "get_client", "get_meeting_notes", "log_followup"]'

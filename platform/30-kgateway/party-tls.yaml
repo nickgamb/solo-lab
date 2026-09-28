@@ -1,0 +1,59 @@
+# Each party owns its edge certificate (and private key) in its own namespace
+# and grants the edge Gateway read access with a ReferenceGrant. The platform
+# never holds a party's key material.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: edge-tls, namespace: kgateway-system}
+spec:
+  secretName: edge-tls
+  dnsNames: ["*.${OPS_DOMAIN}"]
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {name: lab-ca, kind: ClusterIssuer}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: edge-tls, namespace: sv-identity}
+spec:
+  secretName: edge-tls
+  dnsNames: ["*.${SV_DOMAIN}"]
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {name: lab-ca, kind: ClusterIssuer}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: edge-tls, namespace: alice}
+spec:
+  secretName: edge-tls
+  dnsNames: ["*.${ALICE_DOMAIN}"]
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {name: lab-ca, kind: ClusterIssuer}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: edge-tls, namespace: meridian}
+spec:
+  secretName: edge-tls
+  dnsNames: ["*.${MERIDIAN_DOMAIN}"]
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {name: lab-ca, kind: ClusterIssuer}
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata: {name: edge-reads-tls, namespace: sv-identity}
+spec:
+  from: [{group: gateway.networking.k8s.io, kind: Gateway, namespace: kgateway-system}]
+  to: [{group: "", kind: Secret, name: edge-tls}]
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata: {name: edge-reads-tls, namespace: alice}
+spec:
+  from: [{group: gateway.networking.k8s.io, kind: Gateway, namespace: kgateway-system}]
+  to: [{group: "", kind: Secret, name: edge-tls}]
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata: {name: edge-reads-tls, namespace: meridian}
+spec:
+  from: [{group: gateway.networking.k8s.io, kind: Gateway, namespace: kgateway-system}]
+  to: [{group: "", kind: Secret, name: edge-tls}]

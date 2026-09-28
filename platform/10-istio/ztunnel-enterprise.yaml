@@ -1,0 +1,11 @@
+# Solo Enterprise for Istio: Solo-built images (FIPS/distroless variants exist)
+global:
+  hub: ${ISTIO_HUB}
+  tag: ${ISTIO_TAG}
+  variant: distroless
+# ztunnel reads hub/tag at the top level, not only under global
+hub: ${ISTIO_HUB}
+tag: ${ISTIO_TAG}
+variant: distroless
+env:
+  L7_ENABLED: "true"

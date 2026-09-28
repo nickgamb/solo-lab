@@ -1,0 +1,22 @@
+auth:
+  strategy: anonymous          # switched to openid by 45-identity
+deployment:
+  cluster_wide_access: true
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+server:
+  web_fqdn: kiali.${OPS_DOMAIN}
+  web_root: /
+external_services:
+  prometheus:
+    url: http://kps-prometheus.observability.svc:9090
+  grafana:
+    enabled: true
+    internal_url: http://kps-grafana.observability.svc
+    external_url: https://grafana.${OPS_DOMAIN}
+  tracing:
+    enabled: true
+    provider: tempo
+    internal_url: http://tempo.observability.svc:3200
+    use_grpc: false
+    external_url: https://grafana.${OPS_DOMAIN}

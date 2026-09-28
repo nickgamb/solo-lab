@@ -1,0 +1,79 @@
+# Every namespace declares its party. Mesh membership, edge route admission
+# and mesh policy all key off these labels. See docs/ARCHITECTURE.md.
+#
+# Platform (neutral "cloud")
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kgateway-system
+  labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+  labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient}
+---
+# Substrate: gVisor workers and atenet do their own networking; not meshed.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ate-system
+  labels: {lab.solo.io/party: platform}
+---
+# Sterling & Vance — Bob's firm, runs the Solo AI platform
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sv-identity
+  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kagent
+  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentgateway-system
+  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentregistry
+  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sv-agents
+  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sv-mcp
+  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient, istio.io/use-waypoint: waypoint}
+---
+# Alice — resource owner
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: alice
+  labels: {lab.solo.io/party: alice, istio.io/dataplane-mode: ambient, istio.io/use-waypoint: waypoint}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: alice-identity
+  labels: {lab.solo.io/party: alice, istio.io/dataplane-mode: ambient}
+---
+# Meridian Wealth — Alice's brokerage (resource server)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: meridian
+  labels: {lab.solo.io/party: meridian, istio.io/dataplane-mode: ambient, istio.io/use-waypoint: waypoint}

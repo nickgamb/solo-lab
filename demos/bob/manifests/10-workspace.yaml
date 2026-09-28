@@ -1,0 +1,66 @@
+# Bob's workspace: Sterling & Vance's MCP server for Bob's book of business.
+# Owned by S&V, lives in sv-mcp. Nothing reaches it except through the
+# namespace's waypoint, which is an agentgateway (20-waypoint.yaml).
+#
+# Checks, none of which trusts the one before it:
+#   0. STRICT mTLS       plaintext to these pods is refused
+#   1. ztunnel (L4)      only the mcp-waypoint identity may open a connection
+#   2. mcp-waypoint (L7) caller must be an S&V agent workload (SPIFFE) acting
+#                        for an advisor (JWT); per-tool CEL; then RFC 8693:
+#                        the tool gets a token delegated to it, not Bob's
+#   3. the server        answers only aud=bob-workspace, acts as the token's user
+apiVersion: kagent.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: bob-workspace
+  namespace: sv-mcp
+  labels: {lab.solo.io/owner: bob}
+spec:
+  transportType: http
+  httpTransport:
+    targetPort: 3000
+    path: /mcp
+  deployment:
+    image: localhost:5001/sv/bob-workspace:dev
+    imagePullPolicy: Always
+    port: 3000
+    replicas: 2
+    resources:
+      requests: {cpu: 20m, memory: 64Mi}
+      limits: {memory: 256Mi}
+---
+# The MCP surface agents call: http://bob-workspace-mcp.sv-mcp:3000/mcp
+# (kmcp's own Service carries no appProtocol). Waypoint-captured like every
+# Service in sv-mcp.
+apiVersion: v1
+kind: Service
+metadata:
+  name: bob-workspace-mcp
+  namespace: sv-mcp
+  labels: {lab.solo.io/mcp: bob-workspace, lab.solo.io/owner: bob}
+  annotations: {agentgateway.dev/mcp-path: /mcp}
+spec:
+  selector: {app.kubernetes.io/name: bob-workspace}
+  ports:
+  - {name: mcp, port: 3000, targetPort: 3000, appProtocol: agentgateway.dev/mcp}
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: strict
+  namespace: sv-mcp
+spec:
+  mtls: {mode: STRICT}
+---
+# L4, enforced by ztunnel on the pods: the waypoint is the only way in.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: bob-workspace-pods-only-from-waypoint
+  namespace: sv-mcp
+spec:
+  selector:
+    matchLabels: {app.kubernetes.io/name: bob-workspace}
+  action: ALLOW
+  rules:
+  - from: [{source: {principals: ["cluster.local/ns/sv-mcp/sa/mcp-waypoint"]}}]

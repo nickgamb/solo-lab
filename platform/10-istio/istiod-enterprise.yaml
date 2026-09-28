@@ -1,0 +1,10 @@
+# Solo Enterprise for Istio: Solo-built images (FIPS/distroless variants exist)
+global:
+  hub: ${ISTIO_HUB}
+  tag: ${ISTIO_TAG}
+  variant: distroless
+license:
+  value: ${SOLO_ISTIO_LICENSE_KEY}
+platforms:
+  peering:
+    enabled: true

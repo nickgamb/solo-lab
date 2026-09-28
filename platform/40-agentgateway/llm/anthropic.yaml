@@ -1,0 +1,14 @@
+apiVersion: ${AGW_BACKEND_API}
+kind: ${AGW_BACKEND_KIND}
+metadata:
+  name: llm
+  namespace: agentgateway-system
+  labels: {lab.solo.io/llm-provider: anthropic}
+spec:
+  ai:
+    provider:
+      anthropic:
+        model: ${ANTHROPIC_MODEL}
+  policies:
+    auth:
+      secretRef: {name: llm-anthropic}

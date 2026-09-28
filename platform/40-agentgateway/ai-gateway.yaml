@@ -1,0 +1,73 @@
+# The AI gateway data plane: 2-6 replicas across zones, PDB, ClusterIP (the
+# kgateway edge fronts it for laptop access at https://ai.${SV_DOMAIN}).
+apiVersion: ${AGW_PARAMS_API}
+kind: ${AGW_PARAMS_KIND}
+metadata:
+  name: ai-gateway
+  namespace: agentgateway-system
+spec:
+  istio:
+    enabled: true              # SPIFFE cert from istiod; terminate HBONE inbound
+  deployment:
+    spec:
+      replicas: 2
+      template:
+        metadata:
+          labels:
+            # Tells ztunnel these pods terminate HBONE themselves (like a
+            # waypoint). Without it callers' traffic arrives as plaintext and
+            # CEL's source.identity (the caller's SPIFFE ID) is empty.
+            networking.istio.io/tunnel: http
+        spec:
+          topologySpreadConstraints:
+          - maxSkew: 1
+            topologyKey: topology.kubernetes.io/zone
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels: {gateway.networking.k8s.io/gateway-name: ai-gateway}
+  horizontalPodAutoscaler:
+    spec:
+      minReplicas: 2
+      maxReplicas: 6
+      metrics:
+      - type: Resource
+        resource: {name: cpu, target: {type: Utilization, averageUtilization: 70}}
+  podDisruptionBudget:
+    spec:
+      minAvailable: 1
+  service:
+    spec:
+      type: ClusterIP
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: ai-gateway
+  namespace: agentgateway-system
+  labels:
+    lab.solo.io/role: ai-gateway
+  # Mesh callers reach :80 inside HBONE (ztunnel -> pod:15008), so the gateway
+  # sees their SPIFFE ID as source.identity. A caller that skips the mesh
+  # arrives with no identity, and every route policy here requires one.
+  # (Don't set agentgateway.dev/internal-ports: that drops :80 from the
+  # Service, which only suits the waypoint pattern.)
+spec:
+  gatewayClassName: ${AGW_CLASS}
+  infrastructure:
+    parametersRef:
+      group: ${AGW_PARAMS_GROUP}
+      kind: ${AGW_PARAMS_KIND}
+      name: ai-gateway
+  listeners:
+  - name: mesh
+    protocol: HBONE
+    port: 15008
+    allowedRoutes:
+      namespaces: {from: All}
+  - name: http
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces: {from: All}

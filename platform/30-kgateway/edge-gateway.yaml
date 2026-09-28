@@ -1,0 +1,108 @@
+# Data-plane shape for the edge: 2-4 Envoy replicas across zones, PDB, and
+# pinned NodePorts (kind maps 127.0.0.1:${LAB_HTTP_PORT} -> 30080).
+# Without infrastructure.parametersRef kgateway ignores GatewayParameters and
+# provisions a LoadBalancer on random nodePorts (uma4agents gotcha).
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: GatewayParameters
+metadata:
+  name: edge
+  namespace: kgateway-system
+spec:
+  kube:
+    deployment:
+      replicas: 2
+    horizontalPodAutoscaler:      # overlay: scaleTargetRef is filled in by kgateway
+      spec:
+        minReplicas: 2
+        maxReplicas: 4
+        metrics:
+        - type: Resource
+          resource: {name: cpu, target: {type: Utilization, averageUtilization: 70}}
+    podDisruptionBudget:          # overlay: selector is filled in by kgateway
+      spec:
+        minAvailable: 1
+    podTemplate:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels: {gateway.networking.k8s.io/gateway-name: edge}
+    envoyContainer:
+      resources:
+        requests: {cpu: 100m, memory: 128Mi}
+    service:
+      type: LoadBalancer        # cloud-provider-kind assigns an IP on the kind network
+      ports:
+      - port: 80
+        nodePort: 30080
+      - port: 443
+        nodePort: 30443
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: edge
+  namespace: kgateway-system
+  labels:
+    lab.solo.io/role: edge
+spec:
+  gatewayClassName: ${KGATEWAY_CLASS}
+  infrastructure:
+    parametersRef:
+      group: gateway.kgateway.dev
+      kind: GatewayParameters
+      name: edge
+  # One HTTPS listener per party. Each admits routes ONLY from namespaces of
+  # that party, so Alice cannot publish *.meridian.lab and Meridian cannot
+  # publish *.alice.lab. Port 80 only redirects to HTTPS (redirect.yaml).
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces: {from: Same}
+  - name: https-ops
+    protocol: HTTPS
+    port: 443
+    hostname: "*.${OPS_DOMAIN}"
+    tls:
+      mode: Terminate
+      certificateRefs: [{name: edge-tls}]
+    allowedRoutes:
+      namespaces:
+        from: Selector
+        selector: {matchLabels: {lab.solo.io/party: platform}}
+  - name: https-sterling
+    protocol: HTTPS
+    port: 443
+    hostname: "*.${SV_DOMAIN}"
+    tls:
+      mode: Terminate
+      certificateRefs: [{name: edge-tls, namespace: sv-identity}]
+    allowedRoutes:
+      namespaces:
+        from: Selector
+        selector: {matchLabels: {lab.solo.io/party: sterling-vance}}
+  - name: https-alice
+    protocol: HTTPS
+    port: 443
+    hostname: "*.${ALICE_DOMAIN}"
+    tls:
+      mode: Terminate
+      certificateRefs: [{name: edge-tls, namespace: alice}]
+    allowedRoutes:
+      namespaces:
+        from: Selector
+        selector: {matchLabels: {lab.solo.io/party: alice}}
+  - name: https-meridian
+    protocol: HTTPS
+    port: 443
+    hostname: "*.${MERIDIAN_DOMAIN}"
+    tls:
+      mode: Terminate
+      certificateRefs: [{name: edge-tls, namespace: meridian}]
+    allowedRoutes:
+      namespaces:
+        from: Selector
+        selector: {matchLabels: {lab.solo.io/party: meridian}}

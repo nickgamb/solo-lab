@@ -1,0 +1,92 @@
+# A Keycloak for one party. Rendered per party with PARTY_NS, PARTY_DOMAIN,
+# KC_REALM_CM. The realm is re-imported from its ConfigMap on every start, so
+# the realm lives as code; secrets in it are Keycloak's own ${ENV}
+# placeholders, resolved from the kc-secrets Secret inside the container.
+#
+# Issuer is always https://idp.<party>.lab/realms/<realm>: the browser reaches
+# it through the edge, and in-cluster callers too (CoreDNS sends *.lab to the
+# edge), or directly at keycloak.<ns>.svc for backchannel calls.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: keycloak
+  namespace: ${PARTY_NS}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: ${PARTY_NS}
+  labels: {app: keycloak}
+spec:
+  selector: {app: keycloak}
+  ports:
+  - {name: http, port: 80, targetPort: 8080}
+  - {name: management, port: 9000, targetPort: 9000}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: ${PARTY_NS}
+  labels: {app: keycloak}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}      # dev-file store is per-pod; realm re-imports on start
+  selector: {matchLabels: {app: keycloak}}
+  template:
+    metadata:
+      labels: {app: keycloak}
+      annotations:
+        lab.solo.io/realm-checksum: "${KC_REALM_SHA}"
+        lab.solo.io/key-checksum: "${KC_KEY_SHA}"
+    spec:
+      serviceAccountName: keycloak
+      containers:
+      - name: keycloak
+        image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION}
+        args: ["start-dev", "--import-realm", "--features=${KC_FEATURES}"]
+        env:
+        - {name: KC_HOSTNAME, value: "https://idp.${PARTY_DOMAIN}"}
+        - {name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC, value: "true"}
+        - {name: KC_HTTP_ENABLED, value: "true"}
+        - {name: KC_PROXY_HEADERS, value: xforwarded}
+        - {name: KC_HEALTH_ENABLED, value: "true"}
+        - {name: KC_METRICS_ENABLED, value: "true"}
+        - {name: KC_LOG_LEVEL, value: "info"}
+        - {name: SV_DOMAIN, value: "${SV_DOMAIN}"}
+        - {name: OPS_DOMAIN, value: "${OPS_DOMAIN}"}
+        - {name: ALICE_DOMAIN, value: "${ALICE_DOMAIN}"}
+        - {name: MERIDIAN_DOMAIN, value: "${MERIDIAN_DOMAIN}"}
+        envFrom:
+        - secretRef: {name: kc-secrets}     # KC_BOOTSTRAP_ADMIN_* + client secrets for the realm placeholders
+        - secretRef: {name: kc-realm-key}   # stable realm signing key (survives restarts)
+        ports:
+        - {name: http, containerPort: 8080}
+        - {name: management, containerPort: 9000}
+        readinessProbe:
+          httpGet: {path: /health/ready, port: 9000}
+          periodSeconds: 5
+        startupProbe:
+          httpGet: {path: /health/started, port: 9000}
+          periodSeconds: 5
+          failureThreshold: 60
+        resources:
+          requests: {cpu: 200m, memory: 512Mi}
+          limits: {memory: 1Gi}
+        volumeMounts:
+        - {name: realm, mountPath: /opt/keycloak/data/import, readOnly: true}
+      volumes:
+      - name: realm
+        configMap: {name: ${KC_REALM_CM}}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: idp
+  namespace: ${PARTY_NS}
+spec:
+  parentRefs: [{name: edge, namespace: kgateway-system, sectionName: ${PARTY_LISTENER}}]
+  hostnames: ["idp.${PARTY_DOMAIN}"]
+  rules:
+  - backendRefs: [{name: keycloak, port: 80}]

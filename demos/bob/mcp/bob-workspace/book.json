@@ -1,0 +1,47 @@
+{
+  "owner": "bob",
+  "firm": "Sterling & Vance",
+  "clients": [
+    {
+      "id": "c-1001", "name": "Alice Chen", "stage": "onboarding",
+      "since": "2026-09-15", "risk_profile": "moderate-growth",
+      "custodian": "Meridian Wealth (external)",
+      "summary": "New client. Holdings sit at Meridian Wealth, which Sterling & Vance does not custody. Suitability review needs her positions, and she decides who sees them.",
+      "ssn_last4": "4417"
+    },
+    {
+      "id": "c-1002", "name": "Marcus Webb", "stage": "active",
+      "since": "2021-03-02", "risk_profile": "conservative",
+      "custodian": "Sterling & Vance",
+      "summary": "Retiring in 18 months. Wants income, not growth. Annual review due in October.",
+      "ssn_last4": "0932"
+    },
+    {
+      "id": "c-1003", "name": "Priya Natarajan", "stage": "active",
+      "since": "2023-11-20", "risk_profile": "aggressive",
+      "custodian": "Sterling & Vance",
+      "summary": "Tech founder, concentrated position after a liquidity event. Discussing a 10b5-1 plan.",
+      "ssn_last4": "7751"
+    },
+    {
+      "id": "c-1004", "name": "Dana & Lee Okafor", "stage": "prospect",
+      "since": "2026-09-22", "risk_profile": "unknown",
+      "custodian": "none yet",
+      "summary": "Referred by Marcus Webb. Intro call booked; college savings for two kids.",
+      "ssn_last4": null
+    }
+  ],
+  "notes": {
+    "c-1001": [
+      {"date": "2026-09-15", "text": "Intro meeting. Alice wants a second opinion on her Meridian portfolio before moving anything."},
+      {"date": "2026-09-24", "text": "Asked her to authorize read access to her Meridian positions for the suitability review."}
+    ],
+    "c-1002": [
+      {"date": "2026-06-10", "text": "Shifted 15% from equities to a bond ladder. Revisit after rate decision."}
+    ],
+    "c-1003": [
+      {"date": "2026-09-01", "text": "Draft 10b5-1 plan sent to counsel. Waiting on blackout calendar."}
+    ],
+    "c-1004": []
+  }
+}

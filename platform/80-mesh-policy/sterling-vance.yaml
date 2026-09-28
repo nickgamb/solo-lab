@@ -1,0 +1,71 @@
+# Sterling & Vance mesh baseline: every S&V workload admits only the SPIFFE
+# identities with business calling it. ALLOW policies with a selector are
+# enforced by ztunnel at L4; a caller with no identity (outside the mesh)
+# matches no principal and is refused.
+#
+# Namespaces whose callers are all meshed are STRICT. kagent and
+# agentgateway-system stay PERMISSIVE for Agent Substrate: its gVisor workers
+# and atenet run unmeshed in ate-system (see docs/ARCHITECTURE.md).
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: strict, namespace: sv-identity}
+spec: {mtls: {mode: STRICT}}
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: strict, namespace: sv-agents}
+spec: {mtls: {mode: STRICT}}
+---
+# Keycloak: the edge (browsers, SSO token calls), the firm's gateways (JWKS,
+# token exchange), and the platform UIs that use S&V workforce SSO.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: keycloak-callers, namespace: sv-identity}
+spec:
+  selector: {matchLabels: {app: keycloak}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/kgateway-system/sa/edge
+        - cluster.local/ns/agentgateway-system/sa/ai-gateway
+        - cluster.local/ns/agentgateway-system/sa/agentgateway   # controller: JWKS fetch
+        - cluster.local/ns/sv-mcp/sa/mcp-waypoint
+        - cluster.local/ns/observability/sa/kps-grafana
+        - cluster.local/ns/istio-system/sa/kiali
+        - cluster.local/ns/agentregistry/sa/agentregistry
+---
+# kagent controller (:8083) trusts forwarded JWT claims WITHOUT verifying the
+# signature (trusted-proxy mode), so this fence is what makes that safe: only
+# the UI (behind edge SSO) and agent workloads may reach it.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: kagent-controller-callers, namespace: kagent}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: kagent, app.kubernetes.io/component: controller}}
+  action: ALLOW
+  rules:
+  # Entries in one `from` are OR'd; fields inside one `source` are AND'd.
+  - from:
+    - source: {principals: [cluster.local/ns/observability/sa/kps-prometheus]}  # metrics
+    - source: {namespaces: [kagent]}      # UI, built-in agents, tools, substrate workers
+    - source: {namespaces: [sv-agents]}   # the firm's agents
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: kagent-ui-callers, namespace: kagent}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: kagent, app.kubernetes.io/component: ui}}
+  action: ALLOW
+  rules:
+  - from: [{source: {principals: [cluster.local/ns/kgateway-system/sa/edge]}}]
+---
+# Bob's (and every advisor's) agents: reached only by the kagent controller.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: agents-only-from-controller, namespace: sv-agents}
+spec:
+  action: ALLOW          # namespace-wide: every workload in sv-agents
+  rules:
+  - from: [{source: {principals: [cluster.local/ns/kagent/sa/kagent-controller]}}]

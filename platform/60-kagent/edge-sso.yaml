@@ -1,0 +1,69 @@
+# kagent UI at https://kagent.sterling.lab, behind SSO done BY THE EDGE
+# (kgateway's OAuth2 filter) against Sterling & Vance's Keycloak. The filter
+# forwards Bob's ACCESS token (aud: ai-gateway) upstream, which is what makes
+# the later RFC 8693 exchange possible: Keycloak only exchanges access tokens.
+# All of it is S&V-owned and lives in the kagent namespace.
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: GatewayExtension
+metadata:
+  name: kagent-sso
+  namespace: kagent
+spec:
+  type: OAuth2
+  oauth2:
+    # Token/JWKS calls go straight to S&V's Keycloak over the mesh (mTLS by
+    # ztunnel); the https:// URLs are what the browser and the issuer claim use.
+    backendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}
+    issuerURI: https://idp.${SV_DOMAIN}/realms/sterling-vance
+    authorizationEndpoint: https://idp.${SV_DOMAIN}/realms/sterling-vance/protocol/openid-connect/auth
+    tokenEndpoint: https://idp.${SV_DOMAIN}/realms/sterling-vance/protocol/openid-connect/token
+    endSessionEndpoint: https://idp.${SV_DOMAIN}/realms/sterling-vance/protocol/openid-connect/logout
+    redirectURI: https://kagent.${SV_DOMAIN}/oauth2/redirect
+    logoutPath: /logout
+    credentials:
+      clientID: kagent
+      clientSecretRef: {name: kagent-oidc}
+    scopes: [openid, profile, email]
+    forwardAccessToken: true
+    jwt:
+      jwksURI: https://idp.${SV_DOMAIN}/realms/sterling-vance/protocol/openid-connect/certs
+      jwksBackendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}
+      accessToken:
+        audiences: [ai-gateway, mcp-waypoint]
+        claimsToHeaders:
+        - {name: preferred_username, header: x-user-id}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: kagent-ui
+  namespace: kagent
+spec:
+  parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-sterling}]
+  hostnames: ["kagent.${SV_DOMAIN}"]
+  rules:
+  - backendRefs: [{name: kagent-ui, port: 8080}]
+    timeouts:
+      request: 1800s          # agent turns stream for minutes on a local 27B model
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: kagent-sso
+  namespace: kagent
+spec:
+  targetRefs:
+  - {group: gateway.networking.k8s.io, kind: HTTPRoute, name: kagent-ui}
+  oauth2:
+    extensionRef: {name: kagent-sso}
+---
+# The identity team (sv-identity) grants kagent's SSO extension access to its
+# Keycloak Service. Without it the cross-namespace backendRef is refused.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: kagent-sso-to-keycloak
+  namespace: sv-identity
+spec:
+  from: [{group: gateway.kgateway.dev, kind: GatewayExtension, namespace: kagent}]
+  to: [{group: "", kind: Service, name: keycloak}]

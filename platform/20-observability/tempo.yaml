@@ -1,0 +1,15 @@
+tempo:
+  reportingEnabled: false
+  retention: 72h
+  metricsGenerator:
+    enabled: true
+    remoteWriteUrl: http://kps-prometheus.observability.svc:9090/api/v1/write
+  overrides:
+    defaults:
+      metrics_generator:
+        processors: [service-graphs, span-metrics]
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+persistence:
+  enabled: true
+  size: 10Gi

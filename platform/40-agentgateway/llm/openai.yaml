@@ -1,0 +1,14 @@
+apiVersion: ${AGW_BACKEND_API}
+kind: ${AGW_BACKEND_KIND}
+metadata:
+  name: llm
+  namespace: agentgateway-system
+  labels: {lab.solo.io/llm-provider: openai}
+spec:
+  ai:
+    provider:
+      openai:
+        model: ${OPENAI_MODEL}
+  policies:
+    auth:
+      secretRef: {name: llm-openai}

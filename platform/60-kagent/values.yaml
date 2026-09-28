@@ -1,0 +1,77 @@
+providers:
+  default: openAI
+  openAI:
+    provider: OpenAI
+    # Placeholder: agentgateway's backend overrides the model (make llm).
+    model: lab-default
+    apiKeySecretRef: kagent-llm
+    apiKeySecretKey: API_KEY
+    config:
+      baseUrl: http://ai-gateway.agentgateway-system/v1
+
+controller:
+  auth:
+    mode: trusted-proxy
+    userIdClaim: preferred_username
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+  substrate:
+    enabled: true
+    ateApiEndpoint: dns:///api.ate-system.svc:443
+    atenetRouterURL: http://atenet-router.ate-system.svc:80
+    ateApiInsecure: true
+    defaultWorkerPool:
+      name: kagent-default
+
+substrateWorkerPool:
+  create: true
+  name: kagent-default
+  replicas: 2
+  ateomImage: ghcr.io/kagent-dev/substrate/ateom-gvisor:v${SUBSTRATE_VERSION}
+  sandboxClass: gvisor
+
+ui:
+  auth:
+    ssoRedirectPath: /        # the edge already signed you in
+  replicas: 2
+  pdb:
+    enabled: true
+    minAvailable: 1
+    maxUnavailable: null
+  topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels: {app.kubernetes.io/component: ui}
+
+otel:
+  tracing:
+    enabled: true
+    exporter:
+      otlp:
+        endpoint: http://otel-collector.observability.svc.cluster.local:4317
+        insecure: true
+  logging:
+    enabled: true
+    exporter:
+      otlp:
+        endpoint: http://otel-collector.observability.svc.cluster.local:4317
+        insecure: true
+
+# Built-in agents: the platform set. Cilium/Argo agents target components this
+# lab doesn't run; observability-agent needs a Grafana service-account token.
+k8s-agent: {enabled: true}
+kgateway-agent: {enabled: true}
+istio-agent: {enabled: true}
+helm-agent: {enabled: true}
+promql-agent: {enabled: true}
+observability-agent: {enabled: false}
+argo-rollouts-agent: {enabled: false}
+cilium-policy-agent: {enabled: false}
+cilium-manager-agent: {enabled: false}
+cilium-debug-agent: {enabled: false}
+
+# Identity: SSO happens at the kgateway edge (edge-sso.yaml). The controller
+# trusts the forwarded access token's claims WITHOUT verifying its signature,
+# so 80-mesh-policy fences it: only the UI and agent namespaces reach :8083.

@@ -1,0 +1,35 @@
+# Istio control plane + data plane scrape targets for Prometheus/Kiali.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata: {name: istiod, namespace: istio-system}
+spec:
+  selector: {matchLabels: {app: istiod}}
+  endpoints: [{port: http-monitoring, interval: 15s}]
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata: {name: ztunnel, namespace: istio-system}
+spec:
+  selector: {matchLabels: {app: ztunnel}}
+  podMetricsEndpoints:
+  - port: ztunnel-stats
+    path: /stats/prometheus
+    interval: 15s
+---
+# Envoy-based proxies anywhere: waypoints and gateways expose 15020/15090.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata: {name: envoy-stats, namespace: istio-system}
+spec:
+  namespaceSelector: {any: true}
+  selector:
+    matchExpressions:
+    - {key: gateway.networking.k8s.io/gateway-name, operator: Exists}
+  podMetricsEndpoints:
+  - path: /stats/prometheus
+    targetPort: 15020
+    interval: 15s
+    relabelings:
+    - action: keep
+      sourceLabels: [__meta_kubernetes_pod_container_port_number]
+      regex: "15020|15090"

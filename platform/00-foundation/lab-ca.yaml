@@ -1,0 +1,26 @@
+# The lab CA (generated once on the Mac by scripts/ca.sh, name-constrained to
+# .lab/.svc/.cluster.local) signs every lab certificate. Istio's mesh identity
+# is separate (istiod CA).
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: lab-ca
+spec:
+  ca:
+    secretName: lab-ca
+---
+# trust-manager publishes system roots + the lab CA as ConfigMap lab-ca-bundle
+# (key ca.crt) in every namespace. Mount it and point SSL_CERT_FILE at it.
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: lab-ca-bundle
+spec:
+  sources:
+  - useDefaultCAs: true
+  - secret:
+      name: lab-ca
+      key: tls.crt
+  target:
+    configMap:
+      key: ca.crt

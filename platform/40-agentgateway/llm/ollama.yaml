@@ -1,0 +1,14 @@
+# Ollama on the Mac host (Metal GPU). OpenAI-compatible API on :11434.
+apiVersion: ${AGW_BACKEND_API}
+kind: ${AGW_BACKEND_KIND}
+metadata:
+  name: llm
+  namespace: agentgateway-system
+  labels: {lab.solo.io/llm-provider: ollama}
+spec:
+  ai:
+    provider:
+      openai:
+        model: ${OLLAMA_MODEL}
+      host: ${OLLAMA_HOST}
+      port: ${OLLAMA_PORT}

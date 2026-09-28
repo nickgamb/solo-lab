@@ -1,0 +1,53 @@
+fullnameOverride: kps
+alertmanager:
+  enabled: false
+# kind: these control-plane endpoints aren't reachable; scraping them only
+# produces permanently firing TargetDown alerts.
+kubeEtcd: {enabled: false}
+kubeControllerManager: {enabled: false}
+kubeScheduler: {enabled: false}
+kubeProxy: {enabled: false}
+prometheus:
+  prometheusSpec:
+    retention: 3d
+    retentionSize: 8GB
+    scrapeInterval: 15s
+    enableOTLPReceiver: true          # otel-collector pushes OTLP metrics here
+    enableRemoteWriteReceiver: true   # Tempo metrics-generator writes here
+    enableFeatures: [exemplar-storage]
+    # pick up ServiceMonitors/PodMonitors from every chart, not only this one
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    resources:
+      requests: {cpu: 200m, memory: 1Gi}
+grafana:
+  adminUser: admin
+  adminPassword: solo-lab          # lab only; Keycloak SSO is layered on in 45-identity
+  grafana.ini:
+    server:
+      root_url: https://grafana.${OPS_DOMAIN}
+    auth.anonymous:
+      enabled: false
+  sidecar:
+    dashboards:
+      enabled: true
+      searchNamespace: ALL
+      label: grafana_dashboard
+      folderAnnotation: grafana_folder
+      provider: {foldersFromFilesStructure: true}
+    datasources:
+      enabled: true
+  additionalDataSources:
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    url: http://tempo.observability.svc:3200
+    jsonData:
+      serviceMap: {datasourceUid: prometheus}
+      nodeGraph: {enabled: true}
+      tracesToMetrics: {datasourceUid: prometheus}
+prometheus-node-exporter:
+  resources:
+    requests: {cpu: 20m, memory: 32Mi}

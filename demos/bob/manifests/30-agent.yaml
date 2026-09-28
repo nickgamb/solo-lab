@@ -1,0 +1,78 @@
+# Bob's agent. Owned by S&V, lives in sv-agents with its own ServiceAccount
+# (kagent creates one per agent), so its SPIFFE ID is
+#   spiffe://cluster.local/ns/sv-agents/sa/bob-assistant
+# That identity is half of every authorization decision about Bob's tools;
+# the other half is Bob's own token, which kagent propagates on each call.
+#
+# The agent holds no credentials of its own: no provider key (the firm's
+# ai-gateway injects it) and no tool token (the tools' waypoint mints a
+# delegated one per call).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: llm-via-gateway
+  namespace: sv-agents
+stringData:
+  API_KEY: via-agentgateway      # placeholder; the gateway holds the real credential
+---
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: firm-llm
+  namespace: sv-agents
+spec:
+  provider: OpenAI
+  model: lab-default             # overridden by the gateway (make llm)
+  apiKeySecret: llm-via-gateway
+  apiKeySecretKey: API_KEY
+  openAI:
+    baseUrl: http://ai-gateway.agentgateway-system/v1
+---
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: bob-workspace
+  namespace: sv-agents
+  labels: {lab.solo.io/owner: bob}
+spec:
+  description: "Bob's book of business at Sterling & Vance (clients, notes, follow-ups)"
+  protocol: STREAMABLE_HTTP
+  # The tool's own address. The mesh routes every call through sv-mcp's
+  # agentgateway waypoint; there is no gateway URL to skip.
+  url: http://bob-workspace-mcp.sv-mcp.svc.cluster.local:3000/mcp
+  timeout: 60s
+---
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: bob-assistant
+  namespace: sv-agents
+  labels: {lab.solo.io/owner: bob}
+spec:
+  type: Declarative
+  description: "Bob's advisory assistant at Sterling & Vance. Works his book of business, as Bob."
+  declarative:
+    modelConfig: firm-llm
+    systemMessage: |
+      You are the advisory assistant for a financial advisor at Sterling & Vance.
+      You act on behalf of the advisor who is signed in, using only the tools you
+      are given. Never invent client data: if a tool does not return it, say so.
+
+      When asked who you are acting for, or what access you have, call `whoami`
+      and report the identity, audience and token lifetime it returns.
+      Before recording a follow-up, state exactly what you will log.
+      Keep answers short and factual.
+    deployment:
+      env:
+      # Forward the signed-in advisor's token on every tool call. The tools'
+      # waypoint verifies it, then exchanges it; it never reaches the tool.
+      - {name: KAGENT_PROPAGATE_TOKEN, value: "true"}
+    tools:
+    - type: McpServer
+      mcpServer:
+        apiGroup: kagent.dev
+        kind: RemoteMCPServer
+        name: bob-workspace
+        toolNames: [whoami, list_clients, get_client, get_meeting_notes, log_followup]
+        # Human in the loop: Bob approves any write his agent makes.
+        requireApproval: [log_followup]

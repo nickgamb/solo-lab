@@ -1,0 +1,6 @@
+# Substrate components export OTLP to the lab collector. Without an endpoint
+# every component dials localhost:4317 and gets connection refused.
+otel:
+  endpoint: http://otel-collector.observability.svc.cluster.local:4317
+valkey:
+  replicas: 6            # 3 primaries + 3 replicas; valkey cluster minimum

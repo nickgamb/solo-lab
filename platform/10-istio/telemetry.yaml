@@ -1,0 +1,13 @@
+# Mesh-wide: traces from waypoints/gateways to the OTel collector (10% in the
+# lab is plenty and keeps Tempo small; bump for a tracing demo).
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: mesh-default
+  namespace: istio-system
+spec:
+  tracing:
+  - providers: [{name: otel-tracing}]
+    randomSamplingPercentage: 10
+  accessLogging:
+  - providers: [{name: envoy}]

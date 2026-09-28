@@ -1,0 +1,6 @@
+profile: ambient
+multiCluster:
+  clusterName: ${MESH_NAME}
+network: ${MESH_NETWORK}
+resources:
+  requests: {cpu: 50m, memory: 128Mi}
