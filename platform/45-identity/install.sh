@@ -17,7 +17,12 @@ K create secret generic kc-secrets -n sv-identity \
   --from-literal=SV_GRAFANA_CLIENT_SECRET="$(lab_secret SV_GRAFANA_CLIENT_SECRET)" \
   --from-literal=SV_UNUSED_CLIENT_SECRET="$(lab_secret SV_UNUSED_CLIENT_SECRET)" \
   --dry-run=client -o yaml | K apply -f - >/dev/null
-deploy_keycloak sv-identity "$SV_DOMAIN" https-sterling "$D/realm-sterling-vance.json"
+# S&V's IdP is the enterprise IdP for Cross App Access, so it must ISSUE
+# ID-JAGs: Keycloak 26.7.4 + keycloak/keycloak PR #49998 (tools/keycloak-idjag).
+# Back to stock KC_IMAGE once that PR ships upstream.
+KC_IMAGE="localhost:${LAB_REGISTRY_PORT}/lab/keycloak-idjag:${KEYCLOAK_VERSION}-pr49998" \
+  deploy_keycloak sv-identity "$SV_DOMAIN" https-sterling "$D/realm-sterling-vance.json" \
+  token-exchange-standard,identity-assertion-jwt
 wait_for "https://idp.$SV_DOMAIN discovery" 30 3 \
   sh -c "curl -sf https://idp.$SV_DOMAIN/realms/sterling-vance/.well-known/openid-configuration >/dev/null"
 ok "issuer https://idp.$SV_DOMAIN/realms/sterling-vance  (admin: see .lab/secrets.env)"
@@ -30,6 +35,11 @@ K create secret generic kagent-oidc -n kagent \
 # agentgateway's token-exchange client identity
 K create secret generic ai-gateway-oidc -n agentgateway-system \
   --from-literal=clientSecret="$(lab_secret SV_AIGW_CLIENT_SECRET)" \
+  --dry-run=client -o yaml | K apply -f - >/dev/null
+# agentgateway runs Cross App Access as kagent's back-channel: the requesting
+# app in XAA is the app Bob signed into (kagent), so it authenticates as kagent.
+K create secret generic kagent-client -n agentgateway-system \
+  --from-literal=clientSecret="$(lab_secret SV_KAGENT_CLIENT_SECRET)" \
   --dry-run=client -o yaml | K apply -f - >/dev/null
 # the sv-mcp waypoint's own token-exchange client identity
 K create secret generic mcp-waypoint-oidc -n sv-mcp \

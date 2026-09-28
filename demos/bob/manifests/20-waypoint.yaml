@@ -197,6 +197,7 @@ spec:
   from:
   - {group: agentgateway.dev, kind: AgentgatewayPolicy, namespace: sv-mcp}
   - {group: agentgateway.dev, kind: AgentgatewayPolicy, namespace: agentgateway-system}
+  - {group: agentgateway.dev, kind: AgentgatewayBackend, namespace: agentgateway-system}   # XAA stage 1 + IdP leg
   to: [{group: "", kind: Service, name: keycloak}]
 ---
 # Same tool surface on the discovery lane, so the UI never advertises a tool

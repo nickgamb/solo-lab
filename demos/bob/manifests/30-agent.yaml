@@ -60,6 +60,9 @@ spec:
 
       When asked who you are acting for, or what access you have, call `whoami`
       and report the identity, audience and token lifetime it returns.
+      You have two tool sets: Bob's workspace at the firm (clients, notes,
+      follow-ups) and Ledgerline Research, an external research provider
+      (sector outlooks, research notes). Name the source of each fact.
       Before recording a follow-up, state exactly what you will log.
       Keep answers short and factual.
     deployment:
@@ -76,3 +79,25 @@ spec:
         toolNames: [whoami, list_clients, get_client, get_meeting_notes, log_followup]
         # Human in the loop: Bob approves any write his agent makes.
         requireApproval: [log_followup]
+    - type: McpServer
+      mcpServer:
+        apiGroup: kagent.dev
+        kind: RemoteMCPServer
+        name: ledgerline-research
+        toolNames: [account_info, sector_outlook, research_note]
+        # Only this tool receives Bob's ID token (least privilege): it is the
+        # subject of the Cross App Access exchange at the egress gateway.
+        allowedHeaders: [x-id-token]
+---
+# Ledgerline Research: a SaaS S&V subscribes to, reached through Cross App
+# Access on the firm's egress gateway (40-xaa-ledgerline.yaml).
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: ledgerline-research
+  namespace: sv-agents
+spec:
+  description: "Ledgerline Research (external SaaS): sector outlooks and research notes, via Cross App Access"
+  protocol: STREAMABLE_HTTP
+  url: http://ai-gateway.agentgateway-system.svc.cluster.local/xaa/ledgerline/mcp
+  timeout: 60s

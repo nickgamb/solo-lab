@@ -1,0 +1,95 @@
+{
+  "realm": "ledgerline",
+  "displayName": "Ledgerline Research",
+  "enabled": true,
+  "sslRequired": "external",
+  "accessTokenLifespan": 300,
+  "identityProviders": [
+    {
+      "alias": "sterling-vance",
+      "displayName": "Sterling & Vance (enterprise IdP)",
+      "providerId": "oidc",
+      "enabled": true,
+      "trustEmail": true,
+      "storeToken": false,
+      "linkOnly": true,
+      "config": {
+        "issuer": "https://idp.${SV_DOMAIN}/realms/sterling-vance",
+        "jwksUrl": "https://idp.${SV_DOMAIN}/realms/sterling-vance/protocol/openid-connect/certs",
+        "useJwksUrl": "true",
+        "validateSignature": "true",
+        "authorizationUrl": "https://idp.${SV_DOMAIN}/realms/sterling-vance/protocol/openid-connect/auth",
+        "tokenUrl": "https://idp.${SV_DOMAIN}/realms/sterling-vance/protocol/openid-connect/token",
+        "clientId": "ledgerline-sso",
+        "clientSecret": "${LL_SSO_CLIENT_SECRET}",
+        "clientAuthMethod": "client_secret_basic",
+        "jwtAuthorizationGrantEnabled": "true",
+        "jwtAuthorizationGrantAssertionReuseAllowed": "false",
+        "jwtAuthorizationGrantMaxAllowedAssertionExpiration": "300"
+      }
+    }
+  ],
+  "users": [
+    {
+      "id": "11ed0000-0000-4000-8000-000000000b0b",
+      "username": "bob@sterling.lab",
+      "email": "bob@${SV_DOMAIN}",
+      "firstName": "Bob",
+      "lastName": "Reyes",
+      "enabled": true,
+      "emailVerified": true,
+      "federatedIdentities": [
+        { "identityProvider": "sterling-vance", "userId": "5b0b0000-0000-4000-8000-000000000b0b", "userName": "bob" }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "sterling-vance-kagent",
+      "name": "Sterling & Vance agent platform (Cross App Access client)",
+      "description": "Redeems ID-JAGs issued by the S&V IdP (RFC 7523 jwt-bearer). No interactive login.",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${LL_SVKAGENT_CLIENT_SECRET}",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "attributes": {
+        "oauth2.jwt.authorization.grant.enabled": "true",
+        "oauth2.jwt.authorization.grant.idp": "sterling-vance",
+        "access.token.lifespan": "300"
+      },
+      "protocolMappers": [
+        {
+          "name": "aud ledgerline-research",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": { "included.client.audience": "ledgerline-research", "access.token.claim": "true", "id.token.claim": "false" }
+        }
+      ]
+    },
+    {
+      "clientId": "ledgerline-research",
+      "name": "Ledgerline Research MCP (audience only)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${LL_UNUSED_CLIENT_SECRET}",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false
+    }
+  ],
+  "components": {
+    "org.keycloak.keys.KeyProvider": [
+      {
+        "name": "lab-rs256",
+        "providerId": "rsa",
+        "subComponents": {},
+        "config": {
+          "priority": ["200"], "enabled": ["true"], "active": ["true"], "algorithm": ["RS256"],
+          "privateKey": ["${KC_REALM_RSA_KEY}"], "certificate": ["${KC_REALM_RSA_CERT}"]
+        }
+      }
+    ]
+  }
+}

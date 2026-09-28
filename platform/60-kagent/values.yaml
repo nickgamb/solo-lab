@@ -10,9 +10,23 @@ providers:
       baseUrl: http://ai-gateway.agentgateway-system/v1
 
 controller:
+  # kagent v0.10.2 + ID token forwarding (tools/kagent-idtoken, upstream PR
+  # candidate). Same runtime-image digests as the release; drop this override
+  # once the feature ships upstream.
+  image:
+    registry: localhost:5001
+    repository: kagent-dev/kagent/controller
+    tag: 0.10.2-idtoken.1
   auth:
     mode: trusted-proxy
     userIdClaim: preferred_username
+  # The edge (kgateway OAuth2) sets the user's ID token in the IdToken cookie.
+  # The controller forwards it to agents as X-Id-Token, only when bound to the
+  # authenticated user and issued to kagent. (0.10.2 chart has no
+  # controller.auth.idToken values yet, hence env.)
+  env:
+  - {name: AUTH_ID_TOKEN_COOKIE, value: IdToken}
+  - {name: AUTH_ID_TOKEN_AUDIENCE, value: kagent}
   resources:
     requests: {cpu: 100m, memory: 256Mi}
   substrate:

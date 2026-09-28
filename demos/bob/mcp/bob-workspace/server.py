@@ -136,5 +136,6 @@ def _with_auth(app):
 
 if __name__ == "__main__":
     # SDK 2.x: host goes to the app factory (defaults to 127.0.0.1 otherwise).
-    uvicorn.run(_with_auth(mcp.streamable_http_app(host="0.0.0.0")),
+    # Stateless: any replica can answer any request (2 replicas, no sticky routing).
+    uvicorn.run(_with_auth(mcp.streamable_http_app(host="0.0.0.0", stateless_http=True, json_response=True)),
                 host="0.0.0.0", port=int(os.environ.get("PORT", "3000")))

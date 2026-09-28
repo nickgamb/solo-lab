@@ -57,3 +57,19 @@ metadata: {name: edge-reads-tls, namespace: meridian}
 spec:
   from: [{group: gateway.networking.k8s.io, kind: Gateway, namespace: kgateway-system}]
   to: [{group: "", kind: Secret, name: edge-tls}]
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: edge-tls, namespace: ledgerline-identity}
+spec:
+  secretName: edge-tls
+  dnsNames: ["*.${LEDGERLINE_DOMAIN}"]
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {name: lab-ca, kind: ClusterIssuer}
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata: {name: edge-reads-tls, namespace: ledgerline-identity}
+spec:
+  from: [{group: gateway.networking.k8s.io, kind: Gateway, namespace: kgateway-system}]
+  to: [{group: "", kind: Secret, name: edge-tls}]

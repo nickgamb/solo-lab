@@ -1,0 +1,137 @@
+# Cross App Access (XAA / ID-JAG): Bob's agent -> Ledgerline Research.
+# Owned by S&V, on the firm's egress gateway (ai-gateway): anything that leaves
+# the firm leaves here, and cross-company credentials never reach the agent.
+#
+#   requesting app   kagent (the app Bob signed into); ai-gateway is its back-channel
+#   subject          Bob's real SSO ID token for kagent. The edge sets it
+#                    (IdToken cookie), kagent forwards it bound to Bob (X-Id-Token),
+#                    and the agent sends it only to this tool (allowedHeaders).
+#   enterprise IdP   S&V Keycloak + PR #49998: ID token -> ID-JAG, for the approved
+#                    connection (scope xaa-ledgerline) only
+#   resource AS      Ledgerline Keycloak: ID-JAG -> Ledgerline access token (RFC 7523)
+#
+# Discovery lane: the kagent controller (no user) may list Ledgerline's public
+# tool catalog; it can never obtain a Ledgerline token.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: xaa-ledgerline, namespace: agentgateway-system}
+spec:
+  parentRefs: [{name: ai-gateway, sectionName: http}]
+  rules:
+  - matches:
+    - path: {type: PathPrefix, value: /xaa/ledgerline}
+      headers: [{name: authorization, type: RegularExpression, value: "^[Bb]earer .+"}]
+    backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: xaa-ledgerline}]
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: xaa-ledgerline-caller, namespace: agentgateway-system}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: xaa-ledgerline}]
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+      - issuer: https://idp.${SV_DOMAIN}/realms/sterling-vance
+        audiences: [ai-gateway]
+        jwks:
+          remote:
+            backendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}
+            jwksPath: /realms/sterling-vance/protocol/openid-connect/certs
+            cacheDuration: 5m
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+        # an S&V agent workload, acting for an advisor, presenting an identity assertion
+        - 'source.identity.namespace == "sv-agents" && "advisors" in jwt.groups && "x-id-token" in request.headers'
+---
+apiVersion: ${AGW_BACKEND_API}
+kind: ${AGW_BACKEND_KIND}
+metadata: {name: xaa-ledgerline, namespace: agentgateway-system}
+spec:
+  mcp:
+    targets:
+    - name: ledgerline-research
+      static:
+        host: mcp.${LEDGERLINE_DOMAIN}
+        port: 443
+        path: /mcp
+        protocol: StreamableHTTP
+        policies:
+          tls:
+            sni: mcp.${LEDGERLINE_DOMAIN}
+            caCertificateRefs: [{name: lab-ca-bundle}]
+          auth:
+            crossAppAccess:
+              subjectToken:
+                source: {header: {name: x-id-token}}
+                tokenType: IdToken
+              audience: https://idp.${LEDGERLINE_DOMAIN}/realms/ledgerline
+              scopes: [xaa-ledgerline, research:read]     # the approved connection, requested from S&V's IdP
+              accessTokenScopes: []                       # Ledgerline grants what the ID-JAG carries
+              identityProvider:
+                backendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}
+                path: /realms/sterling-vance/protocol/openid-connect/token
+                clientAuth:
+                  clientId: kagent
+                  method: ClientSecretBasic
+                  secretRef: {name: kagent-client, key: clientSecret}
+              resourceAuthorizationServer:
+                # Ledgerline's token endpoint, across the "internet" (the edge), over TLS.
+                backendRef: {group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: ledgerline-idp}
+                path: /realms/ledgerline/protocol/openid-connect/token
+                clientAuth:
+                  clientId: sterling-vance-kagent       # S&V's registration at Ledgerline
+                  method: ClientSecretBasic
+                  secretRef: {name: ledgerline-client, key: clientSecret}
+---
+# Ledgerline's authorization server, reached through the edge with the lab CA.
+apiVersion: ${AGW_BACKEND_API}
+kind: ${AGW_BACKEND_KIND}
+metadata: {name: ledgerline-idp, namespace: agentgateway-system}
+spec:
+  static: {host: idp.${LEDGERLINE_DOMAIN}, port: 443}
+  policies:
+    tls:
+      sni: idp.${LEDGERLINE_DOMAIN}
+      caCertificateRefs: [{name: lab-ca-bundle}]
+---
+# ---- discovery lane: kagent controller lists Ledgerline's public catalog ---------
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: xaa-ledgerline-discovery, namespace: agentgateway-system}
+spec:
+  parentRefs: [{name: ai-gateway, sectionName: http}]
+  rules:
+  - matches: [{path: {type: PathPrefix, value: /xaa/ledgerline}}]
+    backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: xaa-ledgerline-catalog}]
+---
+apiVersion: ${AGW_BACKEND_API}
+kind: ${AGW_BACKEND_KIND}
+metadata: {name: xaa-ledgerline-catalog, namespace: agentgateway-system}
+spec:
+  mcp:
+    targets:
+    - name: ledgerline-research
+      static:
+        host: mcp.${LEDGERLINE_DOMAIN}
+        port: 443
+        path: /mcp
+        protocol: StreamableHTTP
+        policies:
+          tls:
+            sni: mcp.${LEDGERLINE_DOMAIN}
+            caCertificateRefs: [{name: lab-ca-bundle}]
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: xaa-ledgerline-discovery, namespace: agentgateway-system}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: xaa-ledgerline-discovery}]
+  traffic:
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+        - 'source.identity.namespace == "kagent" && source.identity.serviceAccount == "kagent-controller"'

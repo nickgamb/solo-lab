@@ -48,11 +48,13 @@ HELM_DOCKER_CONFIG="$LAB_STATE/docker-anon"
 mkdir -p "$HELM_DOCKER_CONFIG"; [ -f "$HELM_DOCKER_CONFIG/config.json" ] || echo '{}' > "$HELM_DOCKER_CONFIG/config.json"
 
 # --- output ------------------------------------------------------------------
-if [ -t 1 ]; then B=$'\e[1m'; G=$'\e[32m'; Y=$'\e[33m'; R=$'\e[31m'; C=$'\e[36m'; N=$'\e[0m'; else B= G= Y= R= C= N=; fi
-step() { printf '\n%s==> %s%s\n' "$B$C" "$*" "$N"; }
-ok()   { printf '%s  ✓ %s%s\n' "$G" "$*" "$N"; }
-warn() { printf '%s  ! %s%s\n' "$Y" "$*" "$N" >&2; }
-die()  { printf '%s  ✗ %s%s\n' "$R" "$*" "$N" >&2; exit 1; }
+# Namespaced so scripts sourcing lib.sh can't clobber them.
+if [ -t 1 ]; then _LB=$'\e[1m'; _LG=$'\e[32m'; _LY=$'\e[33m'; _LR=$'\e[31m'; _LC=$'\e[36m'; _LN=$'\e[0m'
+else _LB= _LG= _LY= _LR= _LC= _LN=; fi
+step() { printf '\n%s==> %s%s\n' "$_LB$_LC" "$*" "$_LN"; }
+ok()   { printf '%s  ✓ %s%s\n' "$_LG" "$*" "$_LN"; }
+warn() { printf '%s  ! %s%s\n' "$_LY" "$*" "$_LN" >&2; }
+die()  { printf '%s  ✗ %s%s\n' "$_LR" "$*" "$_LN" >&2; exit 1; }
 
 # --- kube / helm ------------------------------------------------------------
 K() { kubectl --context "$KCTX" "$@"; }
@@ -146,6 +148,7 @@ pem_body() { grep -v -- '-----' "$1" | tr -d '\n'; }
 # signing key comes from kc-realm-key (stable across restarts).
 deploy_keycloak() {
   local ns=$1 domain=$2 listener=$3 realm=$4 features=${5:-token-exchange-standard}
+  export KC_IMAGE="${KC_IMAGE:-quay.io/keycloak/keycloak:$KEYCLOAK_VERSION}"
   local rname; rname=$(basename "$realm" .json | sed 's/^realm-//')
   realm_signing_key "$rname"
   K create secret generic kc-realm-key -n "$ns" \
@@ -184,6 +187,9 @@ user_token() {
 # probe_pod <ns>: a toolbox pod with its own ServiceAccount (so its own SPIFFE
 # identity) in <ns>, with tools/mcp-probe.py copied in.
 probe_pod() {
+  # pod specs are immutable: replace a probe that predates the current spec
+  K get pod probe -n "$1" -o jsonpath='{.spec.volumes[*].name}' 2>/dev/null | grep -q lab-ca \
+    || K delete pod probe -n "$1" --now --ignore-not-found >/dev/null 2>&1
   K apply -f - >/dev/null <<YAML
 apiVersion: v1
 kind: ServiceAccount
@@ -194,7 +200,12 @@ kind: Pod
 metadata: {name: probe, namespace: $1, labels: {app: probe}}
 spec:
   serviceAccountName: probe
-  containers: [{name: probe, image: localhost:${LAB_REGISTRY_PORT}/lab/toolbox:1}]
+  containers:
+  - name: probe
+    image: localhost:${LAB_REGISTRY_PORT}/lab/toolbox:1
+    env: [{name: SSL_CERT_FILE, value: /etc/lab-ca/ca.crt}]     # trust-manager bundle, like real workloads
+    volumeMounts: [{name: lab-ca, mountPath: /etc/lab-ca, readOnly: true}]
+  volumes: [{name: lab-ca, configMap: {name: lab-ca-bundle}}]
 YAML
   K wait --for=condition=Ready "pod/probe" -n "$1" --timeout=120s >/dev/null
   K exec -i -n "$1" probe -- sh -c 'cat > /tmp/p.py' < "$LAB_ROOT/tools/mcp-probe.py"

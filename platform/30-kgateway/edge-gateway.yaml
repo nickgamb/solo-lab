@@ -106,3 +106,14 @@ spec:
       namespaces:
         from: Selector
         selector: {matchLabels: {lab.solo.io/party: meridian}}
+  - name: https-ledgerline
+    protocol: HTTPS
+    port: 443
+    hostname: "*.${LEDGERLINE_DOMAIN}"
+    tls:
+      mode: Terminate
+      certificateRefs: [{name: edge-tls, namespace: ledgerline-identity}]
+    allowedRoutes:
+      namespaces:
+        from: Selector
+        selector: {matchLabels: {lab.solo.io/party: ledgerline}}

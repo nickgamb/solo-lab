@@ -16,7 +16,7 @@ helm_up "$KGATEWAY_RELEASE" "$KGATEWAY_CHART" "$KGATEWAY_VERSION" kgateway-syste
 
 step "Party edge certificates"
 apply_tmpl "$D/party-tls.yaml"
-for ns in kgateway-system sv-identity alice meridian; do
+for ns in kgateway-system sv-identity alice meridian ledgerline-identity; do
   K wait -n "$ns" certificate/edge-tls --for=condition=Ready --timeout=120s >/dev/null
 done
 ok "issued by lab-ca; each party holds its own key"
@@ -25,4 +25,4 @@ step "Edge gateway (kgateway-system/edge)"
 apply_tmpl "$D/edge-gateway.yaml" "$D/redirect.yaml"
 wait_for "edge gateway Programmed" 60 3 \
   K wait -n kgateway-system gateway/edge --for=condition=Programmed --timeout=2s
-ok "edge programmed: https://*.${OPS_DOMAIN} *.${SV_DOMAIN} *.${ALICE_DOMAIN} *.${MERIDIAN_DOMAIN}"
+ok "edge programmed: https://*.${OPS_DOMAIN} *.${SV_DOMAIN} *.${ALICE_DOMAIN} *.${MERIDIAN_DOMAIN} *.${LEDGERLINE_DOMAIN}"

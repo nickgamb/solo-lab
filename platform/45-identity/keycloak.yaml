@@ -44,7 +44,7 @@ spec:
       serviceAccountName: keycloak
       containers:
       - name: keycloak
-        image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION}
+        image: ${KC_IMAGE}
         args: ["start-dev", "--import-realm", "--features=${KC_FEATURES}"]
         env:
         - {name: KC_HOSTNAME, value: "https://idp.${PARTY_DOMAIN}"}
@@ -54,10 +54,14 @@ spec:
         - {name: KC_HEALTH_ENABLED, value: "true"}
         - {name: KC_METRICS_ENABLED, value: "true"}
         - {name: KC_LOG_LEVEL, value: "info"}
+        # Trust the lab CA so this IdP can reach other parties over https via the edge
+        # (e.g. an ID-JAG receiver fetching the issuing IdP's JWKS).
+        - {name: KC_TRUSTSTORE_PATHS, value: /etc/lab-ca/ca.crt}
         - {name: SV_DOMAIN, value: "${SV_DOMAIN}"}
         - {name: OPS_DOMAIN, value: "${OPS_DOMAIN}"}
         - {name: ALICE_DOMAIN, value: "${ALICE_DOMAIN}"}
         - {name: MERIDIAN_DOMAIN, value: "${MERIDIAN_DOMAIN}"}
+        - {name: LEDGERLINE_DOMAIN, value: "${LEDGERLINE_DOMAIN}"}
         envFrom:
         - secretRef: {name: kc-secrets}     # KC_BOOTSTRAP_ADMIN_* + client secrets for the realm placeholders
         - secretRef: {name: kc-realm-key}   # stable realm signing key (survives restarts)
@@ -76,9 +80,12 @@ spec:
           limits: {memory: 1Gi}
         volumeMounts:
         - {name: realm, mountPath: /opt/keycloak/data/import, readOnly: true}
+        - {name: lab-ca, mountPath: /etc/lab-ca, readOnly: true}
       volumes:
       - name: realm
         configMap: {name: ${KC_REALM_CM}}
+      - name: lab-ca
+        configMap: {name: lab-ca-bundle}
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute

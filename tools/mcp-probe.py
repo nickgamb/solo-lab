@@ -15,8 +15,11 @@ import urllib.request
 
 args = sys.argv[1:]
 token = None
+extra = {}
 if "--token" in args:
     i = args.index("--token"); token = args[i + 1]; del args[i:i + 2]
+while "--header" in args:  # --header name=value (repeatable)
+    i = args.index("--header"); k, v = args[i + 1].split("=", 1); extra[k] = v; del args[i:i + 2]
 url, op, *rest = args
 NEW = "2026-07-28"
 META = {"io.modelcontextprotocol/protocolVersion": NEW,
@@ -30,6 +33,7 @@ def post(body, session=None, version=None, method=None, name=None):
     if version: h["mcp-protocol-version"] = version
     if method: h["mcp-method"] = method
     if name: h["mcp-name"] = name
+    h.update(extra)
     req = urllib.request.Request(url, json.dumps(body).encode(), h, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
@@ -37,8 +41,8 @@ def post(body, session=None, version=None, method=None, name=None):
     except urllib.error.HTTPError as e:
         return e.code, e.headers, e.read().decode()
     except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
-        # A refused/reset connection is an answer too: the mesh said no at L4.
-        print(json.dumps({"http": 0, "error": f"connection refused at L4: {e}"}))
+        # A refused/reset connection is an answer too (in the mesh: an L4 deny).
+        print(json.dumps({"http": 0, "error": f"connection failed: {e}"}))
         sys.exit(0)
 
 
@@ -60,11 +64,11 @@ else:
 
 code, hdrs, text = post({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {
     "protocolVersion": "2025-06-18", "capabilities": {},
-    "clientInfo": {"name": "lab-probe", "version": "1"}}})
+    "clientInfo": {"name": "lab-probe", "version": "1"}}}, method="initialize")
 session = hdrs.get("mcp-session-id") if code == 200 else None
 if code == 200:
     ver = parse(text).get("result", {}).get("protocolVersion", "2025-06-18")
-    post({"jsonrpc": "2.0", "method": "notifications/initialized"}, session, ver)
+    post({"jsonrpc": "2.0", "method": "notifications/initialized"}, session, ver, "notifications/initialized")
     code, _, text = post({"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
                          session, ver, method, name)
 elif code in (401, 403):

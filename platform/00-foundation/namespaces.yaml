@@ -56,7 +56,8 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: sv-mcp
-  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient, istio.io/use-waypoint: waypoint}
+  # S&V's tools sit behind an agentgateway waypoint (demos/bob/manifests/20-waypoint.yaml)
+  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient, istio.io/use-waypoint: mcp-waypoint}
 ---
 # Alice — resource owner
 apiVersion: v1
@@ -77,3 +78,16 @@ kind: Namespace
 metadata:
   name: meridian
   labels: {lab.solo.io/party: meridian, istio.io/dataplane-mode: ambient, istio.io/use-waypoint: waypoint}
+---
+# Ledgerline Research — a SaaS research provider S&V subscribes to (Cross App Access)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ledgerline
+  labels: {lab.solo.io/party: ledgerline, istio.io/dataplane-mode: ambient, istio.io/use-waypoint: waypoint}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ledgerline-identity
+  labels: {lab.solo.io/party: ledgerline, istio.io/dataplane-mode: ambient}

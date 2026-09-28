@@ -1,0 +1,85 @@
+# Ledgerline Research's MCP service. Ledgerline is its own company: it trusts
+# only tokens from its own authorization server (which it mints from ID-JAGs),
+# and outsiders reach it only through the edge at https://mcp.ledgerline.lab.
+#
+# Protection is a standard Istio (Envoy) waypoint — the pattern any customer
+# runs without an AI gateway — plus STRICT mTLS and an L4 pin on the pods.
+apiVersion: kagent.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: ledgerline-research
+  namespace: ledgerline
+spec:
+  transportType: http
+  httpTransport: {targetPort: 3000, path: /mcp}
+  deployment:
+    image: localhost:5001/ledgerline/research-mcp:dev
+    imagePullPolicy: Always
+    port: 3000
+    replicas: 2
+    resources:
+      requests: {cpu: 20m, memory: 64Mi}
+      limits: {memory: 256Mi}
+---
+# `all`, not `service`: the edge sends to endpoint (pod) addresses, and only a
+# workload-scoped waypoint intercepts traffic addressed that way.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: waypoint
+  namespace: ledgerline
+  labels: {istio.io/waypoint-for: all}
+spec:
+  gatewayClassName: istio-waypoint
+  listeners:
+  - {name: mesh, port: 15008, protocol: HBONE}
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: strict, namespace: ledgerline}
+spec: {mtls: {mode: STRICT}}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: pods-only-from-waypoint, namespace: ledgerline}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: ledgerline-research}}
+  action: ALLOW
+  rules:
+  - from: [{source: {principals: ["cluster.local/ns/ledgerline/sa/waypoint"]}}]
+---
+apiVersion: security.istio.io/v1
+kind: RequestAuthentication
+metadata: {name: ledgerline-tokens, namespace: ledgerline}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: waypoint}]
+  jwtRules:
+  - issuer: https://idp.${LEDGERLINE_DOMAIN}/realms/ledgerline
+    jwksUri: http://keycloak.ledgerline-identity.svc.cluster.local/realms/ledgerline/protocol/openid-connect/certs
+    audiences: [ledgerline-research]
+    forwardOriginalToken: true
+---
+# From the internet (the edge) only. The tool catalog is public; every tool
+# CALL needs a Ledgerline-issued token for ledgerline-research.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: research-access, namespace: ledgerline}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: waypoint}]
+  action: ALLOW
+  rules:
+  - from: [{source: {principals: ["cluster.local/ns/kgateway-system/sa/edge"],
+                     requestPrincipals: ["https://idp.${LEDGERLINE_DOMAIN}/realms/ledgerline/*"]}}]
+  - from: [{source: {principals: ["cluster.local/ns/kgateway-system/sa/edge"]}}]
+    to: [{operation: {methods: [POST, GET, DELETE]}}]
+    when:
+    - {key: "request.headers[mcp-method]", values: ["initialize", "notifications/initialized", "tools/list", "server/discover"]}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: research-mcp, namespace: ledgerline}
+spec:
+  parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-ledgerline}]
+  hostnames: ["mcp.${LEDGERLINE_DOMAIN}"]
+  rules:
+  - backendRefs: [{name: ledgerline-research, port: 3000}]

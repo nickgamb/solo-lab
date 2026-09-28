@@ -1,0 +1,1362 @@
+From 8b8e3c016d4d81825edef66b56b340415f4d042c Mon Sep 17 00:00:00 2001
+From: lab <lab@solo.lab>
+Date: Mon, 28 Sep 2026 11:10:27 -0700
+Subject: [PATCH] Backport keycloak/keycloak#49998 (ID-JAG issuer) onto 26.7.4
+
+---
+ .../java/org/keycloak/OAuth2Constants.java    |   1 +
+ .../java/org/keycloak/util/TokenUtil.java     |   2 +
+ .../AbstractTokenExchangeProvider.java        |  11 +-
+ .../IDJWTTokenExchangeProvider.java           | 395 ++++++++++++++
+ .../IDJWTTokenExchangeProviderFactory.java    |  58 ++
+ .../StandardTokenExchangeProvider.java        |  93 ++--
+ .../V1TokenExchangeProvider.java              |  35 +-
+ ...protocol.oidc.TokenExchangeProviderFactory |   1 +
+ .../tokenexchange/IDJAGTokenExchangeTest.java | 516 ++++++++++++++++++
+ .../util/oauth/TokenExchangeRequest.java      |  13 +-
+ 10 files changed, 1065 insertions(+), 60 deletions(-)
+ create mode 100644 services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/IDJWTTokenExchangeProvider.java
+ create mode 100644 services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/IDJWTTokenExchangeProviderFactory.java
+ create mode 100644 tests/base/src/test/java/org/keycloak/tests/oauth/tokenexchange/IDJAGTokenExchangeTest.java
+
+diff --git a/core/src/main/java/org/keycloak/OAuth2Constants.java b/core/src/main/java/org/keycloak/OAuth2Constants.java
+index 3f77146..e8af46b 100755
+--- a/core/src/main/java/org/keycloak/OAuth2Constants.java
++++ b/core/src/main/java/org/keycloak/OAuth2Constants.java
+@@ -82,6 +82,7 @@ public interface OAuth2Constants {
+ 
+     // https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/
+     String IDENTITY_ASSERTION_JWT_HEADER_TYPE = "oauth-id-jag+jwt";
++    String IDENTITY_ASSERTION_JWT_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:id-jag";
+ 
+ 
+     // https://tools.ietf.org/html/draft-ietf-oauth-assertions-01#page-5
+diff --git a/core/src/main/java/org/keycloak/util/TokenUtil.java b/core/src/main/java/org/keycloak/util/TokenUtil.java
+index dd1bbe0..805cdef 100644
+--- a/core/src/main/java/org/keycloak/util/TokenUtil.java
++++ b/core/src/main/java/org/keycloak/util/TokenUtil.java
+@@ -69,6 +69,8 @@ public class TokenUtil {
+     public static final String TOKEN_TYPE_OFFLINE = "Offline";
+ 
+     public static final String TOKEN_TYPE_LOGOUT = "Logout";
++    
++    public static final String TOKEN_TYPE_IDJAG = "IDJAG";
+ 
+     public static final String TOKEN_BACKCHANNEL_LOGOUT_EVENT = "http://schemas.openid.net/event/backchannel-logout";
+     
+diff --git a/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/AbstractTokenExchangeProvider.java b/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/AbstractTokenExchangeProvider.java
+index 1b52f9b..aeb2fa1 100644
+--- a/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/AbstractTokenExchangeProvider.java
++++ b/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/AbstractTokenExchangeProvider.java
+@@ -61,7 +61,6 @@ import org.keycloak.protocol.oidc.OIDCLoginProtocol;
+ import org.keycloak.protocol.oidc.TokenExchangeContext;
+ import org.keycloak.protocol.oidc.TokenExchangeProvider;
+ import org.keycloak.protocol.oidc.TokenManager;
+-import org.keycloak.representations.AccessToken;
+ import org.keycloak.representations.JsonWebToken;
+ import org.keycloak.services.CorsErrorResponseException;
+ import org.keycloak.services.Urls;
+@@ -216,10 +215,10 @@ public abstract class AbstractTokenExchangeProvider implements TokenExchangeProv
+         return targetAudienceClients;
+     }
+ 
+-    protected abstract void validateAudience(AccessToken token, boolean disallowOnHolderOfTokenMismatch, List<ClientModel> targetAudienceClients);
++    protected abstract void validateAudience(JsonWebToken token, boolean disallowOnHolderOfTokenMismatch, List<ClientModel> targetAudienceClients);
+ 
+     protected Response exchangeClientToClient(UserModel targetUser, UserSessionModel targetUserSession,
+-            AccessToken token, boolean disallowOnHolderOfTokenMismatch) {
++            JsonWebToken token, boolean disallowOnHolderOfTokenMismatch) {
+ 
+         String requestedTokenType = getRequestedTokenType();
+         event.detail(Details.REQUESTED_TOKEN_TYPE, requestedTokenType);
+@@ -241,7 +240,7 @@ public abstract class AbstractTokenExchangeProvider implements TokenExchangeProv
+         throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_REQUEST, "requested_token_type unsupported", Response.Status.BAD_REQUEST);
+     }
+ 
+-    protected void forbiddenIfClientIsNotWithinTokenAudience(AccessToken token) {
++    protected void forbiddenIfClientIsNotWithinTokenAudience(JsonWebToken token) {
+         if (token != null && !token.hasAudience(client.getClientId())) {
+             event.detail(Details.REASON, "client is not within the token audience");
+             event.error(Errors.NOT_ALLOWED);
+@@ -268,7 +267,7 @@ public abstract class AbstractTokenExchangeProvider implements TokenExchangeProv
+         return authSession;
+     }
+ 
+-    protected abstract String getRequestedScope(AccessToken token, List<ClientModel> targetAudienceClients);
++    protected abstract String getRequestedScope(JsonWebToken token, List<ClientModel> targetAudienceClients);
+ 
+     protected void setClientToContext(List<ClientModel> targetAudienceClients) {
+         // The client requesting exchange is set in the context
+@@ -276,7 +275,7 @@ public abstract class AbstractTokenExchangeProvider implements TokenExchangeProv
+     }
+ 
+     protected abstract Response exchangeClientToOIDCClient(UserModel targetUser, UserSessionModel targetUserSession, String requestedTokenType,
+-                                                  List<ClientModel> targetAudienceClients, String scope, AccessToken subjectToken);
++                                                  List<ClientModel> targetAudienceClients, String scope, JsonWebToken subjectToken);
+ 
+     protected abstract Response exchangeClientToSAML2Client(UserModel targetUser, UserSessionModel targetUserSession, String requestedTokenType, List<ClientModel> targetAudienceClients);
+ 
+diff --git a/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/IDJWTTokenExchangeProvider.java b/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/IDJWTTokenExchangeProvider.java
+new file mode 100644
+index 0000000..dfc50a3
+--- /dev/null
++++ b/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/IDJWTTokenExchangeProvider.java
+@@ -0,0 +1,395 @@
++package org.keycloak.protocol.oidc.tokenexchange;
++
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.List;
++import java.util.concurrent.TimeUnit;
++
++import jakarta.ws.rs.core.MediaType;
++import jakarta.ws.rs.core.Response;
++
++import org.keycloak.OAuth2Constants;
++import org.keycloak.OAuthErrorException;
++import org.keycloak.TokenVerifier;
++import org.keycloak.common.VerificationException;
++import org.keycloak.common.util.SecretGenerator;
++import org.keycloak.common.util.Time;
++import org.keycloak.crypto.SignatureProvider;
++import org.keycloak.crypto.SignatureSignerContext;
++import org.keycloak.crypto.SignatureVerifierContext;
++import org.keycloak.events.Details;
++import org.keycloak.events.Errors;
++import org.keycloak.jose.jws.JWSBuilder;
++import org.keycloak.models.AuthenticatedClientSessionModel;
++import org.keycloak.models.ClientModel;
++import org.keycloak.models.ClientSessionContext;
++import org.keycloak.models.KeycloakContext;
++import org.keycloak.models.UserModel;
++import org.keycloak.models.UserSessionModel;
++import org.keycloak.models.utils.SessionExpirationUtils;
++import org.keycloak.protocol.oidc.OIDCAdvancedConfigWrapper;
++import org.keycloak.protocol.oidc.OIDCLoginProtocol;
++import org.keycloak.protocol.oidc.TokenExchangeContext;
++import org.keycloak.protocol.oidc.TokenManager;
++import org.keycloak.representations.AccessToken;
++import org.keycloak.representations.AccessTokenResponse;
++import org.keycloak.representations.IDToken;
++import org.keycloak.representations.JsonWebToken;
++import org.keycloak.services.CorsErrorResponseException;
++import org.keycloak.services.Urls;
++import org.keycloak.services.managers.AuthenticationManager;
++import org.keycloak.util.TokenUtil;
++
++import org.jboss.logging.Logger;
++
++/**
++ * Provider for token exchange of Identity Assertion JWT Authorization Grant (ID-JAG)(*),
++ * which is based on the token exchange specification RFC8693(**).
++ *  
++ * (*)https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/
++ * (**)https://datatracker.ietf.org/doc/html/rfc8693
++ *
++ * @author <a href="mailto:yutaka.obuchi.sd@hitachi.com">Yutaka Obuchi</a>
++ */
++public class IDJWTTokenExchangeProvider extends StandardTokenExchangeProvider {
++
++    private static final Logger logger = Logger.getLogger(IDJWTTokenExchangeProvider.class);
++
++    @Override
++    public boolean supports(TokenExchangeContext context) {
++  
++        String requestedTokenType = context.getFormParams().getFirst(OAuth2Constants.REQUESTED_TOKEN_TYPE);
++        if (!OAuth2Constants.IDENTITY_ASSERTION_JWT_TOKEN_TYPE.equals(requestedTokenType)) {
++            context.setUnsupportedReason("Parameter 'requested_token_type' should be 'urn:ietf:params:oauth:token-type:id-jag' for IDJWT token exchange");
++            return false;
++        }
++
++        if(!OIDCAdvancedConfigWrapper.fromClientModel(context.getClient()).isStandardTokenExchangeEnabled()) {
++            context.setUnsupportedReason("Standard token exchange is not enabled for the requested client");
++            return false;
++        }
++
++        return true;
++    }
++
++    @Override
++    protected Response tokenExchange() {
++
++        String subjectToken = context.getParams().getSubjectToken();
++        String subjectTokenType = context.getParams().getSubjectTokenType();
++        if (subjectToken == null || subjectTokenType == null) {
++            event.detail(Details.REASON, "Missing required exchange parameters");
++            event.error(Errors.INVALID_REQUEST);
++            throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_REQUEST,
++                "Parameters 'subject_token' and 'subject_token_type' are required for ID-JAG token exchange",
++                Response.Status.BAD_REQUEST);
++        }
++
++        if (!subjectTokenType.equals(OAuth2Constants.ID_TOKEN_TYPE)) {
++            // For now, only IDToken is supported. SAML 2.0 assertion and refresh token may be supported in the future.
++            event.detail(Details.REASON, "Unsupported subject token type");
++            event.error(Errors.INVALID_REQUEST);
++            throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_REQUEST,
++                "Parameter 'subject_token' supports IDToken only",
++                Response.Status.BAD_REQUEST);
++        }
++        
++        if (context.getParams().getActorToken() != null || context.getParams().getActorTokenType() != null) {
++            // For now, actor tokens are not supported. It will be supported in the future.
++            event.detail(Details.REASON, "Actor tokens are not supported for ID-JAG token exchange");
++            event.error(Errors.INVALID_REQUEST);
++            throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_REQUEST,
++                "Actor tokens are not supported for ID-JAG token exchange", Response.Status.BAD_REQUEST);
++        }
++
++        event.detail(Details.REQUESTED_TOKEN_TYPE, context.getParams().getRequestedTokenType());
++
++        IDToken token = null;
++        try {
++            String realmUrl = Urls.realmIssuer(session.getContext().getUri().getBaseUri(), realm.getName());
++            TokenVerifier<IDToken> verifier = TokenVerifier.create(subjectToken, IDToken.class)
++                    .withChecks(
++                            new TokenVerifier.RealmUrlCheck(realmUrl),
++                            new TokenVerifier.TokenTypeCheck(List.of(TokenUtil.TOKEN_TYPE_ID)),
++                            TokenVerifier.IS_ACTIVE
++                    );
++            
++            if (verifier.getHeader().getAlgorithm() == null) {
++                throw new VerificationException("Missing token algorithm");
++            }
++            String algorithm = verifier.getHeader().getAlgorithm().name();
++            SignatureProvider signatureProvider = session.getProvider(SignatureProvider.class, algorithm);
++            if (signatureProvider == null) {
++                throw new VerificationException("Invalid token algorithm: " + algorithm);
++            }
++
++            SignatureVerifierContext signatureVerifier = signatureProvider.verifier(verifier.getHeader().getKeyId());
++            verifier.verifierContext(signatureVerifier);
++            token = verifier.verify().getToken();
++        } catch (VerificationException e) {
++            logger.debugf("Verification failed: %s", e.getMessage());
++            event.detail(Details.REASON, e.getMessage());
++            event.error(Errors.INVALID_TOKEN);
++            throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_TOKEN, e.getMessage(), Response.Status.BAD_REQUEST);
++        }
++        // Validate the user session associated with the IDToken.
++        UserSessionModel userSession = session.sessions().getUserSession(realm, token.getSessionId());
++        if (userSession == null || !AuthenticationManager.isSessionValid(realm, userSession)) {
++            event.detail(Details.REASON, "Session not found or invalid");
++            event.error(Errors.INVALID_TOKEN);
++            throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_TOKEN, "Session not found or invalid", Response.Status.BAD_REQUEST);
++        }
++        
++
++        UserModel user = userSession.getUser();
++        if (user == null || !user.isEnabled()) {
++            event.detail(Details.REASON, "Invalid user");
++            event.error(Errors.INVALID_TOKEN);
++            throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_TOKEN, "Invalid user", Response.Status.BAD_REQUEST);
++        }
++
++        // Validate the client session associated with the IDToken.
++        //
++        // Per OIDC specifications, if an ID token has multiple audiences, the 'azp' claim MUST be present.
++        // Therefore, if 'azp' (token.getIssuedFor()) is missing, the token is expected to have only a single audience.
++        // Thus, it is perfectly safe to extract the first element at index [0] as the fallback client ID.
++        // We also ensure the array is not empty to prevent any IndexOutOfBoundsException.
++        String audienceClientId = (token.getAudience() != null && token.getAudience().length > 0) ? token.getAudience()[0] : null;
++        String clientIdForSession = token.getIssuedFor() != null ? token.getIssuedFor() : audienceClientId;
++
++        if (clientIdForSession == null) {
++            event.detail(Details.REASON, "Target client_id not found in token");
++            event.error(Errors.INVALID_TOKEN);
++            throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_TOKEN, "Invalid token", Response.Status.BAD_REQUEST);
++        }
++
++        ClientModel tokenHolder = realm.getClientByClientId(clientIdForSession);
++        if (tokenHolder == null) {
++            event.detail(Details.REASON, "Token client not found");
++            event.error(Errors.INVALID_TOKEN);
++            throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_TOKEN, "Token client not found", Response.Status.BAD_REQUEST);
++        }
++
++        try {
++            TokenVerifier.createWithoutSignature(token)
++                .withChecks(
++                    TokenManager.NotBeforeCheck.forModel(realm),
++                    TokenManager.NotBeforeCheck.forModel(tokenHolder),
++                    TokenManager.NotBeforeCheck.forModel(session, realm, user)
++                )
++                .verify();
++        } catch (VerificationException e) {
++            event.detail(Details.REASON, "Token invalidated by revocation policy");
++            event.error(Errors.INVALID_TOKEN);
++            throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_TOKEN,
++                "Token invalidated by revocation policy", Response.Status.BAD_REQUEST);
++        }
++
++        AuthenticatedClientSessionModel clientSession = userSession.getAuthenticatedClientSessionByClient(tokenHolder.getId());
++        if (clientSession == null || !AuthenticationManager.isClientSessionValid(realm, tokenHolder, userSession, clientSession)) {
++            event.detail(Details.REASON, "Client session not found or revoked");
++            event.error(Errors.INVALID_TOKEN);
++            throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_TOKEN, "Client session not found or revoked", Response.Status.BAD_REQUEST);
++        }
++
++        // Guard against token replay attacks by ensuring the ID token was not issued 
++        // before the associated client session started.
++        if (token.isIssuedBeforeSessionStart(clientSession.getStarted())) {
++            event.detail(Details.REASON, "Token issued before the associated client session started");
++            event.error(Errors.INVALID_TOKEN);
++            throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_TOKEN, "Token issued before client session started", Response.Status.BAD_REQUEST);
++        }
++
++        
++        KeycloakContext keycloakContext = session.getContext();
++        
++        keycloakContext.setClient(client);
++        keycloakContext.setBearerToken(token);
++        keycloakContext.setUserSession(userSession);
++        
++        event.user(user);
++        event.detail(Details.USERNAME, user.getUsername());
++        if (token.getSessionId() != null) {
++            event.session(userSession);
++        }
++        event.detail(Details.SUBJECT_TOKEN_CLIENT_ID, token.getIssuedFor());
++
++        return exchangeClientToClient(user, userSession, token, true);
++
++    }
++
++    @Override
++    protected Response buildTokenExchangeResponse(ClientSessionContext clientSessionCtx, String requestedTokenType, List<ClientModel> targetAudienceClients) {
++                
++        AuthenticatedClientSessionModel clientSession = clientSessionCtx.getClientSession();
++        UserSessionModel userSession = clientSession.getUserSession();
++        
++        AccessToken tokenForTransform = new AccessToken();
++        tokenForTransform.setScope(clientSessionCtx.getScopeString());
++        AccessToken transformedToken = tokenManager.transformAccessToken(session, tokenForTransform, userSession, clientSessionCtx);
++         
++        JsonWebToken idjag = new JsonWebToken();
++        idjag.id(SecretGenerator.getInstance().generateSecureID());
++        idjag.type(TokenUtil.TOKEN_TYPE_IDJAG); // IDJAG
++        idjag.subject(transformedToken.getSubject());
++        idjag.issuedNow();
++        idjag.nbf(Time.currentTimeSeconds());
++
++        String issuer = clientSession.getNote(OIDCLoginProtocol.ISSUER);
++        if (issuer == null) {
++            issuer = Urls.realmIssuer(session.getContext().getUri().getBaseUri(), realm.getName());
++        }
++        idjag.issuer(issuer);
++
++        idjag.audience(transformedToken.getAudience());
++   
++        int lifespan = realm.getAccessTokenLifespan(); 
++        String clientLifespanStr = client.getAttribute(org.keycloak.protocol.oidc.OIDCConfigAttributes.ACCESS_TOKEN_LIFESPAN);
++        if (clientLifespanStr != null && !clientLifespanStr.trim().isEmpty()) {
++            try {
++                int clientLifespan = Integer.parseInt(clientLifespanStr);
++                if (clientLifespan > 0 || clientLifespan == -1) {
++                    lifespan = clientLifespan;
++                }
++            } catch (NumberFormatException e) {
++                // Ignore parse failure and fallback to realm default
++            }
++        }
++        long expiration;
++        if (lifespan == -1) {
++            expiration = TimeUnit.SECONDS.toMillis(userSession.getStarted()
++                    + (userSession.isRememberMe() && realm.getSsoSessionMaxLifespanRememberMe() > 0
++                            ? realm.getSsoSessionMaxLifespanRememberMe()
++                            : realm.getSsoSessionMaxLifespan()));
++        } else {
++            expiration = Time.currentTimeMillis() + TimeUnit.SECONDS.toMillis(lifespan);
++        }
++        long sessionExpires = SessionExpirationUtils.calculateClientSessionMaxLifespanTimestamp(
++            userSession.isOffline(),
++            userSession.isRememberMe(),
++            TimeUnit.SECONDS.toMillis(clientSession.getStarted()),
++            TimeUnit.SECONDS.toMillis(userSession.getStarted()),
++            realm,
++            client);
++        if (sessionExpires > 0) {
++            expiration = Math.min(expiration, sessionExpires);
++        }
++        idjag.exp(TimeUnit.MILLISECONDS.toSeconds(expiration));
++
++        // client_id,auth_time should be set in idjag assertion here.
++        if (transformedToken.getOtherClaims() != null) {
++            idjag.getOtherClaims().putAll(transformedToken.getOtherClaims());
++        }
++
++        Object targetClientId = idjag.getOtherClaims().get(OAuth2Constants.CLIENT_ID);
++        if (targetClientId == null || targetClientId.toString().isBlank()) {
++            String errorMessage = "Claim 'client_id' is missing in ID-JAG. Ensure a Hardcoded Claim protocol mapper is configured in the Client Scope for target: "
++                + (params.getAudience() != null ? params.getAudience().get(0) : "");
++            event.detail(Details.REASON, errorMessage);
++            event.error(Errors.INVALID_REQUEST);
++            throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_REQUEST, errorMessage, Response.Status.BAD_REQUEST);
++        }
++  
++        String grantedScope = transformedToken.getScope();
++        if (grantedScope != null) {
++            idjag.setOtherClaims("scope", grantedScope);
++        }    
++        
++        checkRequestedAudiences(idjag);
++
++        // sign the ID-JAG using the realm/server-configured signature algorithm for ID tokens
++        String signatureAlgorithm = session.tokens().signatureAlgorithm(org.keycloak.TokenCategory.ID);
++        SignatureProvider signatureProvider = session.getProvider(SignatureProvider.class, signatureAlgorithm);
++        SignatureSignerContext signer = signatureProvider.signer();
++
++        String encodedIdJag = new JWSBuilder()
++                .type(OAuth2Constants.IDENTITY_ASSERTION_JWT_HEADER_TYPE) // "oauth-id-jag+jwt"
++                .jsonContent(idjag)
++                .sign(signer);
++
++        AccessTokenResponse res = new AccessTokenResponse();
++        res.setToken(encodedIdJag);
++        res.setTokenType(TokenUtil.TOKEN_TYPE_NA); 
++        res.setExpiresIn(idjag.getExp() - Time.currentTime());
++        res.setOtherClaims(OAuth2Constants.ISSUED_TOKEN_TYPE, requestedTokenType);
++        res.setScope(grantedScope);
++
++        if (params.getAudience() != null) {
++            event.detail(Details.AUDIENCE, String.join(" ", params.getAudience()));
++        }
++        event.success();
++
++        return cors.add(Response.ok(res, MediaType.APPLICATION_JSON_TYPE));
++    }
++    
++    @Override
++    protected List<String> getSupportedOAuthResponseTokenTypes() {
++        return Arrays.asList(OAuth2Constants.IDENTITY_ASSERTION_JWT_TOKEN_TYPE);
++    }
++
++    @Override
++    protected String getRequestedTokenType() {
++        String requestedTokenType = params.getRequestedTokenType();
++        if (requestedTokenType == null) {
++            requestedTokenType = OAuth2Constants.ACCESS_TOKEN_TYPE;
++            return requestedTokenType;
++        }
++        if (requestedTokenType.equals(OAuth2Constants.ACCESS_TOKEN_TYPE)
++                || requestedTokenType.equals(OAuth2Constants.ID_TOKEN_TYPE)
++                || requestedTokenType.equals(OAuth2Constants.SAML2_TOKEN_TYPE)
++                || requestedTokenType.equals(OAuth2Constants.IDENTITY_ASSERTION_JWT_TOKEN_TYPE)) {
++            return requestedTokenType;
++        }
++        OIDCAdvancedConfigWrapper oidcClient = OIDCAdvancedConfigWrapper.fromClientModel(client);
++        if (requestedTokenType.equals(OAuth2Constants.REFRESH_TOKEN_TYPE)
++                && oidcClient.isUseRefreshToken()
++                && oidcClient.getStandardTokenExchangeRefreshEnabled() != OIDCAdvancedConfigWrapper.TokenExchangeRefreshTokenEnabled.NO) {
++            return requestedTokenType;
++        }
++
++        event.detail(Details.REASON, "requested_token_type unsupported in JWTTokenExchangeProvider");
++        event.error(Errors.INVALID_REQUEST);
++        throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_REQUEST, "requested_token_type unsupported in JWTTokenExchangeProvider", Response.Status.BAD_REQUEST);
++    }
++
++    // Using the value of "audience" parameter to find the target audience clients. 
++    // The value of "audience" parameter is expected to be the same as the value of clientId of the target audience client. 
++    // The "audience" parameter is required for this token exchange provider.
++    protected List<ClientModel> getTargetAudienceClients() {
++        List<String> audienceParams = params.getAudience();
++        List<ClientModel> targetAudienceClients = new ArrayList<>();
++        if (audienceParams != null) {
++            if (audienceParams.size() == 0) {
++                event.detail(Details.REASON, "audience required");
++                event.error(Errors.INVALID_REQUEST);
++                throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_REQUEST, "audience required", Response.Status.BAD_REQUEST);
++            } else if (audienceParams.size() == 1) {
++                // only the first one is used
++                String audienceParameterString = params.getAudience().get(0);
++                
++                ClientModel matchingClient = realm.getClientByClientId(audienceParameterString);
++                if (matchingClient == null) {
++                    event.detail(Details.AUDIENCE, audienceParameterString);
++                    event.detail(Details.REASON, "Client not found for audience parameter: " + audienceParameterString);
++                    event.error(Errors.NOT_ALLOWED);
++                    throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_REQUEST, "Client not found for audience parameter: " + audienceParameterString, Response.Status.BAD_REQUEST);
++                } else {
++                    targetAudienceClients.add(matchingClient);
++                }
++            
++            } else if (audienceParams.size() > 1) {
++                event.detail(Details.REASON, "Multiple audiences are not supported");
++                event.error(Errors.INVALID_REQUEST);
++
++                throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_REQUEST, 
++                    "The ID-JAG token exchange provider does not support multiple audiences. Please request one audience at a time.", 
++                    Response.Status.BAD_REQUEST);
++            }
++        } else {
++            event.detail(Details.REASON, "audience required");
++            event.error(Errors.INVALID_REQUEST);
++            throw new CorsErrorResponseException(cors, OAuthErrorException.INVALID_REQUEST, "audience required", Response.Status.BAD_REQUEST);
++        }
++        return targetAudienceClients;
++    }
++}
+diff --git a/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/IDJWTTokenExchangeProviderFactory.java b/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/IDJWTTokenExchangeProviderFactory.java
+new file mode 100644
+index 0000000..ada2305
+--- /dev/null
++++ b/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/IDJWTTokenExchangeProviderFactory.java
+@@ -0,0 +1,58 @@
++package org.keycloak.protocol.oidc.tokenexchange;
++
++import org.keycloak.Config;
++import org.keycloak.common.Profile;
++import org.keycloak.models.KeycloakSession;
++import org.keycloak.models.KeycloakSessionFactory;
++import org.keycloak.protocol.oidc.TokenExchangeProvider;
++import org.keycloak.protocol.oidc.TokenExchangeProviderFactory;
++import org.keycloak.provider.EnvironmentDependentProviderFactory;
++
++/**
++ * Provider factory for token exchange of Identity Assertion JWT Authorization Grant (ID-JAG)(*),
++ * which is based on the token exchange specification RFC8693(**).
++ *  
++ * (*)https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/
++ * (**)https://datatracker.ietf.org/doc/html/rfc8693
++ *
++ * @author <a href="mailto:yutaka.obuchi.sd@hitachi.com">Yutaka Obuchi</a>
++ */
++public class IDJWTTokenExchangeProviderFactory implements TokenExchangeProviderFactory, EnvironmentDependentProviderFactory {
++
++    @Override
++    public TokenExchangeProvider create(KeycloakSession session) {
++        return new IDJWTTokenExchangeProvider();
++    }
++
++    @Override
++    public void init(Config.Scope config) {
++
++    }
++
++    @Override
++    public void postInit(KeycloakSessionFactory factory) {
++
++    }
++
++    @Override
++    public void close() {
++
++    }
++
++    @Override
++    public String getId() {
++        return "idjag";
++    }
++
++    @Override
++    public boolean isSupported(Config.Scope config) {
++        return Profile.isFeatureEnabled(Profile.Feature.IDENTITY_ASSERTION_JWT);
++    }
++
++    @Override
++    public int order() {
++        // Higher priority than V1TokenExchangeProviderFactory and StandardTokenExchangeProviderFactory,
++        // so ID-JAG is preferred when multiple token exchange providers are enabled.
++        return 30;
++    }
++}
+diff --git a/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/StandardTokenExchangeProvider.java b/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/StandardTokenExchangeProvider.java
+index 0cc07ee..07fc7f7 100644
+--- a/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/StandardTokenExchangeProvider.java
++++ b/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/StandardTokenExchangeProvider.java
+@@ -47,6 +47,7 @@ import org.keycloak.protocol.oidc.encode.AccessTokenContext;
+ import org.keycloak.protocol.oidc.encode.TokenContextEncoderProvider;
+ import org.keycloak.representations.AccessToken;
+ import org.keycloak.representations.AccessTokenResponse;
++import org.keycloak.representations.JsonWebToken;
+ import org.keycloak.representations.dpop.DPoP;
+ import org.keycloak.services.CorsErrorResponseException;
+ import org.keycloak.services.managers.AuthenticationManager;
+@@ -181,7 +182,7 @@ public class StandardTokenExchangeProvider extends AbstractTokenExchangeProvider
+     }
+ 
+     @Override
+-    protected void validateAudience(AccessToken token, boolean disallowOnHolderOfTokenMismatch, List<ClientModel> targetAudienceClients) {
++    protected void validateAudience(JsonWebToken token, boolean disallowOnHolderOfTokenMismatch, List<ClientModel> targetAudienceClients) {
+         ClientModel tokenHolder = token == null ? null : realm.getClientByClientId(token.getIssuedFor());
+ 
+         if (client.isPublicClient()) {
+@@ -215,9 +216,51 @@ public class StandardTokenExchangeProvider extends AbstractTokenExchangeProvider
+         }
+     }
+ 
++    protected Response buildTokenExchangeResponse(ClientSessionContext clientSessionCtx, String requestedTokenType, List<ClientModel> targetAudienceClients) {
++        TokenManager.AccessTokenResponseBuilder responseBuilder = tokenManager.responseBuilder(realm, client, event, session,
++                clientSessionCtx.getClientSession().getUserSession(), clientSessionCtx).generateAccessToken();
++
++        checkRequestedAudiences(responseBuilder);
++
++        TokenContextEncoderProvider encoder = session.getProvider(TokenContextEncoderProvider.class);
++
++        if (encoder.getTokenContextFromTokenId(responseBuilder.getAccessToken().getId()).getSessionType() == AccessTokenContext.SessionType.TRANSIENT) {
++            responseBuilder.getAccessToken().setSessionId(null);
++            event.session((String) null);
++        }
++
++        if (OAuth2Constants.REFRESH_TOKEN_TYPE.equals(requestedTokenType)) {
++            responseBuilder.generateRefreshToken();
++        }
++        
++        AccessTokenResponse res;
++        if (OAuth2Constants.ID_TOKEN_TYPE.equals(requestedTokenType)) {
++            // Using the id-token inside "access_token" parameter as per description of "access_token" parameter under https://datatracker.ietf.org/doc/html/rfc8693#name-successful-response
++            res = responseBuilder.generateIDToken().build();
++            res.setToken(res.getIdToken());
++            res.setIdToken(null);
++            res.setTokenType(TokenUtil.TOKEN_TYPE_NA);
++        } else {
++            String scopeParam = params.getScope();
++            if (TokenUtil.isOIDCRequest(scopeParam)) {
++                responseBuilder.generateIDToken().generateAccessTokenHash();
++            }
++            res = responseBuilder.build();
++        }
++
++        res.setOtherClaims(OAuth2Constants.ISSUED_TOKEN_TYPE, requestedTokenType);
++
++        if (responseBuilder.getAccessToken().getAudience() != null) {
++            event.detail(Details.AUDIENCE, CollectionUtil.join(List.of(responseBuilder.getAccessToken().getAudience()), " "));
++        }
++        event.success();
++
++        return cors.add(Response.ok(res, MediaType.APPLICATION_JSON_TYPE));
++    }
++
+     // For now, include "scope" parameter as is
+     @Override
+-    protected String getRequestedScope(AccessToken token, List<ClientModel> targetAudienceClients) {
++    protected String getRequestedScope(JsonWebToken token, List<ClientModel> targetAudienceClients) {
+         String scope = formParams.getFirst(OAuth2Constants.SCOPE);
+ 
+         if (!TokenManager.isValidScope(session, scope, client)) {
+@@ -232,7 +275,7 @@ public class StandardTokenExchangeProvider extends AbstractTokenExchangeProvider
+ 
+     @Override
+     protected Response exchangeClientToOIDCClient(UserModel targetUser, UserSessionModel targetUserSession, String requestedTokenType,
+-                                                  List<ClientModel> targetAudienceClients, String scope, AccessToken subjectToken) {
++                                                  List<ClientModel> targetAudienceClients, String scope, JsonWebToken subjectToken) {
+         RootAuthenticationSessionModel rootAuthSession = new AuthenticationSessionManager(session).createAuthenticationSession(realm, false);
+         AuthenticationSessionModel authSession = createSessionModel(targetUserSession, rootAuthSession, targetUser, client, scope);
+         boolean isOfflineSession = targetUserSession.isOffline();
+@@ -298,43 +341,7 @@ public class StandardTokenExchangeProvider extends AbstractTokenExchangeProvider
+                 clientSessionCtx.getClientSession().setNote(Constants.TOKEN_EXCHANGE_SUBJECT_CLIENT + subjectToken.getIssuedFor(), subjectToken.getId());
+             }
+ 
+-            TokenManager.AccessTokenResponseBuilder responseBuilder = tokenManager.responseBuilder(realm, client, event, session,
+-                    clientSessionCtx.getClientSession().getUserSession(), clientSessionCtx).generateAccessToken();
+-
+-            checkRequestedAudiences(responseBuilder);
+-
+-            if (encoder.getTokenContextFromTokenId(responseBuilder.getAccessToken().getId()).getSessionType() == AccessTokenContext.SessionType.TRANSIENT) {
+-                responseBuilder.getAccessToken().setSessionId(null);
+-                event.session((String) null);
+-            }
+-
+-            if (OAuth2Constants.REFRESH_TOKEN_TYPE.equals(requestedTokenType)) {
+-                responseBuilder.generateRefreshToken();
+-            }
+-
+-            AccessTokenResponse res;
+-            if (OAuth2Constants.ID_TOKEN_TYPE.equals(requestedTokenType)) {
+-                // Using the id-token inside "access_token" parameter as per description of "access_token" parameter under https://datatracker.ietf.org/doc/html/rfc8693#name-successful-response
+-                res = responseBuilder.generateIDToken().build();
+-                res.setToken(res.getIdToken());
+-                res.setIdToken(null);
+-                res.setTokenType(TokenUtil.TOKEN_TYPE_NA);
+-            } else {
+-                String scopeParam = params.getScope();
+-                if (TokenUtil.isOIDCRequest(scopeParam)) {
+-                    responseBuilder.generateIDToken().generateAccessTokenHash();
+-                }
+-                res = responseBuilder.build();
+-            }
+-
+-            res.setOtherClaims(OAuth2Constants.ISSUED_TOKEN_TYPE, requestedTokenType);
+-
+-            if (responseBuilder.getAccessToken().getAudience() != null) {
+-                event.detail(Details.AUDIENCE, CollectionUtil.join(List.of(responseBuilder.getAccessToken().getAudience()), " "));
+-            }
+-            event.success();
+-
+-            return cors.add(Response.ok(res, MediaType.APPLICATION_JSON_TYPE));
++            return buildTokenExchangeResponse(clientSessionCtx, requestedTokenType, targetAudienceClients);
+         } catch (RuntimeException e) {
+             // Cleanup client-session if created in this request
+             if (newClientSessionCreated) {
+@@ -353,7 +360,11 @@ public class StandardTokenExchangeProvider extends AbstractTokenExchangeProvider
+     }
+ 
+     protected void checkRequestedAudiences(TokenManager.AccessTokenResponseBuilder responseBuilder) {
+-        Set<String> missingAudience = TokenUtils.checkRequestedAudiences(responseBuilder.getAccessToken(), params.getAudience());
++        checkRequestedAudiences(responseBuilder.getAccessToken());
++    }
++
++    protected void checkRequestedAudiences(JsonWebToken token) {
++        Set<String> missingAudience = TokenUtils.checkRequestedAudiences(token, params.getAudience());
+         if (!missingAudience.isEmpty()) {
+             final String missingAudienceString = CollectionUtil.join(missingAudience);
+             event.detail(Details.REASON, "Requested audience not available: " + missingAudienceString);
+diff --git a/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/V1TokenExchangeProvider.java b/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/V1TokenExchangeProvider.java
+index 5e6b550..53ecbda 100644
+--- a/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/V1TokenExchangeProvider.java
++++ b/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/V1TokenExchangeProvider.java
+@@ -53,6 +53,7 @@ import org.keycloak.protocol.saml.SamlProtocol;
+ import org.keycloak.protocol.saml.SamlService;
+ import org.keycloak.representations.AccessToken;
+ import org.keycloak.representations.AccessTokenResponse;
++import org.keycloak.representations.JsonWebToken;
+ import org.keycloak.saml.common.constants.GeneralConstants;
+ import org.keycloak.services.CorsErrorResponseException;
+ import org.keycloak.services.cors.Cors;
+@@ -218,7 +219,7 @@ public class V1TokenExchangeProvider extends AbstractTokenExchangeProvider {
+     }
+ 
+     @Override
+-    protected void validateAudience(AccessToken token, boolean disallowOnHolderOfTokenMismatch, List<ClientModel> targetAudienceClients) {
++    protected void validateAudience(JsonWebToken token, boolean disallowOnHolderOfTokenMismatch, List<ClientModel> targetAudienceClients) {
+         ClientModel tokenHolder = token == null ? null : realm.getClientByClientId(token.getIssuedFor());
+         for (ClientModel targetClient : targetAudienceClients) {
+             if (targetClient.isConsentRequired()) {
+@@ -247,11 +248,21 @@ public class V1TokenExchangeProvider extends AbstractTokenExchangeProvider {
+                     // public clients can not exchange tokens from other client
+                     forbiddenIfClientIsNotTokenHolder(disallowOnHolderOfTokenMismatch, tokenHolder);
+                 }
+-                if (!AdminPermissions.management(session, realm).clients().canExchangeTo(client, targetClient, token)) {
+-                    event.detail(Details.REASON, "client not allowed to exchange to audience");
+-                    event.detail(Details.AUDIENCE, targetClient.getClientId());
+-                    event.error(Errors.NOT_ALLOWED);
+-                    throw new CorsErrorResponseException(cors, OAuthErrorException.ACCESS_DENIED, "Client not allowed to exchange", Response.Status.FORBIDDEN);
++
++                if (token == null || token instanceof AccessToken) {
++                    if (!AdminPermissions.management(session, realm).clients().canExchangeTo(client, targetClient, (AccessToken)token)) {
++                        event.detail(Details.REASON, "client not allowed to exchange to audience");
++                        event.detail(Details.AUDIENCE, targetClient.getClientId());
++                        event.error(Errors.NOT_ALLOWED);
++                        throw new CorsErrorResponseException(cors, OAuthErrorException.ACCESS_DENIED, "Client not allowed to exchange", Response.Status.FORBIDDEN);
++                    }
++                } else {
++                    throw new CorsErrorResponseException(
++                        cors,
++                        OAuthErrorException.INVALID_GRANT, 
++                        "Invalid token type. An Access Token is required.", 
++                        Response.Status.BAD_REQUEST
++                    );
+                 }
+             }
+         }
+@@ -263,7 +274,7 @@ public class V1TokenExchangeProvider extends AbstractTokenExchangeProvider {
+     }
+ 
+     @Override
+-    protected String getRequestedScope(AccessToken token, List<ClientModel> targetAudienceClients) {
++    protected String getRequestedScope(JsonWebToken token, List<ClientModel> targetAudienceClients) {
+         ClientModel targetClient = targetAudienceClients.get(0);
+         // TODO Remove once more audiences are properly supported
+         if (targetAudienceClients.size() > 1) {
+@@ -271,16 +282,16 @@ public class V1TokenExchangeProvider extends AbstractTokenExchangeProvider {
+         }
+ 
+         String scope = formParams.getFirst(OAuth2Constants.SCOPE);
+-        if (token != null && token.getScope() != null && scope == null) {
+-            scope = token.getScope();
++        if (token != null && token instanceof AccessToken && ((AccessToken)token).getScope() != null && scope == null) {
++            scope = ((AccessToken)token).getScope();
+ 
+             Set<String> targetClientScopes = new HashSet<String>();
+             targetClientScopes.addAll(targetClient.getClientScopes(true).keySet());
+             targetClientScopes.addAll(targetClient.getClientScopes(false).keySet());
+             //from return scope remove scopes that are not default or optional scopes for targetClient
+             scope = Arrays.stream(scope.split(" ")).filter(s -> "openid".equals(s) || (targetClientScopes.contains(Profile.isFeatureEnabled(Profile.Feature.PARAMETERIZED_SCOPES) ? s.split(":")[0] : s))).collect(Collectors.joining(" "));
+-        } else if (token != null && token.getScope() != null) {
+-            String subjectTokenScopes = token.getScope();
++        } else if (token != null && token instanceof AccessToken && ((AccessToken)token).getScope() != null) {
++            String subjectTokenScopes = ((AccessToken)token).getScope();
+             if (Profile.isFeatureEnabled(Profile.Feature.PARAMETERIZED_SCOPES)) {
+                 Set<String> subjectTokenScopesSet = Arrays.stream(subjectTokenScopes.split(" ")).map(s -> s.split(":")[0]).collect(Collectors.toSet());
+                 scope = Arrays.stream(scope.split(" ")).filter(sc -> subjectTokenScopesSet.contains(sc.split(":")[0])).collect(Collectors.joining(" "));
+@@ -311,7 +322,7 @@ public class V1TokenExchangeProvider extends AbstractTokenExchangeProvider {
+ 
+     @Override
+     protected Response exchangeClientToOIDCClient(UserModel targetUser, UserSessionModel targetUserSession, String requestedTokenType,
+-                                                  List<ClientModel> targetAudienceClients, String scope, AccessToken subjectToken) {
++                                                  List<ClientModel> targetAudienceClients, String scope, JsonWebToken subjectToken) {
+         ClientModel targetClient = getTargetClient(targetAudienceClients);
+         RootAuthenticationSessionModel rootAuthSession = new AuthenticationSessionManager(session).createAuthenticationSession(realm, false);
+         AuthenticationSessionModel authSession = createSessionModel(targetUserSession, rootAuthSession, targetUser, targetClient, scope);
+diff --git a/services/src/main/resources/META-INF/services/org.keycloak.protocol.oidc.TokenExchangeProviderFactory b/services/src/main/resources/META-INF/services/org.keycloak.protocol.oidc.TokenExchangeProviderFactory
+index e26a4ea..b18d4cc 100644
+--- a/services/src/main/resources/META-INF/services/org.keycloak.protocol.oidc.TokenExchangeProviderFactory
++++ b/services/src/main/resources/META-INF/services/org.keycloak.protocol.oidc.TokenExchangeProviderFactory
+@@ -1,2 +1,3 @@
+ org.keycloak.protocol.oidc.tokenexchange.V1TokenExchangeProviderFactory
+ org.keycloak.protocol.oidc.tokenexchange.StandardTokenExchangeProviderFactory
++org.keycloak.protocol.oidc.tokenexchange.IDJWTTokenExchangeProviderFactory
+diff --git a/tests/base/src/test/java/org/keycloak/tests/oauth/tokenexchange/IDJAGTokenExchangeTest.java b/tests/base/src/test/java/org/keycloak/tests/oauth/tokenexchange/IDJAGTokenExchangeTest.java
+new file mode 100644
+index 0000000..988fbf2
+--- /dev/null
++++ b/tests/base/src/test/java/org/keycloak/tests/oauth/tokenexchange/IDJAGTokenExchangeTest.java
+@@ -0,0 +1,516 @@
++package org.keycloak.tests.oauth.tokenexchange;
++
++
++import java.util.logging.Logger;
++
++import org.keycloak.OAuthErrorException;
++import org.keycloak.common.Profile;
++import org.keycloak.common.util.Time;
++import org.keycloak.jose.jws.JWSInput;
++import org.keycloak.jose.jws.JWSInputException;
++import org.keycloak.models.AuthenticatedClientSessionModel;
++import org.keycloak.models.ClientModel;
++import org.keycloak.models.RealmModel;
++import org.keycloak.models.UserModel;
++import org.keycloak.models.UserSessionModel;
++import org.keycloak.representations.JsonWebToken;
++import org.keycloak.testframework.annotations.InjectRealm;
++import org.keycloak.testframework.annotations.KeycloakIntegrationTest;
++import org.keycloak.testframework.oauth.OAuthClient;
++import org.keycloak.testframework.oauth.annotations.InjectOAuthClient;
++import org.keycloak.testframework.realm.ClientBuilder;
++import org.keycloak.testframework.realm.ManagedRealm;
++import org.keycloak.testframework.realm.RealmBuilder;
++import org.keycloak.testframework.realm.RealmConfig;
++import org.keycloak.testframework.realm.UserBuilder;
++import org.keycloak.testframework.remote.runonserver.InjectRunOnServer;
++import org.keycloak.testframework.remote.runonserver.RunOnServerClient;
++import org.keycloak.testframework.server.KeycloakServerConfig;
++import org.keycloak.testframework.server.KeycloakServerConfigBuilder;
++import org.keycloak.testsuite.util.oauth.AccessTokenResponse;
++
++import org.junit.jupiter.api.Assertions;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.MethodOrderer;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.TestMethodOrder;
++
++/**
++ *
++ * @author yutaka.obuchi.sd@hitachi.com
++ */
++@KeycloakIntegrationTest(config = IDJAGTokenExchangeTest.JWTAuthorizationGrantServerConfig.class)
++@TestMethodOrder(MethodOrderer.MethodName.class)
++public class IDJAGTokenExchangeTest {
++ 
++    private static final Logger LOG = Logger.getLogger(IDJAGTokenExchangeTest.class.getName());
++    
++    @InjectRealm(ref = "ssodomain", config = SSODomainConfig.class)
++    ManagedRealm ssodomain;
++
++    @InjectOAuthClient
++    OAuthClient oauth;
++
++    @InjectOAuthClient(ref = "oauth2", webDriverRef = "webDriver2")
++    OAuthClient oauth2;
++
++    @InjectRunOnServer(permittedPackages = "org.keycloak.tests")
++    RunOnServerClient runOnServer;
++
++    @BeforeEach
++    public void configureAgentRedirectUri() {
++        String redirectUri = oauth.getRedirectUri();
++        runOnServer.run(session -> {
++            RealmModel realm = session.realms().getRealmByName("ssodomain");
++            ClientModel requestingClient = realm.getClientByClientId("agent");
++            requestingClient.setRedirectUris(java.util.Collections.singleton(redirectUri));
++        });
++    }
++
++    public static class SSODomainConfig implements RealmConfig {
++
++        @Override
++        public RealmBuilder configure(RealmBuilder realm) {
++            realm.name("ssodomain");
++        
++            // test client for a Resource Authorization Server in IdP
++            realm.clients(ClientBuilder.create().clientId("https://login.saas-tool.example/")
++                    .secret("password")
++                    .redirectUris("https://login.saas-tool.example/callback"));
++
++            
++            // test client to request the Token exchange in ssodomain
++            realm.clients(ClientBuilder.create().clientId("agent")
++                    .secret("password")
++                    .attribute("access.token.lifespan", "-1")
++                    .attribute("standard.token.exchange.enabled", "true"));
++
++            realm.clients(ClientBuilder.create().clientId("wrong_agent")
++                    .secret("password")
++                    .redirectUris("*")
++                    .attribute("standard.token.exchange.enabled", "true"));
++  
++
++            // test user in ssodomain
++            realm.users(UserBuilder.create().username("testuser")
++                    .name("Test", "User")
++                    .email("test@localhost")
++                    .emailVerified(Boolean.TRUE)
++                    .password("password"));
++
++            return realm;
++        
++        }
++    }
++
++    @Test
++    public void testTokenExchangeSucceedsWithValidIDJAG() throws Exception {
++
++        try {
++            ssodomain.admin().logoutAll();
++        } catch (Exception e) {
++            LOG.log(java.util.logging.Level.WARNING, "Failed to logout all sessions via Admin API", e);
++        }
++
++        final String targetAudience = "https://login.saas-tool.example/";
++        final String expectedClientId = "agent-at-todo";
++        final String scopeName = "idjag-saas-scope";
++        final String oidcProtocol = org.keycloak.protocol.oidc.OIDCLoginProtocol.LOGIN_PROTOCOL;
++
++        runOnServer.run(session -> {
++            RealmModel realm = session.realms().getRealmByName("ssodomain");
++            ClientModel requestingClient = realm.getClientByClientId("agent");
++            ClientModel targetClient = realm.getClientByClientId(targetAudience);
++
++            org.keycloak.models.RoleModel targetRole = targetClient.getRole("target-role");
++            if (targetRole == null) {
++                targetRole = targetClient.addRole("target-role");
++            }
++
++            UserModel user = session.users().getUserByUsername(realm, "testuser");
++            if (user != null && !user.hasRole(targetRole)) {
++                user.grantRole(targetRole);
++            }
++
++            org.keycloak.models.ClientScopeModel clientScope = org.keycloak.models.utils.KeycloakModelUtils.getClientScopeByName(realm, scopeName);
++            if (clientScope == null) {
++                clientScope = realm.addClientScope(scopeName);
++                clientScope.setProtocol(oidcProtocol);
++            }
++
++            clientScope.addScopeMapping(targetRole);
++
++            // Hardcoded Claim Mapper (Add to ID token: true)
++            if (clientScope.getProtocolMapperByName(oidcProtocol, "hardcoded-client-id") == null) {
++                org.keycloak.models.ProtocolMapperModel clientIdMapper = new org.keycloak.models.ProtocolMapperModel();
++                clientIdMapper.setName("hardcoded-client-id");
++                clientIdMapper.setProtocol(oidcProtocol);
++                clientIdMapper.setProtocolMapper(org.keycloak.protocol.oidc.mappers.HardcodedClaim.PROVIDER_ID);
++                
++                java.util.Map<String, String> config = new java.util.HashMap<>();
++                config.put("claim.name", "client_id");
++                config.put("claim.value", expectedClientId);
++                config.put("jsonType.label", "String");
++                config.put("id.token.claim", "true");
++                config.put("access.token.claim", "true");
++                config.put("userinfo.token.claim", "false");
++                clientIdMapper.setConfig(config);
++
++                clientScope.addProtocolMapper(clientIdMapper);
++            }
++
++            // Pairwise Sub Mapper (SHA-256)
++            if (clientScope.getProtocolMapperByName(oidcProtocol, "pairwise-sub-mapper") == null) {
++                org.keycloak.models.ProtocolMapperModel pairwiseMapper = new org.keycloak.models.ProtocolMapperModel();
++                pairwiseMapper.setName("pairwise-sub-mapper");
++                pairwiseMapper.setProtocol(oidcProtocol);
++                pairwiseMapper.setProtocolMapper(new org.keycloak.protocol.oidc.mappers.SHA256PairwiseSubMapper().getId());
++
++                java.util.Map<String, String> config = new java.util.HashMap<>();
++                config.put(org.keycloak.protocol.oidc.mappers.PairwiseSubMapperHelper.PAIRWISE_SUB_ALGORITHM_SALT,
++                    "agent-salt");
++                config.put("access.token.claim", "true");
++                config.put("id.token.claim", "true");
++                pairwiseMapper.setConfig(config);
++
++                clientScope.addProtocolMapper(pairwiseMapper);
++            }
++
++            // assigned to Requesting Client ("agent") as Default Client Scope
++            requestingClient.addClientScope(clientScope, true);
++
++            org.keycloak.models.ClientScopeModel readScope = org.keycloak.models.utils.KeycloakModelUtils.getClientScopeByName(realm, "read:something");
++            if (readScope == null) {
++                readScope = realm.addClientScope("read:something");
++                readScope.setProtocol(oidcProtocol);
++            }
++            requestingClient.addClientScope(readScope, false);
++
++        });
++
++
++        // do a login in ssodomain to obtain an access token with agent
++        oauth.realm("ssodomain").client("agent", "password")/* .redirectUri(exactRedirectUri)*/.openLoginForm();
++        oauth.fillLoginForm("testuser", "password");
++        AccessTokenResponse tokenResponse = oauth.doAccessTokenRequest(oauth.parseLoginResponse().getCode());
++        Assertions.assertTrue(tokenResponse.isSuccess());
++        JWSInput jws;
++        try {
++            jws = new JWSInput(tokenResponse.getIdToken());
++        } catch (JWSInputException e) {
++            throw new RuntimeException("The provided assertion is not a valid JWT");
++        }
++
++        String subject_of_idtoken = jws.readJsonContent(org.keycloak.representations.IDToken.class).getSubject();
++
++        // perform token exchange to get the assertion grant
++        tokenResponse = oauth.tokenExchangeRequest(tokenResponse.getIdToken(),"urn:ietf:params:oauth:token-type:id_token")
++                .audience("https://login.saas-tool.example/")
++                .requestedTokenType("urn:ietf:params:oauth:token-type:id-jag")
++                .scope("read:something")
++                .send();
++
++        Assertions.assertTrue(tokenResponse.isSuccess());
++        Assertions.assertNull(tokenResponse.getRefreshToken());
++        Assertions.assertEquals(org.keycloak.OAuth2Constants.IDENTITY_ASSERTION_JWT_TOKEN_TYPE, tokenResponse.getIssuedTokenType());
++        Assertions.assertEquals(org.keycloak.util.TokenUtil.TOKEN_TYPE_NA, tokenResponse.getTokenType());
++        Assertions.assertTrue(tokenResponse.getScope().contains("read:something"));
++        Assertions.assertTrue(tokenResponse.getScope().contains("idjag-saas-scope"));
++
++        JsonWebToken idjag = oauth.parseToken(tokenResponse.getAccessToken(), JsonWebToken.class);
++        Assertions.assertEquals("agent-at-todo", idjag.getOtherClaims().get("client_id"));
++
++        Assertions.assertNotEquals(subject_of_idtoken, ssodomain.admin().users().search("testuser").get(0).getId(),
++            "The subject of the ID token must not be the same as the user id of testuser");
++        String exchangedSub = idjag.getSubject();
++        Assertions.assertNotNull(exchangedSub);
++        Assertions.assertEquals(subject_of_idtoken, exchangedSub,
++            "The ID-JAG must preserve the ID token's pairwise subject");
++        Assertions.assertFalse(exchangedSub.isBlank());
++
++        Assertions.assertEquals("https://login.saas-tool.example/", idjag.getAudience()[0]);
++        Assertions.assertTrue(idjag.getOtherClaims().get("scope").toString().contains("read:something"));
++        Assertions.assertTrue(idjag.getOtherClaims().get("scope").toString().contains("idjag-saas-scope"));
++        Assertions.assertEquals(oauth.getEndpoints().getIssuer(), idjag.getIssuer());
++        Assertions.assertTrue(idjag.getExp() > Time.currentTimeSeconds(), "ID-JAG must not be immediately expired");
++        
++        try {
++            JWSInput idJagJws = new JWSInput(tokenResponse.getAccessToken());
++            Assertions.assertEquals(jws.getHeader().getAlgorithm(), idJagJws.getHeader().getAlgorithm());
++            jws = idJagJws;
++        } catch (JWSInputException e) {
++            throw new RuntimeException("The provided assertion is not a valid JWT");
++        }
++
++        String jwtTokenType = jws.getHeader().getType();
++        Assertions.assertEquals("oauth-id-jag+jwt", jwtTokenType);
++
++    }
++
++    @Test
++    public void testTokenExchangeFailsForInvalidClient() throws Exception {
++
++        try {
++            ssodomain.admin().logoutAll();
++        } catch (Exception e) {
++            LOG.log(java.util.logging.Level.WARNING, "Failed to logout all sessions via Admin API", e);
++        }
++
++        oauth2.realm("ssodomain").client("wrong_agent", "password").openLoginForm();
++        oauth2.fillLoginForm("testuser", "password");
++        AccessTokenResponse tokenResponseForWrongAgent = oauth2.doAccessTokenRequest(oauth2.parseLoginResponse().getCode());
++        Assertions.assertTrue(tokenResponseForWrongAgent.isSuccess());
++
++        oauth.realm("ssodomain").client("agent", "password").openLoginForm();
++        oauth.fillLoginForm("testuser", "password");
++        AccessTokenResponse tokenResponse = oauth.doAccessTokenRequest(oauth.parseLoginResponse().getCode());
++        Assertions.assertTrue(tokenResponse.isSuccess());
++
++        tokenResponse = oauth.tokenExchangeRequest(tokenResponseForWrongAgent.getIdToken(),"urn:ietf:params:oauth:token-type:id_token")
++                .audience("https://login.saas-tool.example/")
++                .requestedTokenType("urn:ietf:params:oauth:token-type:id-jag")
++                .scope("read:something")
++                .send();
++
++        Assertions.assertFalse(tokenResponse.isSuccess());
++        Assertions.assertEquals(403, tokenResponse.getStatusCode());
++        Assertions.assertNull(tokenResponse.getAccessToken());
++        Assertions.assertEquals("access_denied", tokenResponse.getError());
++        Assertions.assertEquals("Client is not within the token audience", tokenResponse.getErrorDescription());
++    }
++
++    @Test
++    public void testTokenExchangeFailsForClientSessionNotFound() throws Exception {
++
++        try {
++            ssodomain.admin().logoutAll();
++        } catch (Exception e) {
++            LOG.log(java.util.logging.Level.WARNING, "Failed to logout all sessions via Admin API", e);
++        }
++
++        oauth2.realm("ssodomain").client("wrong_agent", "password").openLoginForm();
++        oauth2.fillLoginForm("testuser", "password");
++        AccessTokenResponse tokenResponseForWrongAgent = oauth2.doAccessTokenRequest(oauth2.parseLoginResponse().getCode());
++        Assertions.assertTrue(tokenResponseForWrongAgent.isSuccess());
++
++        oauth.realm("ssodomain").client("agent", "password").openLoginForm();
++        oauth.fillLoginForm("testuser", "password");
++        AccessTokenResponse tokenResponse = oauth.doAccessTokenRequest(oauth.parseLoginResponse().getCode());
++        Assertions.assertTrue(tokenResponse.isSuccess());
++
++        String sessionId = tokenResponseForWrongAgent.getSessionState();
++
++        runOnServer.run(session -> {
++            org.keycloak.models.RealmModel realm = session.realms().getRealmByName("ssodomain");
++            org.keycloak.models.UserSessionModel userSession = session.sessions().getUserSession(realm, sessionId);
++            org.keycloak.models.ClientModel client = realm.getClientByClientId("wrong_agent");
++            
++            if (userSession != null && client != null) {
++                userSession.removeAuthenticatedClientSessions(java.util.Collections.singleton(client.getId()));
++            }
++        });
++        
++        tokenResponse = oauth.tokenExchangeRequest(tokenResponseForWrongAgent.getIdToken(),"urn:ietf:params:oauth:token-type:id_token")
++                .audience("https://login.saas-tool.example/")
++                .requestedTokenType("urn:ietf:params:oauth:token-type:id-jag")
++                .scope("read:something")
++                .send();
++
++        Assertions.assertFalse(tokenResponse.isSuccess());
++        Assertions.assertEquals(400, tokenResponse.getStatusCode());
++        Assertions.assertNull(tokenResponse.getAccessToken());
++        Assertions.assertEquals("invalid_token", tokenResponse.getError());
++        Assertions.assertEquals("Client session not found or revoked", tokenResponse.getErrorDescription());
++    }
++
++    @Test
++    public void testTokenExchangeFailsForUnsupportedSubjectTokenType() throws Exception {
++
++        try {
++            ssodomain.admin().logoutAll();
++        } catch (Exception e) {
++            LOG.log(java.util.logging.Level.WARNING, "Failed to logout all sessions via Admin API", e);
++        }
++
++        oauth.realm("ssodomain").client("agent", "password").openLoginForm();
++        oauth.fillLoginForm("testuser", "password");
++
++        AccessTokenResponse tokenResponse = oauth.doAccessTokenRequest(oauth.parseLoginResponse().getCode());
++        Assertions.assertTrue(tokenResponse.isSuccess());
++
++        tokenResponse = oauth.tokenExchangeRequest(tokenResponse.getIdToken(),"urn:ietf:params:oauth:token-type:id-jag")
++                .audience("https://login.saas-tool.example/")
++                .requestedTokenType("urn:ietf:params:oauth:token-type:id-jag")
++                .scope("read:something")
++                .send();
++
++        Assertions.assertFalse(tokenResponse.isSuccess());
++        Assertions.assertEquals(400, tokenResponse.getStatusCode());
++        Assertions.assertNull(tokenResponse.getAccessToken());
++        Assertions.assertEquals("invalid_request", tokenResponse.getError());
++        Assertions.assertEquals("Parameter 'subject_token' supports IDToken only", tokenResponse.getErrorDescription());
++    }
++
++    @Test
++    public void testTokenExchangeFailsForInvalidSubjectToken() throws Exception {
++
++        try {
++            ssodomain.admin().logoutAll();
++        } catch (Exception e) {
++            LOG.log(java.util.logging.Level.WARNING, "Failed to logout all sessions via Admin API", e);
++        }
++
++        oauth.realm("ssodomain").client("agent", "password").openLoginForm();
++        oauth.fillLoginForm("testuser", "password");
++        AccessTokenResponse tokenResponse = oauth.doAccessTokenRequest(oauth.parseLoginResponse().getCode());
++        Assertions.assertTrue(tokenResponse.isSuccess());
++
++        tokenResponse = oauth.tokenExchangeRequest(tokenResponse.getAccessToken(),"urn:ietf:params:oauth:token-type:id_token")
++                .audience("https://login.saas-tool.example/")
++                .requestedTokenType("urn:ietf:params:oauth:token-type:id-jag")
++                .scope("read:something")
++                .send();
++        
++
++        Assertions.assertFalse(tokenResponse.isSuccess());
++        Assertions.assertEquals(400, tokenResponse.getStatusCode());
++        Assertions.assertNull(tokenResponse.getAccessToken());
++        Assertions.assertEquals("invalid_token", tokenResponse.getError());
++        Assertions.assertEquals("Token type is incorrect. Expected '[ID]' but was 'Bearer'", tokenResponse.getErrorDescription());
++    }
++
++    @Test
++    public void testTokenExchangeFailsForUnsupportedRequestedTokenType() throws Exception {
++ 
++        try {
++            ssodomain.admin().logoutAll();
++        } catch (Exception e) {
++            LOG.log(java.util.logging.Level.WARNING, "Failed to logout all sessions via Admin API", e);
++        }
++
++        oauth.realm("ssodomain").client("agent", "password").openLoginForm();
++        oauth.fillLoginForm("testuser", "password");
++        AccessTokenResponse tokenResponse = oauth.doAccessTokenRequest(oauth.parseLoginResponse().getCode());
++        Assertions.assertTrue(tokenResponse.isSuccess());
++
++        tokenResponse = oauth.tokenExchangeRequest(tokenResponse.getIdToken(),"urn:ietf:params:oauth:token-type:id_token")
++                .audience("https://login.saas-tool.example/")
++                .requestedTokenType("urn:ietf:params:oauth:token-type:id-jag-wrong")
++                .scope("read:something")
++                .send();
++
++        Assertions.assertFalse(tokenResponse.isSuccess());
++        Assertions.assertEquals(400, tokenResponse.getStatusCode());
++        Assertions.assertNull(tokenResponse.getAccessToken());
++        Assertions.assertEquals("invalid_request", tokenResponse.getError());
++        Assertions.assertEquals("Parameter 'subject_token' supports access tokens only", tokenResponse.getErrorDescription());
++    }
++
++    @Test
++    public void testTokenExchangeFailsForInvalidAudience() throws Exception {
++
++        try {
++            ssodomain.admin().logoutAll();
++        } catch (Exception e) {
++            LOG.log(java.util.logging.Level.WARNING, "Failed to logout all sessions via Admin API", e);
++        }
++ 
++        oauth.realm("ssodomain").client("agent", "password").openLoginForm();
++        oauth.fillLoginForm("testuser", "password");
++        AccessTokenResponse tokenResponse = oauth.doAccessTokenRequest(oauth.parseLoginResponse().getCode());
++        Assertions.assertTrue(tokenResponse.isSuccess());
++
++        tokenResponse = oauth.tokenExchangeRequest(tokenResponse.getIdToken(),"urn:ietf:params:oauth:token-type:id_token")
++                .audience("https://wrong-login.saas-tool.example/")
++                .requestedTokenType("urn:ietf:params:oauth:token-type:id-jag")
++                .scope("read:something")
++                .send();
++
++        Assertions.assertFalse(tokenResponse.isSuccess());
++        Assertions.assertEquals(400, tokenResponse.getStatusCode());
++        Assertions.assertNull(tokenResponse.getAccessToken());
++        Assertions.assertEquals("invalid_request", tokenResponse.getError());
++        Assertions.assertEquals("Client not found for audience parameter: https://wrong-login.saas-tool.example/", tokenResponse.getErrorDescription());
++    }
++
++    @Test
++    public void testTokenExchangeFailsForInvalidClientSession() throws Exception {
++        try {
++            ssodomain.admin().logoutAll();
++        } catch (Exception e) {
++            LOG.log(java.util.logging.Level.WARNING, "Failed to logout all sessions via Admin API", e);
++        }
++
++        oauth.realm("ssodomain").client("agent", "password").openLoginForm();
++        oauth.fillLoginForm("testuser", "password");
++        AccessTokenResponse tokenResponse = oauth.doAccessTokenRequest(oauth.parseLoginResponse().getCode());
++        Assertions.assertTrue(tokenResponse.isSuccess());
++
++        String sessionState = tokenResponse.getSessionState();
++        runOnServer.run(session -> {
++            RealmModel realmModel = session.realms().getRealmByName("ssodomain");
++            if (realmModel != null) {
++                ClientModel client = realmModel.getClientByClientId("agent");
++                UserSessionModel userSession = session.sessions().getUserSession(realmModel, sessionState);
++                if (userSession != null && client != null) {
++                    AuthenticatedClientSessionModel clientSession =
++                        userSession.getAuthenticatedClientSessionByClient(client.getId());
++                    if (clientSession != null) {
++                        clientSession.setAction(AuthenticatedClientSessionModel.Action.LOGGED_OUT.name());
++                        clientSession.setTimestamp(0);
++                        clientSession.setNote(AuthenticatedClientSessionModel.STARTED_AT_NOTE, "0");
++                    }
++                }
++            }
++        });
++
++        tokenResponse = oauth.tokenExchangeRequest(tokenResponse.getIdToken(), "urn:ietf:params:oauth:token-type:id_token")
++            .audience("https://login.saas-tool.example/")
++            .requestedTokenType("urn:ietf:params:oauth:token-type:id-jag")
++            .scope("read:something")
++            .send();
++
++        Assertions.assertFalse(tokenResponse.isSuccess());
++        Assertions.assertEquals(400, tokenResponse.getStatusCode());
++        Assertions.assertNull(tokenResponse.getAccessToken());
++        Assertions.assertEquals("invalid_token", tokenResponse.getError());
++        Assertions.assertEquals("Client session not found or revoked", tokenResponse.getErrorDescription());
++    }
++
++    @Test
++    public void testTokenExchangeWithUnsupportedActorToken() throws Exception {
++        try {
++            ssodomain.admin().logoutAll();
++        } catch (Exception e) {
++            LOG.log(java.util.logging.Level.WARNING, "Failed to logout all sessions via Admin API", e);
++        }
++        
++        oauth.realm("ssodomain").client("agent", "password").openLoginForm();
++        oauth.fillLoginForm("testuser", "password");
++        AccessTokenResponse tokenResponse = oauth.doAccessTokenRequest(oauth.parseLoginResponse().getCode());
++        Assertions.assertTrue(tokenResponse.isSuccess());
++        
++        String dummyActorToken = tokenResponse.getIdToken();
++        
++        AccessTokenResponse exchangeResponse = oauth.tokenExchangeRequest(tokenResponse.getIdToken(), "urn:ietf:params:oauth:token-type:id_token")
++            .audience("https://saas-tool.example")
++            .requestedTokenType("urn:ietf:params:oauth:token-type:id-jag")
++            .scope("read:something")
++            .actorToken(dummyActorToken)
++            .actorTokenType("urn:ietf:params:oauth:token-type:id_token")
++            .send();
++                
++        Assertions.assertFalse(exchangeResponse.isSuccess());
++        Assertions.assertEquals(OAuthErrorException.INVALID_REQUEST, exchangeResponse.getError());
++        Assertions.assertTrue(exchangeResponse.getErrorDescription().contains("Actor tokens are not supported for ID-JAG token exchange"));
++
++    }
++
++    public static class JWTAuthorizationGrantServerConfig implements KeycloakServerConfig {
++
++        @Override
++        public KeycloakServerConfigBuilder configure(KeycloakServerConfigBuilder config) {
++            return config.features(Profile.Feature.IDENTITY_ASSERTION_JWT);
++        }
++    }
++}
+diff --git a/tests/utils-shared/src/main/java/org/keycloak/testsuite/util/oauth/TokenExchangeRequest.java b/tests/utils-shared/src/main/java/org/keycloak/testsuite/util/oauth/TokenExchangeRequest.java
+index 00c301d..b520a25 100644
+--- a/tests/utils-shared/src/main/java/org/keycloak/testsuite/util/oauth/TokenExchangeRequest.java
++++ b/tests/utils-shared/src/main/java/org/keycloak/testsuite/util/oauth/TokenExchangeRequest.java
+@@ -16,6 +16,7 @@ public class TokenExchangeRequest extends AbstractHttpPostRequest<TokenExchangeR
+     private String requestedTokenType;
+     private String requestedSubject;
+     private List<String> audience;
++    private String scope;
+ 
+     TokenExchangeRequest(String subjectToken, String subjectTokenType, AbstractOAuthClient<?> client) {
+         super(client);
+@@ -53,6 +54,11 @@ public class TokenExchangeRequest extends AbstractHttpPostRequest<TokenExchangeR
+         return this;
+     }
+ 
++    public TokenExchangeRequest scope(String scope) {
++        this.scope = scope;
++        return this;
++    }
++
+     protected void initRequest() {
+         parameter(OAuth2Constants.GRANT_TYPE, OAuth2Constants.TOKEN_EXCHANGE_GRANT_TYPE);
+ 
+@@ -71,7 +77,12 @@ public class TokenExchangeRequest extends AbstractHttpPostRequest<TokenExchangeR
+             audience.forEach(a -> parameter(OAuth2Constants.AUDIENCE, a));
+         }
+ 
+-        parameter(OAuth2Constants.SCOPE, client.config().getScope(false));
++        if (scope != null && !scope.isBlank()) {
++            parameter(OAuth2Constants.SCOPE, scope);
++        } else {
++            parameter(OAuth2Constants.SCOPE, client.config().getScope(false));
++        }
++        
+     }
+ 
+     @Override
+-- 
+2.55.0
+

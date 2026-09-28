@@ -1,0 +1,376 @@
+From 1a69c6602d0cd858516db2d5ab91e0231ee44a84 Mon Sep 17 00:00:00 2001
+From: Nick Gamb <nick.gamb@solo.io>
+Date: Mon, 28 Sep 2026 11:42:47 -0700
+Subject: [PATCH] feat(auth): forward the user's OIDC ID token to agents in
+ trusted-proxy mode
+
+Some downstream flows need the signed-in user's identity assertion, not just
+their access token. Cross App Access (draft-ietf-oauth-identity-assertion-authz-grant)
+is the main one: the enterprise IdP issues an ID-JAG only for an ID token issued
+to the requesting app. kagent is that app, but it forwards only Authorization and
+X-User-Id to agents, so no agent can take part in XAA.
+
+This adds optional ID token forwarding to the trusted-proxy authenticator:
+
+- controller.auth.idToken.{header,cookie,audience} (AUTH_ID_TOKEN_HEADER /
+  _COOKIE / _AUDIENCE): where the ID token arrives. The cookie form covers
+  Envoy/kgateway OAuth2 filters (IdToken cookie).
+- The token is forwarded to agents on A2A calls as X-Id-Token only when it is
+  bound to the authenticated user: same `sub` as the access token, issued to
+  `audience` (aud or azp), not expired. Anything else is dropped. It is never
+  used to authenticate, so Authorization semantics are unchanged.
+- Agents already forward allowed headers to MCP servers
+  (tools[].mcpServer.allowedHeaders), so the ID token reaches only the tools
+  that need it.
+
+authConfig is a named type in cmd/controller; the auth mode tests use keyed
+literals so new fields don't break them.
+---
+ go/core/cmd/controller/auth_mode_test.go      | 10 +--
+ go/core/cmd/controller/main.go                | 10 ++-
+ go/core/internal/httpserver/auth/authn.go     |  4 +
+ .../internal/httpserver/auth/proxy_authn.go   | 82 +++++++++++++++++++
+ .../httpserver/auth/proxy_authn_test.go       | 52 ++++++++++++
+ go/core/pkg/app/app.go                        |  8 ++
+ .../templates/controller-deployment.yaml      | 14 ++++
+ helm/kagent/values.yaml                       | 13 +++
+ 8 files changed, 186 insertions(+), 7 deletions(-)
+
+diff --git a/go/core/cmd/controller/auth_mode_test.go b/go/core/cmd/controller/auth_mode_test.go
+index 8acbffa..3998c18 100644
+--- a/go/core/cmd/controller/auth_mode_test.go
++++ b/go/core/cmd/controller/auth_mode_test.go
+@@ -11,22 +11,22 @@ import (
+ func TestGetAuthenticator(t *testing.T) {
+ 	tests := []struct {
+ 		name     string
+-		authCfg  struct{ Mode, UserIDClaim string }
++		authCfg  authConfig
+ 		wantType string
+ 	}{
+ 		{
+ 			name:     "unsecure mode uses UnsecureAuthenticator",
+-			authCfg:  struct{ Mode, UserIDClaim string }{"unsecure", ""},
++			authCfg:  authConfig{Mode: "unsecure", UserIDClaim: ""},
+ 			wantType: "*auth.UnsecureAuthenticator",
+ 		},
+ 		{
+ 			name:     "trusted-proxy mode uses ProxyAuthenticator",
+-			authCfg:  struct{ Mode, UserIDClaim string }{"trusted-proxy", ""},
++			authCfg:  authConfig{Mode: "trusted-proxy", UserIDClaim: ""},
+ 			wantType: "*auth.ProxyAuthenticator",
+ 		},
+ 		{
+ 			name:     "trusted-proxy mode with custom claim",
+-			authCfg:  struct{ Mode, UserIDClaim string }{"trusted-proxy", "user_id"},
++			authCfg:  authConfig{Mode: "trusted-proxy", UserIDClaim: "user_id"},
+ 			wantType: "*auth.ProxyAuthenticator",
+ 		},
+ 	}
+@@ -47,7 +47,7 @@ func TestGetAuthenticator(t *testing.T) {
+ 
+ func TestGetAuthenticatorErrorsOnUnknownMode(t *testing.T) {
+ 	const invalidMode = "proxy"
+-	authenticator, err := getAuthenticator(struct{ Mode, UserIDClaim string }{invalidMode, ""})
++	authenticator, err := getAuthenticator(authConfig{Mode: invalidMode, UserIDClaim: ""})
+ 	if err == nil {
+ 		t.Fatal("expected error for unknown auth mode, got nil")
+ 	}
+diff --git a/go/core/cmd/controller/main.go b/go/core/cmd/controller/main.go
+index c966a46..1fc6688 100644
+--- a/go/core/cmd/controller/main.go
++++ b/go/core/cmd/controller/main.go
+@@ -44,10 +44,16 @@ func main() {
+ 	}, nil)
+ }
+ 
+-func getAuthenticator(authCfg struct{ Mode, UserIDClaim string }) (pkgauth.AuthProvider, error) {
++// authConfig mirrors app.Config.Auth (same underlying type, so it is assignable).
++type authConfig struct {
++	Mode, UserIDClaim                             string
++	IDTokenHeader, IDTokenCookie, IDTokenAudience string
++}
++
++func getAuthenticator(authCfg authConfig) (pkgauth.AuthProvider, error) {
+ 	switch authCfg.Mode {
+ 	case "trusted-proxy":
+-		return auth.NewProxyAuthenticator(authCfg.UserIDClaim), nil
++		return auth.NewProxyAuthenticator(authCfg.UserIDClaim).WithIDToken(authCfg.IDTokenHeader, authCfg.IDTokenCookie, authCfg.IDTokenAudience), nil
+ 	case "unsecure":
+ 		return &auth.UnsecureAuthenticator{}, nil
+ 	default:
+diff --git a/go/core/internal/httpserver/auth/authn.go b/go/core/internal/httpserver/auth/authn.go
+index 3452bb7..2ced256 100644
+--- a/go/core/internal/httpserver/auth/authn.go
++++ b/go/core/internal/httpserver/auth/authn.go
+@@ -13,6 +13,10 @@ import (
+ type SimpleSession struct {
+ 	P          auth.Principal
+ 	authHeader string
++	// idToken is the user's OIDC ID token, forwarded to agents as X-Id-Token
++	// when configured (trusted-proxy mode). Only set when it is bound to the
++	// same subject as the authenticated user.
++	idToken string
+ }
+ 
+ func (s *SimpleSession) Principal() auth.Principal {
+diff --git a/go/core/internal/httpserver/auth/proxy_authn.go b/go/core/internal/httpserver/auth/proxy_authn.go
+index 6ed7154..1ee8d37 100644
+--- a/go/core/internal/httpserver/auth/proxy_authn.go
++++ b/go/core/internal/httpserver/auth/proxy_authn.go
+@@ -8,14 +8,27 @@ import (
+ 	"net/http"
+ 	"net/url"
+ 	"strings"
++	"time"
+ 
+ 	"github.com/kagent-dev/kagent/go/core/pkg/auth"
+ )
+ 
+ var ErrUnauthenticated = errors.New("unauthenticated: missing or invalid Authorization header")
+ 
++// IDTokenHeader is the header an agent receives the signed-in user's OIDC ID
++// token on (A2A), when ID token forwarding is configured.
++const IDTokenHeader = "X-Id-Token"
++
+ type ProxyAuthenticator struct {
+ 	userIDClaim string
++
++	// Optional ID token forwarding. The proxy in front of kagent authenticates
++	// the user; the ID token is the identity assertion some downstream flows
++	// need as their subject (e.g. Cross App Access, where an IdP issues an
++	// ID-JAG only for an ID token issued to the requesting app).
++	idTokenHeader   string
++	idTokenCookie   string
++	idTokenAudience string
+ }
+ 
+ func NewProxyAuthenticator(userIDClaim string) *ProxyAuthenticator {
+@@ -25,6 +38,71 @@ func NewProxyAuthenticator(userIDClaim string) *ProxyAuthenticator {
+ 	return &ProxyAuthenticator{userIDClaim: userIDClaim}
+ }
+ 
++// WithIDToken enables forwarding the user's OIDC ID token to agents as
++// X-Id-Token. The token is read from header (preferred) or cookie. When
++// audience is set, the token must be issued to that client (aud or azp).
++func (a *ProxyAuthenticator) WithIDToken(header, cookie, audience string) *ProxyAuthenticator {
++	a.idTokenHeader, a.idTokenCookie, a.idTokenAudience = header, cookie, audience
++	return a
++}
++
++// boundIDToken returns the request's ID token only if it is bound to the
++// authenticated user: same subject as the access token, issued to the
++// configured client, and not expired. Like the rest of trusted-proxy mode it
++// does not verify signatures (the proxy and the ID token's consumer do); the
++// binding check stops a caller splicing another user's ID token onto their
++// own session. Anything that fails the check is dropped, never forwarded.
++func (a *ProxyAuthenticator) boundIDToken(reqHeaders http.Header, accessClaims map[string]any) string {
++	if a.idTokenHeader == "" && a.idTokenCookie == "" {
++		return ""
++	}
++	raw := ""
++	if a.idTokenHeader != "" {
++		raw = strings.TrimSpace(reqHeaders.Get(a.idTokenHeader))
++		raw = strings.TrimPrefix(raw, "Bearer ")
++	}
++	if raw == "" && a.idTokenCookie != "" {
++		req := http.Request{Header: reqHeaders}
++		if c, err := req.Cookie(a.idTokenCookie); err == nil {
++			raw = c.Value
++		}
++	}
++	if raw == "" {
++		return ""
++	}
++	claims, err := parseJWTPayload(raw)
++	if err != nil {
++		return ""
++	}
++	if sub, _ := claims["sub"].(string); sub == "" || sub != accessClaims["sub"] {
++		return ""
++	}
++	if exp, ok := claims["exp"].(float64); !ok || time.Unix(int64(exp), 0).Before(time.Now()) {
++		return ""
++	}
++	if a.idTokenAudience != "" && !claimHasAudience(claims, a.idTokenAudience) {
++		return ""
++	}
++	return raw
++}
++
++func claimHasAudience(claims map[string]any, want string) bool {
++	if azp, _ := claims["azp"].(string); azp == want {
++		return true
++	}
++	switch aud := claims["aud"].(type) {
++	case string:
++		return aud == want
++	case []any:
++		for _, v := range aud {
++			if s, _ := v.(string); s == want {
++				return true
++			}
++		}
++	}
++	return false
++}
++
+ func (a *ProxyAuthenticator) Authenticate(ctx context.Context, reqHeaders http.Header, query url.Values) (auth.Session, error) {
+ 	authHeader := reqHeaders.Get("Authorization")
+ 	agentID := reqHeaders.Get("X-Agent-Name")
+@@ -75,6 +153,7 @@ func (a *ProxyAuthenticator) Authenticate(ctx context.Context, reqHeaders http.H
+ 			Claims: rawClaims,
+ 		},
+ 		authHeader: authHeader,
++		idToken:    a.boundIDToken(reqHeaders, rawClaims),
+ 	}, nil
+ }
+ 
+@@ -95,6 +174,9 @@ func (a *ProxyAuthenticator) UpstreamAuth(r *http.Request, session auth.Session,
+ 		if userID := simpleSession.P.User.ID; userID != "" {
+ 			r.Header.Set("X-User-Id", userID)
+ 		}
++		if simpleSession.idToken != "" {
++			r.Header.Set(IDTokenHeader, simpleSession.idToken)
++		}
+ 	}
+ 	return nil
+ }
+diff --git a/go/core/internal/httpserver/auth/proxy_authn_test.go b/go/core/internal/httpserver/auth/proxy_authn_test.go
+index b6af326..f9a7048 100644
+--- a/go/core/internal/httpserver/auth/proxy_authn_test.go
++++ b/go/core/internal/httpserver/auth/proxy_authn_test.go
+@@ -296,3 +296,55 @@ func TestProxyAuthenticator_UpstreamAuth(t *testing.T) {
+ 		t.Errorf("X-User-Id header = %q, want %q", got, "user123")
+ 	}
+ }
++
++// ID token forwarding: the user's OIDC ID token reaches agents as X-Id-Token
++// only when it is bound to the authenticated user.
++func TestProxyAuthenticator_ForwardsBoundIDToken(t *testing.T) {
++	future := float64(4102444800) // 2100-01-01
++	access := createTestJWT(map[string]any{"sub": "user-1", "preferred_username": "bob"})
++	good := createTestJWT(map[string]any{"sub": "user-1", "aud": "kagent", "azp": "kagent", "exp": future})
++	tests := []struct {
++		name    string
++		header  string
++		cookie  string
++		aud     string
++		reqHdr  map[string]string
++		wantFwd string // "" = not forwarded
++	}{
++		{"not configured: nothing forwarded", "", "", "", map[string]string{"X-Forwarded-Id-Token": good}, ""},
++		{"from header", "X-Forwarded-Id-Token", "", "kagent", map[string]string{"X-Forwarded-Id-Token": good}, good},
++		{"from cookie (Envoy/kgateway OAuth2 IdToken)", "", "IdToken", "kagent", map[string]string{"Cookie": "OauthHMAC=x; IdToken=" + good}, good},
++		{"header wins over cookie", "X-Forwarded-Id-Token", "IdToken", "", map[string]string{"X-Forwarded-Id-Token": good, "Cookie": "IdToken=other"}, good},
++		{"other user's ID token is dropped", "X-Forwarded-Id-Token", "", "", map[string]string{
++			"X-Forwarded-Id-Token": createTestJWT(map[string]any{"sub": "user-2", "aud": "kagent", "exp": future})}, ""},
++		{"wrong client is dropped", "X-Forwarded-Id-Token", "", "kagent", map[string]string{
++			"X-Forwarded-Id-Token": createTestJWT(map[string]any{"sub": "user-1", "aud": "other-app", "azp": "other-app", "exp": future})}, ""},
++		{"expired is dropped", "X-Forwarded-Id-Token", "", "", map[string]string{
++			"X-Forwarded-Id-Token": createTestJWT(map[string]any{"sub": "user-1", "aud": "kagent", "exp": float64(1)})}, ""},
++		{"not a JWT is dropped", "X-Forwarded-Id-Token", "", "", map[string]string{"X-Forwarded-Id-Token": "garbage"}, ""},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			a := authimpl.NewProxyAuthenticator("preferred_username").WithIDToken(tt.header, tt.cookie, tt.aud)
++			h := http.Header{}
++			h.Set("Authorization", "Bearer "+access)
++			for k, v := range tt.reqHdr {
++				h.Set(k, v)
++			}
++			session, err := a.Authenticate(context.Background(), h, url.Values{})
++			if err != nil {
++				t.Fatalf("Authenticate: %v", err)
++			}
++			up, _ := http.NewRequest(http.MethodPost, "http://agent/", nil)
++			if err := a.UpstreamAuth(up, session, session.Principal()); err != nil {
++				t.Fatalf("UpstreamAuth: %v", err)
++			}
++			if got := up.Header.Get(authimpl.IDTokenHeader); got != tt.wantFwd {
++				t.Fatalf("X-Id-Token forwarded = %q, want %q", got, tt.wantFwd)
++			}
++			if up.Header.Get("Authorization") != "Bearer "+access {
++				t.Fatalf("Authorization must stay the user's access token")
++			}
++		})
++	}
++}
+diff --git a/go/core/pkg/app/app.go b/go/core/pkg/app/app.go
+index f093ce3..8120c94 100644
+--- a/go/core/pkg/app/app.go
++++ b/go/core/pkg/app/app.go
+@@ -120,6 +120,11 @@ type Config struct {
+ 	Auth struct {
+ 		Mode        string
+ 		UserIDClaim string
++		// ID token forwarding (trusted-proxy mode): where the user's OIDC ID
++		// token arrives, and the client it must have been issued to.
++		IDTokenHeader   string
++		IDTokenCookie   string
++		IDTokenAudience string
+ 	}
+ 	LeaderElection     bool
+ 	ProbeAddr          string
+@@ -203,6 +208,9 @@ func (cfg *Config) SetFlags(commandLine *flag.FlagSet) {
+ 
+ 	commandLine.StringVar(&cfg.Auth.Mode, "auth-mode", "unsecure", "Authentication mode: unsecure or trusted-proxy")
+ 	commandLine.StringVar(&cfg.Auth.UserIDClaim, "auth-user-id-claim", "sub", "JWT claim name for user identity")
++	commandLine.StringVar(&cfg.Auth.IDTokenHeader, "auth-id-token-header", "", "trusted-proxy mode: request header carrying the user's OIDC ID token, forwarded to agents as X-Id-Token (e.g. for Cross App Access / ID-JAG)")
++	commandLine.StringVar(&cfg.Auth.IDTokenCookie, "auth-id-token-cookie", "", "trusted-proxy mode: cookie carrying the user's OIDC ID token (e.g. IdToken, set by an Envoy/kgateway OAuth2 filter); used when the header is absent")
++	commandLine.StringVar(&cfg.Auth.IDTokenAudience, "auth-id-token-audience", "", "trusted-proxy mode: required audience (client id) of a forwarded ID token; empty skips the check")
+ 
+ 	commandLine.BoolVar(&cfg.MCPEgressPlaintext, "mcp-egress-plaintext", false,
+ 		"When set, rewrite RemoteMCPServer tool URLs and the controller's tool-discovery dial from https://host[:port] to http://host:<port-or-443> so MCP traffic egresses in plaintext to a TLS-originating proxy. Off by default.")
+diff --git a/helm/kagent/templates/controller-deployment.yaml b/helm/kagent/templates/controller-deployment.yaml
+index 3c77c19..687014b 100644
+--- a/helm/kagent/templates/controller-deployment.yaml
++++ b/helm/kagent/templates/controller-deployment.yaml
+@@ -92,6 +92,20 @@ spec:
+             - name: AUTH_USER_ID_CLAIM
+               value: {{ .Values.controller.auth.userIdClaim | quote }}
+             {{- end }}
++            {{- with .Values.controller.auth.idToken }}
++            {{- if .header }}
++            - name: AUTH_ID_TOKEN_HEADER
++              value: {{ .header | quote }}
++            {{- end }}
++            {{- if .cookie }}
++            - name: AUTH_ID_TOKEN_COOKIE
++              value: {{ .cookie | quote }}
++            {{- end }}
++            {{- if .audience }}
++            - name: AUTH_ID_TOKEN_AUDIENCE
++              value: {{ .audience | quote }}
++            {{- end }}
++            {{- end }}
+             {{- if .Values.database.postgres.urlFile }}
+             - name: POSTGRES_DATABASE_URL_FILE
+               value: {{ .Values.database.postgres.urlFile | quote }}
+diff --git a/helm/kagent/values.yaml b/helm/kagent/values.yaml
+index 3fda5bf..ac18ffb 100644
+--- a/helm/kagent/values.yaml
++++ b/helm/kagent/values.yaml
+@@ -178,6 +178,19 @@ controller:
+     # JWT claim for user identity (default: "sub")
+     # Override only if your OIDC provider uses a different claim
+     userIdClaim: ""
++    # -- (trusted-proxy mode) Forward the signed-in user's OIDC ID token to agents
++    # as the X-Id-Token header, for flows that need an identity assertion as their
++    # subject (e.g. Cross App Access / ID-JAG). Forwarded only when bound to the
++    # authenticated user: same `sub` as the access token, issued to `audience`
++    # (aud or azp), not expired. Agents pass it to specific MCP servers via
++    # `tools[].mcpServer.allowedHeaders: [X-Id-Token]`.
++    idToken:
++      # -- Request header carrying the ID token (preferred when set)
++      header: ""
++      # -- Cookie carrying the ID token, e.g. `IdToken` from an Envoy/kgateway OAuth2 filter
++      cookie: ""
++      # -- Client the ID token must be issued to (aud or azp); empty skips the check
++      audience: ""
+   # -- Global deployment defaults applied to all agent pods.
+   # Per-agent settings in the Agent CRD take precedence over these defaults.
+   agentDeployment:
+-- 
+2.55.0
+
