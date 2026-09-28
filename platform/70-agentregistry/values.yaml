@@ -1,0 +1,5 @@
+rbac:
+  watchedNamespaces: [sv-agents]   # least privilege: only the firm's agent namespace
+database:
+  postgres:
+    type: bundled

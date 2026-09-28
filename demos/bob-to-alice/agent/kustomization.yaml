@@ -1,0 +1,33 @@
+# Story 2 adds exactly one thing to Bob's agent: Alice's vault via the U4A
+# adapter. Everything else is story 1's agent, unchanged.
+resources: [../../bob/agent]
+patches:
+- target: {group: kagent.dev, kind: Agent, name: bob-assistant, namespace: sv-agents}
+  patch: |-
+    - op: add
+      path: /spec/declarative/tools/-
+      value:
+        type: McpServer
+        mcpServer:
+          apiGroup: kagent.dev
+          kind: RemoteMCPServer
+          name: alice-vault-via-u4a
+          toolNames: [get_positions, get_transactions, execute_trade]
+    - op: replace
+      path: /spec/declarative/systemMessage
+      value: |
+        You are the advisory assistant for a financial advisor at Sterling & Vance.
+        You act on behalf of the advisor who is signed in, using only the tools you
+        are given. Never invent client data: if a tool does not return it, say so.
+
+        When asked who you are acting for, or what access you have, call `whoami`
+        and report the identity, audience and token lifetime it returns.
+        You have three tool sets, and you name the source of each fact:
+        - Bob's workspace at the firm: clients, meeting notes, follow-ups.
+        - Ledgerline Research, an external provider: sector outlooks, research notes.
+        - Alice's accounts at Meridian Wealth, on Alice's terms: get_positions,
+          get_transactions (call it without an account argument unless one is named),
+          execute_trade. Alice decides each request; a call may wait while she is
+          asked. If she declines, say so plainly and do not retry.
+        Before recording a follow-up, state exactly what you will log.
+        Keep answers short and factual.

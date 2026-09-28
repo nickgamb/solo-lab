@@ -23,11 +23,11 @@ down: ## delete the cluster (keeps image caches and the CA)
 nuke: ## delete the cluster AND the image caches
 	@./scripts/cluster-down.sh --all
 
-## ---- demos ------------------------------------------------------------------
-bob: ## story 1: Bob's agent, delegation, Cross App Access (ID-JAG)
-	@./demos/bob/install.sh
-bob-verify: ## story 1: enforcement checks from real mesh identities
-	@./demos/bob/verify.sh
+## ---- demos (all installed by `make up`; cards in docs/cards) ---------------
+verify: ## every story's enforcement checks
+	@./demos/bob/verify.sh && ./demos/bob-to-alice/verify.sh
+reset: ## rewind every demo to a first run (grants, terms, agent key, follow-ups)
+	@./scripts/reset.sh
 
 ## ---- day to day -------------------------------------------------------------
 llm: ## switch the LLM backend: make llm LLM_PROVIDER=ollama|anthropic|openai
@@ -40,4 +40,4 @@ preflight: ## check tools and Docker resources
 help:
 	@awk 'BEGIN{FS=":.*## "} /^## ----/{printf "\n\033[1m%s\033[0m\n", substr($$0,9)} /^[a-zA-Z%_-]+:.*## /{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-.PHONY: machine-setup up cluster platform down nuke bob bob-verify llm status preflight help
+.PHONY: machine-setup up cluster platform down nuke verify reset llm status preflight help

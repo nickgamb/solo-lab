@@ -1,0 +1,49 @@
+{
+  "realm": "alice",
+  "displayName": "Alice",
+  "enabled": true,
+  "sslRequired": "external",
+  "accessTokenLifespan": 300,
+  "users": [
+    {
+      "id": "a11ce000-0000-4000-8000-00000000a11c",
+      "username": "alice",
+      "email": "alice@${ALICE_DOMAIN}",
+      "firstName": "Alice",
+      "lastName": "Chen",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "alice-demo", "temporary": false }]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "alice-portal",
+      "name": "Alice's portal",
+      "description": "Where Alice sets her terms and answers 'ask me'. Public client, PKCE.",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["https://portal.${ALICE_DOMAIN}/*"],
+      "webOrigins": ["https://portal.${ALICE_DOMAIN}"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://portal.${ALICE_DOMAIN}/*"
+      }
+    }
+  ],
+  "components": {
+    "org.keycloak.keys.KeyProvider": [
+      {
+        "name": "lab-rs256",
+        "providerId": "rsa",
+        "subComponents": {},
+        "config": {
+          "priority": ["200"], "enabled": ["true"], "active": ["true"], "algorithm": ["RS256"],
+          "privateKey": ["${KC_REALM_RSA_KEY}"], "certificate": ["${KC_REALM_RSA_CERT}"]
+        }
+      }
+    ]
+  }
+}

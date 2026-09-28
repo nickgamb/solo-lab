@@ -1,0 +1,220 @@
+# Alice's own infrastructure (namespace alice): her authorization server
+# (u4a uma-as), its database, and her portal. Her IdP is in alice-identity.
+# Nobody else's workload can reach any of it except through the edge.
+#
+# Grant surface (/token /perm /introspect /consume /terms /jwks /.well-known)
+#   : the edge only. Meridian's PEP and Bob's agent both arrive that way.
+# Owner API (/owner/*)
+#   : Alice's portal, and the edge (her own API calls with her token).
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: uma-as, namespace: alice}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: uma-as, namespace: alice, labels: {istio.io/use-waypoint: waypoint}}
+spec:
+  selector: {app: uma-as}
+  ports: [{name: http, port: 9000, targetPort: 9000}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: uma-as, namespace: alice}
+spec:
+  replicas: 3
+  selector: {matchLabels: {app: uma-as}}
+  template:
+    metadata: {labels: {app: uma-as, istio.io/use-waypoint: waypoint}}
+    spec:
+      serviceAccountName: uma-as
+      topologySpreadConstraints:
+      - {maxSkew: 1, topologyKey: topology.kubernetes.io/zone, whenUnsatisfiable: ScheduleAnyway, labelSelector: {matchLabels: {app: uma-as}}}
+      containers:
+      - name: uma-as
+        image: localhost:5001/u4a/uma-as:${U4A_TAG}
+        ports: [{name: http, containerPort: 9000}]
+        env:
+        - {name: UMA_AS_ISSUER, value: "https://as.${ALICE_DOMAIN}"}
+        - {name: UMA_AS_OWNER, value: alice}
+        - {name: UMA_AS_OWNER_ISSUER, value: "https://idp.${ALICE_DOMAIN}/realms/alice"}
+        - {name: UMA_AS_OWNER_AUTH, value: oidc}
+        - {name: UMA_AS_OWNER_CLIENTS, value: alice-portal}
+        - {name: UMA_AS_OWNER_AUTHORITY, value: "as.${ALICE_DOMAIN}"}
+        - {name: UMA_AS_RPT_AUDIENCE, value: "https://gateway.${MERIDIAN_DOMAIN}"}
+        - {name: UMA_AS_RS_RESOURCE_URI, value: "https://gateway.${MERIDIAN_DOMAIN}/mcp"}
+        - {name: UMA_AS_RS_CLIENT_ID, value: meridian-gateway}
+        - name: UMA_AS_RS_CLIENT_SECRET
+          valueFrom: {secretKeyRef: {name: uma-as-config, key: rs-client-secret}}
+        - {name: UMA_AS_PEND_BUDGET, value: "5"}
+        - {name: UMA_AS_MAX_REASON, value: "512"}
+        - {name: UMA_AS_STORE, value: postgres}
+        - name: UMA_AS_DATABASE_URL
+          valueFrom: {secretKeyRef: {name: uma-as-db-app, key: uri}}     # CNPG-generated
+        - {name: UMA_AS_SIGNING_KEY, value: /keys/uma-as-ed25519.pem}
+        - {name: UMA4A_CA_BUNDLE, value: /certs/ca.crt}
+        - {name: SSL_CERT_FILE, value: /certs/ca.crt}
+        volumeMounts:
+        - {name: ca, mountPath: /certs, readOnly: true}
+        - {name: signing-key, mountPath: /keys, readOnly: true}
+        startupProbe: {httpGet: {path: /health, port: 9000}, periodSeconds: 2, failureThreshold: 60}
+        readinessProbe: {httpGet: {path: /health, port: 9000}, periodSeconds: 5}
+        livenessProbe: {httpGet: {path: /health, port: 9000}, periodSeconds: 10}
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {memory: 256Mi}
+        securityContext: {runAsNonRoot: true, runAsUser: 65532, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+      volumes:
+      - {name: ca, configMap: {name: lab-ca-bundle}}
+      - {name: signing-key, secret: {secretName: uma-as-signing-key}}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: uma-as, namespace: alice}
+spec:
+  minAvailable: 2
+  selector: {matchLabels: {app: uma-as}}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata: {name: uma-as-db, namespace: alice}
+spec:
+  instances: 3
+  postgresql:
+    synchronous: {method: any, number: 1}
+  bootstrap:
+    initdb: {database: u4a, owner: u4a}
+  storage: {size: 1Gi}
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 512Mi}
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: topology.kubernetes.io/zone
+    podAntiAffinityType: preferred
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: portal, namespace: alice}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: portal, namespace: alice}
+spec:
+  selector: {app: portal}
+  ports: [{name: http, port: 9010, targetPort: 9010}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: portal, namespace: alice}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}        # holds her session server-side
+  selector: {matchLabels: {app: portal}}
+  template:
+    metadata: {labels: {app: portal}}
+    spec:
+      serviceAccountName: portal
+      containers:
+      - name: portal
+        image: localhost:5001/u4a/portal:${U4A_TAG}
+        ports: [{name: http, containerPort: 9010}]
+        env:
+        - {name: UMA_PORTAL_OWNER, value: alice}
+        - {name: UMA_AS_INTERNAL, value: "http://uma-as.alice.svc.cluster.local:9000"}
+        - {name: PORTAL_AUTH, value: oidc}
+        - {name: OIDC_ISSUER, value: "https://idp.${ALICE_DOMAIN}/realms/alice"}
+        - {name: OIDC_CLIENT_ID, value: alice-portal}
+        - name: PORTAL_SESSION_SECRET
+          valueFrom: {secretKeyRef: {name: portal-config, key: session-secret}}
+        # Her own account at her brokerage. Meridian admits this workload by name.
+        - {name: VAULT_MCP_URL, value: "http://alice-vault.meridian.svc.cluster.local:9020/mcp"}
+        - {name: PORTAL_PUBLIC_URL, value: "https://portal.${ALICE_DOMAIN}"}
+        - {name: SSL_CERT_FILE, value: /certs/ca.crt}
+        volumeMounts: [{name: ca, mountPath: /certs, readOnly: true}]
+        startupProbe: {httpGet: {path: /health, port: 9010}, periodSeconds: 2, failureThreshold: 60}
+        readinessProbe: {httpGet: {path: /health, port: 9010}, periodSeconds: 5}
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {memory: 256Mi}
+        securityContext: {runAsNonRoot: true, runAsUser: 65532, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+      volumes:
+      - {name: ca, configMap: {name: lab-ca-bundle}}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: alice, namespace: alice}
+spec:
+  parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-alice}]
+  hostnames: ["as.${ALICE_DOMAIN}"]
+  rules:
+  - backendRefs: [{name: uma-as, port: 9000}]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: portal, namespace: alice}
+spec:
+  parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-alice}]
+  hostnames: ["portal.${ALICE_DOMAIN}"]
+  rules:
+  - backendRefs: [{name: portal, port: 9010}]
+    timeouts: {request: 300s}        # SSE (her approvals badge)
+# ---- mesh -------------------------------------------------------------------
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: waypoint
+  namespace: alice
+  labels: {istio.io/waypoint-for: all}   # the edge dials pod addresses
+spec:
+  gatewayClassName: istio-waypoint
+  listeners: [{name: mesh, port: 15008, protocol: HBONE}]
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: strict, namespace: alice}
+spec: {mtls: {mode: STRICT}}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: default-deny, namespace: alice}
+spec: {}
+---
+# L4 (ztunnel): pods behind the waypoint take connections from it only.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: allow-waypoint, namespace: alice}
+spec:
+  selector: {matchLabels: {app: uma-as}}
+  action: ALLOW
+  rules: [{from: [{source: {principals: [cluster.local/ns/alice/sa/waypoint]}}]}]
+---
+# L7 (waypoint): who may reach which surface of her authorization server.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: uma-as-grant-surface, namespace: alice}
+spec:
+  targetRefs: [{kind: Service, group: "", name: uma-as}]
+  action: ALLOW
+  rules:
+  - from: [{source: {principals: [cluster.local/ns/kgateway-system/sa/edge]}}]
+    to: [{operation: {paths: [/token, /perm, /introspect, /consume, /jwks, /audit/access, /terms, "/terms/*", "/.well-known/*", /health, /rs/register]}}]
+  - from: [{source: {principals: [cluster.local/ns/alice/sa/portal, cluster.local/ns/kgateway-system/sa/edge]}}]
+    to: [{operation: {paths: [/owner, "/owner/*"]}}]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: portal-callers, namespace: alice}
+spec:
+  selector: {matchLabels: {app: portal}}
+  action: ALLOW
+  rules: [{from: [{source: {principals: [cluster.local/ns/kgateway-system/sa/edge]}}]}]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: uma-as-db-callers, namespace: alice}
+spec:
+  selector: {matchLabels: {cnpg.io/cluster: uma-as-db}}
+  action: ALLOW
+  rules:
+  - from: [{source: {principals: [cluster.local/ns/alice/sa/uma-as, cluster.local/ns/alice/sa/uma-as-db, cluster.local/ns/cnpg-system/sa/cnpg-cloudnative-pg]}}]

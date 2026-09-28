@@ -1,0 +1,67 @@
+# agentregistry UI + API behind S&V SSO, done by the kgateway edge.
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: GatewayExtension
+metadata: {name: agentregistry-sso, namespace: agentregistry}
+spec:
+  type: OAuth2
+  oauth2:
+    backendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}
+    issuerURI: https://idp.${SV_DOMAIN}/realms/sterling-vance
+    authorizationEndpoint: https://idp.${SV_DOMAIN}/realms/sterling-vance/protocol/openid-connect/auth
+    tokenEndpoint: https://idp.${SV_DOMAIN}/realms/sterling-vance/protocol/openid-connect/token
+    endSessionEndpoint: https://idp.${SV_DOMAIN}/realms/sterling-vance/protocol/openid-connect/logout
+    redirectURI: https://registry.${SV_DOMAIN}/oauth2/redirect
+    logoutPath: /logout
+    credentials:
+      clientID: agentregistry
+      clientSecretRef: {name: agentregistry-oidc}
+    scopes: [openid, profile, email]
+    forwardAccessToken: true
+    jwt:
+      jwksURI: https://idp.${SV_DOMAIN}/realms/sterling-vance/protocol/openid-connect/certs
+      jwksBackendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: agentregistry, namespace: agentregistry}
+spec:
+  parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-sterling}]
+  hostnames: ["registry.${SV_DOMAIN}"]
+  rules:
+  - backendRefs: [{name: agentregistry, port: 12121}]
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata: {name: agentregistry-sso, namespace: agentregistry}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: agentregistry}]
+  oauth2: {extensionRef: {name: agentregistry-sso}}
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata: {name: agentregistry-sso-to-keycloak, namespace: sv-identity}
+spec:
+  from: [{group: gateway.kgateway.dev, kind: GatewayExtension, namespace: agentregistry}]
+  to: [{group: "", kind: Service, name: keycloak}]
+---
+# Only the edge (behind SSO) reaches the registry; its database only the registry.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: strict, namespace: agentregistry}
+spec: {mtls: {mode: STRICT}}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: registry-callers, namespace: agentregistry}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: agentregistry, app.kubernetes.io/component: server}}
+  action: ALLOW
+  rules: [{from: [{source: {principals: [cluster.local/ns/kgateway-system/sa/edge]}}]}]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: database-callers, namespace: agentregistry}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: agentregistry, app.kubernetes.io/component: database}}
+  action: ALLOW
+  rules: [{from: [{source: {principals: [cluster.local/ns/agentregistry/sa/agentregistry]}}]}]

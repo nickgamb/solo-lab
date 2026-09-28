@@ -1,0 +1,81 @@
+# The requesting party's side of UMA: Sterling & Vance's U4A adapter. It holds
+# Bob's agent's signing key (pseudonymous: a fresh key per pod) and does the
+# UMA dance (ticket -> terms -> signed agreement -> PoP RPT) on the agent's
+# behalf. Additive: nothing in story 1 changes; bob-assistant gets one more tool.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sv-u4a
+  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: u4a-adapter, namespace: sv-u4a}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: u4a-adapter, namespace: sv-u4a}
+spec:
+  selector: {app: u4a-adapter}
+  ports: [{name: mcp, port: 9030, targetPort: 9030}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: u4a-adapter, namespace: sv-u4a}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}      # one agent key, one pending-grant table
+  selector: {matchLabels: {app: u4a-adapter}}
+  template:
+    metadata: {labels: {app: u4a-adapter}}
+    spec:
+      serviceAccountName: u4a-adapter
+      containers:
+      - name: adapter
+        image: localhost:5001/u4a/agent-adapter:${U4A_TAG}
+        ports: [{name: mcp, containerPort: 9030}]
+        env:
+        - {name: UMA4A_SHIM_TRANSPORT, value: streamable-http}
+        - {name: UMA4A_SHIM_HOST, value: 0.0.0.0}
+        - {name: UMA4A_SHIM_PORT, value: "9030"}
+        # Meridian, across the internet (the edge).
+        - {name: UMA4A_GATEWAY, value: "https://gateway.${MERIDIAN_DOMAIN}/mcp"}
+        - {name: UMA4A_CACERT, value: /certs/ca.crt}
+        - {name: UMA4A_KEYSTORE, value: /keys/agent-key.pem}
+        - {name: UMA4A_STANDING_MAX_EXPIRES, value: "604800"}
+        - {name: UMA4A_PEND_HANDBACK, value: "5"}
+        volumeMounts:
+        - {name: ca, mountPath: /certs, readOnly: true}
+        - {name: keys, mountPath: /keys}
+        resources:
+          requests: {cpu: 20m, memory: 96Mi}
+          limits: {memory: 256Mi}
+        securityContext: {runAsNonRoot: true, runAsUser: 65532, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+      volumes:
+      - {name: ca, configMap: {name: lab-ca-bundle}}
+      - {name: keys, emptyDir: {medium: Memory}}
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: strict, namespace: sv-u4a}
+spec: {mtls: {mode: STRICT}}
+---
+# Bob's agent, and the kagent controller listing tools. Nobody else.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: adapter-callers, namespace: sv-u4a}
+spec:
+  selector: {matchLabels: {app: u4a-adapter}}
+  action: ALLOW
+  rules: [{from: [{source: {principals: [cluster.local/ns/sv-agents/sa/bob-assistant, cluster.local/ns/kagent/sa/kagent-controller]}}]}]
+---
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata: {name: alice-vault-via-u4a, namespace: sv-agents}
+spec:
+  description: "Alice's accounts at Meridian Wealth, on Alice's terms (UMA for agents)"
+  protocol: STREAMABLE_HTTP
+  url: http://u4a-adapter.sv-u4a.svc.cluster.local:9030/mcp
+  sseReadTimeout: 300s
+  terminateOnClose: false
+  timeout: 300s

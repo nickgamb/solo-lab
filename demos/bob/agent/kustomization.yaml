@@ -1,0 +1,2 @@
+# Bob's agent (story 1). Story 2 overlays one more tool: demos/bob-to-alice/agent.
+resources: [agent.yaml]

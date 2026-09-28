@@ -30,7 +30,7 @@
 
   <section class="setup">
     <h2>Pre-demo setup</h2>
-    <p class="setup-note">From cold to ready: three commands, about 25 minutes the first time, and much less after that, because image caches outlive the cluster.</p>
+    <p class="setup-note">From cold to ready: two commands, about 30 minutes the first time, and much less after that, because image caches outlive the cluster. One install brings up every demo.</p>
     <div class="table-scroll">
       <table>
         <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
@@ -47,33 +47,35 @@
         <tr class="term">
           <td class="num">2</td>
           <td class="act">
-            <span class="where">Build the platform</span>
-            <div class="cmdwrap"><code class="cmd">make up</code></div>
+            <span class="where">Build the lab</span>
+            <div class="cmdwrap"><code class="cmd">make up &amp;&amp; make verify</code></div>
           </td>
-          <td class="say">Builds kind with Istio ambient, kgateway, agentgateway, kagent + kmcp, Agent Substrate, Keycloak, and observability. Every party gets its own namespaces, identities and hostnames.</td>
-        </tr>
-        <tr class="term">
-          <td class="num">3</td>
-          <td class="act">
-            <span class="where">Bring up story 1</span>
-            <div class="cmdwrap"><code class="cmd">make bob &amp;&amp; make bob-verify</code></div>
-          </td>
-          <td class="say">Deploys Bob's agent and his workspace (kmcp) behind an agentgateway waypoint, plus Ledgerline Research as a separate company. The verify run must end with <strong>12/12 checks passed</strong>.</td>
+          <td class="say">Builds kind with Istio ambient, kgateway, agentgateway, kagent + kmcp, Agent Substrate, Keycloak, and observability, then every demo's parties. Each party gets its own namespaces, identities and hostnames. The verify run must end with <strong>all checks passed</strong>.</td>
         </tr>
         </tbody>
       </table>
     </div>
     <p class="setup-after">Then open <strong>https://kagent.sterling.lab</strong> on the right screen and start the run-through. Pick agent <strong>sv-agents / bob-assistant</strong>.</p>
+    <div class="afters">
+      <div class="after">
+        <span class="after-label">Running it again</span>
+        <p><code>make reset</code> rewinds every story: a fresh agent key, empty follow-ups, and Alice's grants and terms back to her defaults. Nothing is rebuilt.</p>
+      </div>
+    </div>
     <div class="models-block">
       <span class="after-label">Switching the model</span>
       <div class="models">
         <div class="model">
-          <span class="model-label">Default: local, on your GPU</span>
+          <span class="model-label">Local, on your GPU (default)</span>
           <div class="cmdwrap"><code class="cmd">make llm LLM_PROVIDER=ollama</code></div>
         </div>
         <div class="model">
-          <span class="model-label">A hosted model (key in .env)</span>
+          <span class="model-label">Anthropic (ANTHROPIC_API_KEY in .env)</span>
           <div class="cmdwrap"><code class="cmd">make llm LLM_PROVIDER=anthropic</code></div>
+        </div>
+        <div class="model">
+          <span class="model-label">OpenAI (OPENAI_API_KEY in .env)</span>
+          <div class="cmdwrap"><code class="cmd">make llm LLM_PROVIDER=openai</code></div>
         </div>
       </div>
     </div>

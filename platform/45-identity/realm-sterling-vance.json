@@ -250,6 +250,33 @@
       "redirectUris": [
         "https://idp.${LEDGERLINE_DOMAIN}/*"
       ]
+    },
+    {
+      "clientId": "agentregistry",
+      "name": "agentregistry (SSO at the kgateway edge)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${SV_AGENTREGISTRY_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "https://registry.${SV_DOMAIN}/oauth2/redirect"
+      ],
+      "webOrigins": [
+        "https://registry.${SV_DOMAIN}"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://registry.${SV_DOMAIN}/*"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "profile",
+        "email",
+        "roles",
+        "web-origins",
+        "acr"
+      ]
     }
   ],
   "components": {

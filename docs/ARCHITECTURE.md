@@ -10,9 +10,10 @@ not by convention.
 | Party | Role in the stories | Domain | Namespaces |
 | --- | --- | --- | --- |
 | **Platform** | the "cloud": mesh, edge, telemetry, substrate | `ops.lab` | `istio-system` `kgateway-system` `observability` `ate-system` `cert-manager` |
-| **Sterling & Vance** | Bob's firm. Runs the Solo AI platform (kagent, agentgateway, agentregistry) for its advisors | `sterling.lab` | `sv-identity` `kagent` `agentgateway-system` `agentregistry` `sv-agents` `sv-mcp` |
+| **Sterling & Vance** | Bob's firm. Runs the Solo AI platform (kagent, agentgateway, agentregistry) for its advisors | `sterling.lab` | `sv-identity` `kagent` `agentgateway-system` `agentregistry` `sv-agents` `sv-mcp` `sv-u4a` |
 | **Alice** | resource owner. Her authorization server, her portal, her IdP | `alice.lab` | `alice` `alice-identity` |
 | **Meridian Wealth** | Alice's brokerage. Holds her account, enforces her terms, can never read them | `meridian.lab` | `meridian` |
+| **Ledgerline Research** | a SaaS S&V subscribes to (Cross App Access target) | `ledgerline.lab` | `ledgerline` `ledgerline-identity` |
 
 Bob is a user of Sterling & Vance (realm `sterling-vance` in `sv-identity`).
 Alice is a user of her own IdP (realm `alice` in `alice-identity`).
@@ -26,13 +27,15 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | --- | --- | --- | --- | --- |
 | `kgateway-system` | edge (kgateway/Envoy) | `edge` | platform | laptop (NodePort 30080/30443) |
 | `sv-identity` | Keycloak `sterling-vance` | `keycloak` | S&V | edge; S&V gateways/apps (JWKS, token exchange) |
-| `sv-identity` | xaa-broker (ID-JAG issuer) | `xaa-broker` | S&V | agentgateway only |
 | `kagent` | controller, UI, oauth2-proxy, tools | `kagent-*` | S&V | edge → oauth2-proxy → UI → controller |
 | `agentgateway-system` | ai-gateway (LLM + MCP) | `ai-gateway` | S&V | S&V agents; edge (`ai.sterling.lab`, JWT required) |
 | `agentregistry` | agentregistry | `agentregistry` | S&V | edge via ai-gateway (JWT required); kagent controller |
 | `sv-agents` | Bob's agents (kagent Agents) | one SA per agent | S&V / Bob | kagent controller (A2A) |
 | `sv-mcp` | `bob-workspace` (kmcp) | `bob-workspace` | S&V / Bob | **ai-gateway only** (waypoint also checks the delegated token) |
-| `sv-mcp` | `u4a-adapter` (agent-shim: Bob's agent key) | `u4a-adapter` | S&V / Bob | ai-gateway only; egress to the edge only |
+| `sv-mcp` | `mcp-waypoint` (agentgateway as the namespace's waypoint) | `mcp-waypoint` | S&V | every caller of S&V tools, via ztunnel |
+| `sv-u4a` | `u4a-adapter` (UMA client: holds Bob's agent's key) | `u4a-adapter` | S&V / Bob | Bob's agent and the kagent controller only |
+| `ledgerline-identity` | Keycloak `ledgerline` (ID-JAG receiver) | `keycloak` | Ledgerline | edge |
+| `ledgerline` | `ledgerline-research` (kmcp) behind an Istio waypoint | `ledgerline-research` | Ledgerline | edge (Ledgerline token for calls) |
 | `alice-identity` | Keycloak `alice` | `keycloak` | Alice | edge; `alice/uma-as` (JWKS) |
 | `alice` | uma-as (Alice's AS) | `uma-as` | Alice | edge (grant surface); `meridian/uma-pep` (protection API); portal (owner API) |
 | `alice` | alice-portal | `portal` | Alice | edge |
@@ -68,6 +71,9 @@ pod:
   `127.0.0.1:15353`, which answers `127.0.0.1`. `make dns-setup` is a
   one-time sudo step.
 - **Cluster:** CoreDNS rewrites `*.lab` to the edge Service.
+- **Waypoints:** `sv-mcp` uses an agentgateway waypoint (MCP-aware). `alice`,
+  `meridian` and `ledgerline` use Istio waypoints, opted into per workload
+  only where a path-level rule needs one.
 - **TLS:** the lab CA is generated once into `~/.solo-lab/ca` and outlives
   clusters, so you trust it once (`make trust-ca`, one-time sudo). In-cluster
   consumers get it through trust-manager (`lab-ca-bundle` ConfigMap).
@@ -76,6 +82,20 @@ Why not `*.localhost`: agentgateway's resolver (hickory, RFC 6761) and newer
 Go resolvers answer `*.localhost` with loopback without asking DNS. A
 `keycloak.localhost` issuer would then mean "the pod itself" inside the
 cluster.
+
+## Demos build on each other
+
+Bob (story 1) is the foundation. Each later story adds its own parties and at
+most a kustomize overlay on Bob's agent (`demos/<story>/agent`). One `make up`
+installs every story, so any card runs in any order on the same lab.
+`make verify` runs every story's checks; `make reset` rewinds all of them.
+
+## Patches (tracked for upstream)
+
+| Where | What | Upstream |
+| --- | --- | --- |
+| `tools/keycloak-idjag` | Keycloak 26.7.4 + PR #49998 (ID-JAG issuing), backported | keycloak/keycloak#49998 |
+| `tools/kagent-idtoken` | kagent 0.10.2: forward the user's ID token to agents (bound to the user) | kagent-dev/kagent (PR to open) |
 
 ## Install order
 
@@ -88,8 +108,7 @@ cluster.
 45-identity     S&V Keycloak, DNS rewrite, SSO for kagent/Grafana/Kiali
 50-substrate    Agent Substrate (ate-system, unmeshed)
 60-kagent       kagent + kmcp, model via ai-gateway
-70-agentregistry agentregistry behind ai-gateway
-80-mesh-policy  default-deny, waypoints, per-party ALLOWs
-90-solo-mgmt    enterprise only: Solo management UI + relay
-demos/          bob (story 1), bob-to-alice (story 2)
+70-agentregistry agentregistry behind S&V SSO at the edge
+80-mesh-policy  S&V mesh baseline (other parties own theirs, in their story)
+95-demos        every story: bob, then bob-to-alice
 ```

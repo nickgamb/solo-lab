@@ -28,6 +28,7 @@ step "Sterling & Vance: workspace, waypoint, agent, Cross App Access"
 K create secret generic ledgerline-client -n agentgateway-system \
   --from-literal=clientSecret="$(lab_secret LL_SVKAGENT_CLIENT_SECRET)" --dry-run=client -o yaml | K apply -f - >/dev/null
 for f in "$D"/manifests/*.yaml; do apply_tmpl "$f"; done
+K apply -k "$D/agent" >/dev/null
 rollout sv-mcp deploy/bob-workspace deploy/mcp-waypoint
 wait_for "bob-assistant Ready" 60 5 K wait agent/bob-assistant -n sv-agents --for=condition=Ready --timeout=2s
 ok "sign in at https://kagent.$SV_DOMAIN as bob / bob-demo, chat with sv-agents/bob-assistant"

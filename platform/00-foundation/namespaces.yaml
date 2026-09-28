@@ -64,7 +64,8 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: alice
-  labels: {lab.solo.io/party: alice, istio.io/dataplane-mode: ambient, istio.io/use-waypoint: waypoint}
+  # waypoint opt-in is per workload (only uma-as needs L7 path rules)
+  labels: {lab.solo.io/party: alice, istio.io/dataplane-mode: ambient}
 ---
 apiVersion: v1
 kind: Namespace
@@ -77,7 +78,8 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: meridian
-  labels: {lab.solo.io/party: meridian, istio.io/dataplane-mode: ambient, istio.io/use-waypoint: waypoint}
+  # waypoint opt-in is per workload (only uma-pep needs L7 path rules)
+  labels: {lab.solo.io/party: meridian, istio.io/dataplane-mode: ambient}
 ---
 # Ledgerline Research — a SaaS research provider S&V subscribes to (Cross App Access)
 apiVersion: v1

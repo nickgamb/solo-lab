@@ -180,7 +180,7 @@ user_token() {
   local lp=$((18000 + RANDOM % 1000))
   port_forward "$1" keycloak "$lp" 80
   curl -s "http://127.0.0.1:$lp/realms/$2/protocol/openid-connect/token" \
-    -d grant_type=password -d client_id="$3" -d client_secret="$4" \
+    -d grant_type=password -d client_id="$3" ${4:+-d client_secret="$4"} \
     -d username="$5" -d password="$6" -d scope=openid | jq -r .access_token
 }
 

@@ -1,0 +1,14 @@
+# Alice's IdP answers only the edge: her portal (browser) and her authorization
+# server (JWKS) both reach it at https://idp.alice.lab.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: strict, namespace: alice-identity}
+spec: {mtls: {mode: STRICT}}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: keycloak-callers, namespace: alice-identity}
+spec:
+  selector: {matchLabels: {app: keycloak}}
+  action: ALLOW
+  rules: [{from: [{source: {principals: [cluster.local/ns/kgateway-system/sa/edge]}}]}]

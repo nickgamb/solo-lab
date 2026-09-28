@@ -1,0 +1,223 @@
+# Meridian Wealth, Alice's brokerage (namespace meridian): it holds her
+# account and enforces her terms, and it can never read them. Her terms live
+# in HER authorization server; Meridian's PEP only asks it (over the edge).
+#
+#   edge -> meridian gateway (agentgateway) --ext-auth--> uma-pep --> Alice's AS
+#                           \--> alice-vault (kmcp)
+apiVersion: kagent.dev/v1alpha1
+kind: MCPServer
+metadata: {name: alice-vault, namespace: meridian}
+spec:
+  transportType: http
+  httpTransport: {targetPort: 9020, path: /mcp}
+  deployment:
+    image: localhost:5001/u4a/alice-vault-mcp:${U4A_TAG}
+    port: 9020
+    replicas: 1
+    env: {ENFORCEMENT_MODE: gateway, UMA_VAULT_OWNER: alice}
+    resources:
+      requests: {cpu: 50m, memory: 96Mi}
+      limits: {memory: 256Mi}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: uma-pep, namespace: meridian}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: uma-pep, namespace: meridian, labels: {istio.io/use-waypoint: waypoint}}
+spec:
+  selector: {app: uma-pep}
+  ports: [{name: http, port: 9002, targetPort: 9002}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: uma-pep, namespace: meridian}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: uma-pep}}
+  template:
+    metadata: {labels: {app: uma-pep, istio.io/use-waypoint: waypoint}}
+    spec:
+      serviceAccountName: uma-pep
+      topologySpreadConstraints:
+      - {maxSkew: 1, topologyKey: topology.kubernetes.io/zone, whenUnsatisfiable: ScheduleAnyway, labelSelector: {matchLabels: {app: uma-pep}}}
+      containers:
+      - name: uma-pep
+        image: localhost:5001/u4a/uma-pep:${U4A_TAG}
+        ports: [{name: http, containerPort: 9002}]
+        env:
+        - {name: UMA_REALM, value: alice-vault}
+        - {name: UMA_OWNER, value: alice}
+        - {name: UMA_AS_PUBLIC, value: "https://as.${ALICE_DOMAIN}"}
+        # Alice's AS is another party: reached through the edge, never pod to pod.
+        - {name: UMA_AS_INTERNAL, value: "https://as.${ALICE_DOMAIN}"}
+        - name: UMA_OWNER_AUTHORITIES
+          value: '{"alice": {"public": "https://as.${ALICE_DOMAIN}", "internal": "https://as.${ALICE_DOMAIN}"}}'
+        - {name: UMA_AS_RS_CLIENT_ID, value: meridian-gateway}
+        - name: UMA_AS_RS_CLIENT_SECRET
+          valueFrom: {secretKeyRef: {name: meridian-config, key: rs-client-secret}}
+        - name: UMA_PEP_RS_SECRETS
+          valueFrom: {secretKeyRef: {name: meridian-config, key: rs-secrets}}
+        - {name: UMA_EXPECTED_AUTHORITY, value: "gateway.${MERIDIAN_DOMAIN}"}
+        - {name: UMA_PEP_SIGNING_KEY, value: /keys/uma-pep-ed25519.pem}
+        - {name: UMA4A_CA_BUNDLE, value: /certs/ca.crt}
+        - {name: SSL_CERT_FILE, value: /certs/ca.crt}
+        volumeMounts:
+        - {name: ca, mountPath: /certs, readOnly: true}
+        - {name: signing-key, mountPath: /keys, readOnly: true}
+        startupProbe: {httpGet: {path: /health, port: 9002}, periodSeconds: 2, failureThreshold: 60}
+        readinessProbe: {httpGet: {path: /health, port: 9002}, periodSeconds: 5}
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {memory: 256Mi}
+        securityContext: {runAsNonRoot: true, runAsUser: 65532, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+      volumes:
+      - {name: ca, configMap: {name: lab-ca-bundle}}
+      - {name: signing-key, secret: {secretName: uma-pep-signing-key}}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: uma-pep, namespace: meridian}
+spec:
+  minAvailable: 1
+  selector: {matchLabels: {app: uma-pep}}
+---
+# Meridian's gateway: a plain ambient workload (ztunnel-captured), so its calls
+# to the PEP pass Meridian's waypoint. It needs no caller identity: the PEP
+# checks the agent's proof of possession (RFC 9421) itself.
+apiVersion: ${AGW_PARAMS_API}
+kind: ${AGW_PARAMS_KIND}
+metadata: {name: meridian, namespace: meridian}
+spec:
+  istio: {enabled: false}
+  deployment:
+    spec:
+      replicas: 2
+  service:
+    spec: {type: ClusterIP}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata: {name: meridian, namespace: meridian}
+spec:
+  gatewayClassName: ${AGW_CLASS}
+  infrastructure:
+    parametersRef: {group: ${AGW_PARAMS_GROUP}, kind: ${AGW_PARAMS_KIND}, name: meridian}
+  listeners:
+  - {name: http, protocol: HTTP, port: 8080, allowedRoutes: {namespaces: {from: Same}}}
+---
+apiVersion: ${AGW_BACKEND_API}
+kind: ${AGW_BACKEND_KIND}
+metadata: {name: alice-vault, namespace: meridian}
+spec:
+  mcp:
+    sessionRouting: Stateful
+    targets:
+    - name: alice-vault
+      static: {host: alice-vault.meridian.svc.cluster.local, port: 9020, path: /mcp, protocol: StreamableHTTP}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: alice-vault-mcp, namespace: meridian}
+spec:
+  parentRefs: [{name: meridian}]
+  rules:
+  - matches: [{path: {type: PathPrefix, value: /mcp}}]
+    backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: alice-vault}]
+---
+# RFC 9728 metadata, JWKS and the signed registry query are the PEP's to serve.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: meridian-discovery, namespace: meridian}
+spec:
+  parentRefs: [{name: meridian}]
+  rules:
+  - matches:
+    - path: {type: PathPrefix, value: /.well-known/oauth-protected-resource}
+    - path: {type: PathPrefix, value: /jwks}
+    - path: {type: PathPrefix, value: /owner-resources}
+    backendRefs: [{name: uma-pep, port: 9002}]
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: uma-enforcement, namespace: meridian}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: alice-vault-mcp}]
+  traffic:
+    extAuth:
+      backendRef: {name: uma-pep, port: 9002}
+      failureMode: FailClosed
+      forwardBody: {maxSize: 16384}
+      http:
+        path: '"/check" + request.path'
+        allowedRequestHeaders: [x-envoy-auth-partial-body, authorization, signature, signature-input,
+          content-digest, host, content-type, mcp-method, mcp-name, mcp-protocol-version, origin,
+          signature-agent, traceparent]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: gateway, namespace: meridian}
+spec:
+  parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-meridian}]
+  hostnames: ["gateway.${MERIDIAN_DOMAIN}"]
+  rules:
+  - backendRefs: [{name: meridian, port: 8080}]
+    timeouts: {request: 300s}        # an ask-me call waits for Alice
+# ---- mesh -------------------------------------------------------------------
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: waypoint
+  namespace: meridian
+  labels: {istio.io/waypoint-for: all}
+spec:
+  gatewayClassName: istio-waypoint
+  listeners: [{name: mesh, port: 15008, protocol: HBONE}]
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: strict, namespace: meridian}
+spec: {mtls: {mode: STRICT}}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: default-deny, namespace: meridian}
+spec: {}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: allow-waypoint, namespace: meridian}
+spec:
+  selector: {matchLabels: {app: uma-pep}}
+  action: ALLOW
+  rules: [{from: [{source: {principals: [cluster.local/ns/meridian/sa/waypoint]}}]}]
+---
+# L7: /check belongs to Meridian's gateway alone.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: uma-pep-surfaces, namespace: meridian}
+spec:
+  targetRefs: [{kind: Service, group: "", name: uma-pep}]
+  action: ALLOW
+  rules:
+  - from: [{source: {principals: [cluster.local/ns/meridian/sa/meridian]}}]
+    to: [{operation: {paths: [/check, "/check/*", /owner-resources, /jwks, "/.well-known/*", /health]}}]
+---
+# The vault: Meridian's gateway, and Alice's own portal reading her own account.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: alice-vault-callers, namespace: meridian}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: alice-vault}}
+  action: ALLOW
+  rules: [{from: [{source: {principals: [cluster.local/ns/meridian/sa/meridian, cluster.local/ns/alice/sa/portal]}}]}]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: meridian-gateway-callers, namespace: meridian}
+spec:
+  selector: {matchLabels: {gateway.networking.k8s.io/gateway-name: meridian}}
+  action: ALLOW
+  rules: [{from: [{source: {principals: [cluster.local/ns/kgateway-system/sa/edge]}}]}]
