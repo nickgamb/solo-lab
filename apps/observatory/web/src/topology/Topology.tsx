@@ -162,17 +162,17 @@ function Canvas({ lab, focus, onFocused }: { lab: Lab; focus?: string; onFocused
         data: { label: outside ? 'Outside the lab' : grp?.label ?? gid, domain: outside ? undefined : grp?.domain, stats, outside,
           hits: productHits?.zones[gid], product,
           onOpen: outside ? undefined : () => setSelected(`zone:${gid}`) },
-        width: box.w, height: box.h, style: { width: box.w, height: box.h }, selectable: false, draggable: false, zIndex: -2 })
+        width: box.w, height: box.h, style: { width: box.w, height: box.h }, measured: { width: box.w, height: box.h }, selectable: false, draggable: false, zIndex: -2 })
     }
     for (const [pid, box] of Object.entries(placed.trays)) {
       const t = view.trays[pid]
       if (!t) continue
       const data: CardData = { n: t.node, selected: selected === pid, fog: !!focusIds && !focusIds.has(pid), lit: !!productHits?.trays.has(pid), ...(sub ? substrateFor(sub, t.node) : {}) }
-      out.push({ id: pid, type: 'tray', position: { x: box.x, y: box.y }, data, width: box.w, height: box.h, style: { width: box.w, height: box.h },
+      out.push({ id: pid, type: 'tray', position: { x: box.x, y: box.y }, data, width: box.w, height: box.h, style: { width: box.w, height: box.h }, measured: { width: box.w, height: box.h },
         draggable: false, zIndex: -1 })
     }
     placed.columns.forEach((c, i) => {
-      out.push({ id: `col:${i}`, type: 'colhead', position: { x: c.x, y: placed.top }, data: { label: c.label, step: i + 1 }, width: c.w, height: 40,
+      out.push({ id: `col:${i}`, type: 'colhead', position: { x: c.x, y: placed.top }, data: { label: c.label, step: i + 1 }, width: c.w, height: 40, measured: { width: c.w, height: 40 },
         selectable: false, draggable: false })
     })
     for (const n of view.nodes) {
@@ -185,11 +185,12 @@ function Canvas({ lab, focus, onFocused }: { lab: Lab; focus?: string; onFocused
       if (n.kind === 'substrate' && sub) Object.assign(data, substrateFor(sub, n))
       if (n.kind === 'agent' && n.badges?.includes('substrate') && sub) data.actor = actorFor(sub, n)
       if (n.id === placed.door) {
-        out.push({ id: n.id, type: 'door', position: { x: box.x, y: box.y }, data, width: box.w, height: box.h, style: { width: box.w, height: box.h }, draggable: false })
+        out.push({ id: n.id, type: 'door', position: { x: box.x, y: box.y }, data, width: box.w, height: box.h, style: { width: box.w, height: box.h }, measured: { width: box.w, height: box.h }, draggable: false })
         continue
       }
       out.push({ id: n.id, type: 'tile', position: { x: box.x - (LABEL_W - box.w) / 2, y: box.y }, data,
-        width: LABEL_W, height: box.h + LABEL_H + 4, style: { width: LABEL_W, height: box.h + LABEL_H + 4 }, draggable: false })
+        width: LABEL_W, height: box.h + LABEL_H + 4, style: { width: LABEL_W, height: box.h + LABEL_H + 4 }, draggable: false,
+        measured: { width: LABEL_W, height: box.h + LABEL_H + 4 } })
     }
     return out
   }, [g, placed, view.nodes, zones, perNode, p95, selected, sub, query, focusIds, hoverNode, product, productHits])

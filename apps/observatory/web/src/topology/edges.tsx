@@ -18,7 +18,7 @@ export type FlowData = {
   badgeAt?: 'src' | 'dst' // which end carries the badge (one per group of wires)
   focused?: boolean // part of the hovered node's neighbourhood
   cut?: boolean // the network on this path is cut (a simulated outage)
-  badgeLit?: boolean // a hop on this wire is the product picked in the rail
+  badgeLit?: boolean // a hop on this wire is the product picked in the rail (lights its group's one badge)
   [key: string]: unknown
 }
 
@@ -60,7 +60,7 @@ export const FlowEdge = memo((p: EdgeProps) => {
           </div>
         </EdgeLabelRenderer>
       )}
-      {((d.via?.length && (d.badgeAt || d.badgeLit)) || (d.showLabel && d.label)) && !d.fog && !d.cut ? (
+      {((d.via?.length && d.badgeAt) || (d.showLabel && d.label)) && !d.fog && !d.cut ? (
         <EdgeLabelRenderer>
           <div className={d.via?.length ? (d.badgeLit ? 'ebadge lit' : 'ebadge') : 'elabel'} style={{ transform: `translate(${d.badgeAt === 'dst' ? '-100%' : d.badgeAt === 'src' ? '0' : '-50%'},-50%) translate(${mid.x}px,${mid.y}px)` }}
             title={d.via?.length ? `through the waypoint ${d.via.join(', ')}` : undefined}>
