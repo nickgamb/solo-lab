@@ -13,7 +13,7 @@ export type FlowData = {
   state?: 'active' | 'down' | 'standby' // continuity wire state
   fog?: boolean
   showLabel?: boolean
-  points?: Pt[] // ELK's curve inside a party; otherwise a bezier
+  points?: Pt[] // the routed curve inside a party; otherwise a bezier
   via?: string[] // waypoints the call passes, shown as a badge
   badgeAt?: 'src' | 'dst' // which end carries the badge (one per group of wires)
   focused?: boolean // part of the hovered node's neighbourhood

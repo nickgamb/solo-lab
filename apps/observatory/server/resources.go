@@ -77,7 +77,10 @@ func (s *Resources) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 // Apply takes the edited YAML. ?dryRun=true returns what the API server
-// would store, for the diff view; otherwise it's a server-side apply.
+// would store, for the diff view; otherwise it's a server-side apply. The
+// YAML's resourceVersion is kept, so an object changed since it was loaded is
+// a conflict (409), and fields another manager owns are a conflict too.
+// ?force=true (the editor's "apply anyway") drops both checks.
 func (s *Resources) Apply(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
 	if err != nil {
@@ -94,11 +97,14 @@ func (s *Resources) Apply(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, err)
 		return
 	}
+	force := r.URL.Query().Get("force") == "true"
 	o.SetManagedFields(nil)
 	unstructured.RemoveNestedField(o.Object, "status")
-	unstructured.RemoveNestedField(o.Object, "metadata", "resourceVersion")
+	if force {
+		unstructured.RemoveNestedField(o.Object, "metadata", "resourceVersion")
+	}
 	patch, _ := json.Marshal(o.Object)
-	opts := metav1.PatchOptions{FieldManager: fieldManager, Force: ptr(true)}
+	opts := metav1.PatchOptions{FieldManager: fieldManager, Force: ptr(force)}
 	if r.URL.Query().Get("dryRun") == "true" {
 		opts.DryRun = []string{metav1.DryRunAll}
 	}

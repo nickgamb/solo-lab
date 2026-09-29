@@ -41,4 +41,3 @@ spec:
     - source:
         principals:
         - cluster.local/ns/kagent/sa/kagent-controller
-        - cluster.local/ns/observatory/sa/observatory

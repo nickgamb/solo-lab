@@ -47,6 +47,8 @@ function Canvas({ lab, focus, onFocused }: { lab: Lab; focus?: string; onFocused
 
   // re-layout only when the shape changes, so live updates don't reshuffle
   const shape = useMemo(() => view.nodes.map(n => n.id).join('|') + '#' + view.edges.map(e => e.id).join('|') + '#' + Object.entries(view.trays).map(([k, t]) => k + t.members.join(',')).join('|'), [view])
+  // every publish is a new groups array: compare what's in it
+  const groupsKey = useMemo(() => JSON.stringify(g?.groups ?? []), [g?.groups])
   const firstLayout = useRef(true)
   useEffect(() => {
     if (!g) return
@@ -54,13 +56,14 @@ function Canvas({ lab, focus, onFocused }: { lab: Lab; focus?: string; onFocused
     layout(g, view.nodes, view.edges, view.trays).then(p => { if (!stale) setPlaced(p) }).catch(err => console.error('layout', err))
     return () => { stale = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shape, g?.groups])
+  }, [shape, groupsKey])
   useEffect(() => { firstLayout.current = true }, [lens])
   useEffect(() => {
     if (!placed || !firstLayout.current) return
     firstLayout.current = false
+    if (focus) return // opened on a node (from Traffic): its own fit below wins
     requestAnimationFrame(() => requestAnimationFrame(() => rf.fitView({ padding: { top: '96px', left: '24px', bottom: '24px', right: '250px' } })))
-  }, [placed, rf])
+  }, [placed, rf, focus])
 
   // where a product from the rail is on the map: tiles, trays, badges on
   // wires (waypoints, the edge, the Substrate router), and, for instances
@@ -234,7 +237,8 @@ function Canvas({ lab, focus, onFocused }: { lab: Lab; focus?: string; onFocused
     if (!focus || !placed) return
     setSelected(focus)
     const n = rf.getNode(focus)
-    if (n) rf.fitView({ nodes: [n], padding: 2, duration: 500, maxZoom: 1.2 })
+    // after layout has settled, like the whole-map fit it replaces
+    if (n) requestAnimationFrame(() => requestAnimationFrame(() => rf.fitView({ nodes: [n], padding: 2, duration: 500, maxZoom: 1.2 })))
     onFocused()
   }, [focus, placed, rf, onFocused])
 
