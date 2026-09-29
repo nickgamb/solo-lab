@@ -35,6 +35,11 @@ make verify                   # every demo's enforcement checks
 make status                   # pods, active IdP, URLs and sign-ins
 ```
 
+Story 2 builds Alice's and Meridian's services from
+[uma4agents](https://github.com/nickgamb/uma4agents): a checkout beside this
+repo (`../uma4agents`) or `U4A_SRC` if you have one, otherwise the install
+clones the pinned commit into `.lab/uma4agents`.
+
 `make up` is idempotent. Image caches and the lab CA outlive the cluster, so
 a rebuild after `make down` is much faster than the first.
 
@@ -162,6 +167,7 @@ Layers:
 | Doc | Covers |
 | --- | --- |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | parties, workloads and identities, enforcement layers, DNS and TLS, patches |
+| [IDENTITY-FLOWS.md](docs/IDENTITY-FLOWS.md) | delegation (RFC 8693), Cross App Access (ID-JAG), UMA for agents: every hop, policy and check |
 | [OBSERVATORY.md](docs/OBSERVATORY.md) | using the Observatory, how it derives the map, access model, local development |
 | [IDENTITY-CONTINUITY.md](docs/IDENTITY-CONTINUITY.md) | the IdentityContinuity API, the controller, Auth0 setup, the kill switch |
 | [ENTERPRISE.md](docs/ENTERPRISE.md) | switching products to Solo Enterprise |

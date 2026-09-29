@@ -40,7 +40,7 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | `agentregistry` | agentregistry | `agentregistry` | S&V | edge via ai-gateway (JWT required); kagent controller |
 | `sv-agents` | `bob-assistant`: SandboxAgent on pool `bob-assistant` | `bob-assistant` | S&V / Bob | atenet-router only (kagent controller → ate-api → router) |
 | `sv-agents` | advisor desk (meeting-prep, market-brief, compliance-check): SandboxAgents on pool `advisor-desk` | `advisor-desk` | S&V | atenet-router only |
-| `sv-mcp` | `bob-workspace` (kmcp) | `bob-workspace` | S&V / Bob | **ai-gateway only** (waypoint also checks the delegated token) |
+| `sv-mcp` | `bob-workspace` (kmcp) | `bob-workspace` | S&V / Bob | **mcp-waypoint only** (the workspace also checks the delegated token) |
 | `sv-mcp` | `mcp-waypoint` (agentgateway as the namespace's waypoint) | `mcp-waypoint` | S&V | every caller of S&V tools, via ztunnel |
 | `sv-u4a` | `u4a-adapter` (UMA client: holds Bob's agent's key) | `u4a-adapter` | S&V / Bob | Bob's agent and the kagent controller only |
 | `ledgerline-identity` | Keycloak `ledgerline` (ID-JAG receiver) | `keycloak` | Ledgerline | edge |
@@ -76,6 +76,12 @@ as kagent controller → atenet-router → worker, each hop mTLS.
      toward tools, provider credentials for LLMs.
    - meridian gateway (agentgateway, Meridian): ext-auth to uma-pep, which
      enforces Alice's terms (UMA tickets, PoP RPTs, single-use grants).
+
+## Identity flows
+
+Delegation at the MCP waypoint (RFC 8693), Cross App Access to Ledgerline
+(ID-JAG), and UMA for agents (Bob to Alice), hop by hop:
+[IDENTITY-FLOWS.md](IDENTITY-FLOWS.md).
 
 ## Identity continuity
 

@@ -7,12 +7,17 @@
 D="$(cd "$(dirname "$0")" && pwd)"
 need_cluster
 export U4A_TAG=${U4A_TAG:-u4a-ea9d86f}      # uma4agents commit the images are built from
-U4A_SRC=${U4A_SRC:-$HOME/Documents/GitHub/uma4agents}
+# the uma4agents checkout the images build from: U4A_SRC, else one beside this
+# repo, else a clone of the pinned commit under .lab/
+U4A_SRC=${U4A_SRC:-$( [ -d "$LAB_ROOT/../uma4agents" ] && cd "$LAB_ROOT/../uma4agents" && pwd || echo "$LAB_STATE/uma4agents")}
+if [ ! -d "$U4A_SRC" ]; then
+  git clone -q https://github.com/nickgamb/uma4agents "$U4A_SRC"
+  git -C "$U4A_SRC" checkout -q "${U4A_TAG#u4a-}"
+fi
 
 step "u4a images ($U4A_TAG)"
 img() { docker image inspect "localhost:$LAB_REGISTRY_PORT/u4a/$1:$U4A_TAG" >/dev/null 2>&1 \
-  || { [ -d "$U4A_SRC" ] || die "uma4agents not found at $U4A_SRC (set U4A_SRC)";
-       docker build -q -t "localhost:$LAB_REGISTRY_PORT/u4a/$1:$U4A_TAG" -f "$2" "$3" >/dev/null; }
+  || { docker build -q -t "localhost:$LAB_REGISTRY_PORT/u4a/$1:$U4A_TAG" -f "$2" "$3" >/dev/null; }
   docker push -q "localhost:$LAB_REGISTRY_PORT/u4a/$1:$U4A_TAG" >/dev/null; }
 img uma-as          "$U4A_SRC/services/uma-as/Dockerfile"        "$U4A_SRC"
 img uma-pep         "$U4A_SRC/services/uma-pep/Dockerfile"       "$U4A_SRC"
