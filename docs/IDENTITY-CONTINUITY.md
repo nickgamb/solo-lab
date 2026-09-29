@@ -7,6 +7,8 @@ trusts; an upstream only authenticates the person. When the upstream goes
 down, new sign-ins move to the next healthy tier and nothing downstream
 changes: same issuer, same `sub`, same groups.
 
+![Identity continuity at 4x speed: the upstream IdP signing people in, a simulated outage at the firm's egress, failover to S&V's own accounts, and failback](videos/identity-continuity.gif)
+
 - API and controller: `apps/continuity` (`IdentityContinuity`, `continuity.lab.solo.io/v1alpha1`)
 - Install: `platform/47-continuity` (`make layer-47`, after `45-identity`)
 - Demo card: [cards/identity-continuity.html](cards/identity-continuity.html)

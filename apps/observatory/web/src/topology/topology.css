@@ -255,7 +255,8 @@
 .door-label b { font: 600 20px/1 var(--font-heading); color: var(--text); }
 
 /* product rail: instances that aren't tiles */
-.ebadge.lit { border-color: var(--accent-2); background: color-mix(in hsl, var(--accent) 35%, var(--surface-solid)); color: var(--text);
+/* above the tiles: the label layer is otherwise drawn under the nodes */
+.ebadge.lit { z-index: 1001; border-color: var(--accent-2); background: color-mix(in hsl, var(--accent) 35%, var(--surface-solid)); color: var(--text);
   box-shadow: 0 0 0 3px var(--accent-soft), 0 0 18px color-mix(in hsl, var(--accent) 50%, transparent); }
 .tray.lit { border-style: solid; border-color: var(--accent-2); box-shadow: 0 0 0 3px var(--accent-soft), 0 0 30px color-mix(in hsl, var(--accent) 40%, transparent); }
 .party-stats .zhit { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 99px; color: var(--text);
