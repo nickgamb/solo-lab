@@ -11,7 +11,10 @@ need_cluster
 
 step "observatory image (local registry)"
 # tagged by source content, so a code change is a new image and a rollout
-tag=$(cd "$APP" && find server web/src web/index.html web/package.json web/public -type f -not -path 'server/web/*' -not -name .DS_Store | LC_ALL=C sort | xargs cat | sha1 | cut -c1-12)
+# everything the image is built from (Dockerfile, lockfile and build config
+# included), not the build's own outputs
+tag=$(cd "$APP" && find . -type f -not -path './server/web/*' -not -path '*/node_modules/*' -not -path './web/dist/*' \
+  -not -name .DS_Store -not -name '*.tsbuildinfo' | LC_ALL=C sort | xargs cat | sha1 | cut -c1-12)
 export OBSERVATORY_IMAGE="localhost:$LAB_REGISTRY_PORT/lab/observatory:$tag"
 docker image inspect "$OBSERVATORY_IMAGE" >/dev/null 2>&1 || docker build -q -t "$OBSERVATORY_IMAGE" "$APP" >/dev/null
 docker push -q "$OBSERVATORY_IMAGE" >/dev/null

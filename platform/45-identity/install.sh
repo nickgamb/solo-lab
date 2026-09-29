@@ -7,6 +7,14 @@
 D="$(cd "$(dirname "$0")" && pwd)"
 need_cluster
 
+step "Sterling & Vance mesh baseline, before the firm's first workload"
+# So nothing of S&V's (Keycloak here, kagent at 60, agentregistry at 70) runs
+# unfenced while the layers in between install. Layer 80 owns these and
+# applies them again.
+apply_tmpl "$LAB_ROOT/platform/80-mesh-policy/sterling-vance.yaml"
+deny_internet sv-identity kagent sv-agents sv-mcp agentregistry
+ok "STRICT mTLS, identity-scoped ALLOWs and no-internet for S&V's namespaces"
+
 step "Sterling & Vance Keycloak $KEYCLOAK_VERSION (sv-identity)"
 K create secret generic kc-secrets -n sv-identity \
   --from-literal=KC_BOOTSTRAP_ADMIN_USERNAME=admin \

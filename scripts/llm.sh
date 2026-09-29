@@ -31,14 +31,16 @@ case "$P" in
   anthropic)
     [ -n "${ANTHROPIC_API_KEY:-}" ] || die "ANTHROPIC_API_KEY is empty (set it in .env)"
     export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-claude-sonnet-5}"
-    K create secret generic llm-anthropic -n agentgateway-system \
-      --from-literal=Authorization="$ANTHROPIC_API_KEY" --dry-run=client -o yaml | K apply -f - >/dev/null
+    # the key reaches kubectl on stdin, not its command line
+    printf '%s' "$ANTHROPIC_API_KEY" | K create secret generic llm-anthropic -n agentgateway-system \
+      --from-file=Authorization=/dev/stdin --dry-run=client -o yaml | K apply -f - >/dev/null
     MODEL=$ANTHROPIC_MODEL ;;
   openai)
     [ -n "${OPENAI_API_KEY:-}" ] || die "OPENAI_API_KEY is empty (set it in .env)"
     export OPENAI_MODEL="${OPENAI_MODEL:-gpt-5-mini}"
-    K create secret generic llm-openai -n agentgateway-system \
-      --from-literal=Authorization="$OPENAI_API_KEY" --dry-run=client -o yaml | K apply -f - >/dev/null
+    # the key reaches kubectl on stdin, not its command line
+    printf '%s' "$OPENAI_API_KEY" | K create secret generic llm-openai -n agentgateway-system \
+      --from-file=Authorization=/dev/stdin --dry-run=client -o yaml | K apply -f - >/dev/null
     MODEL=$OPENAI_MODEL ;;
   *) die "LLM_PROVIDER must be ollama | anthropic | openai" ;;
 esac

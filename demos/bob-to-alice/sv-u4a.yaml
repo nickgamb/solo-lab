@@ -32,7 +32,7 @@ spec:
       serviceAccountName: u4a-adapter
       containers:
       - name: adapter
-        image: localhost:5001/u4a/agent-adapter:${U4A_TAG}
+        image: localhost:${LAB_REGISTRY_PORT}/u4a/agent-adapter:${U4A_ADAPTER_TAG}
         ports: [{name: mcp, containerPort: 9030}]
         env:
         - {name: UMA4A_SHIM_TRANSPORT, value: streamable-http}

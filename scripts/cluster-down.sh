@@ -7,7 +7,7 @@ step "Deleting kind cluster $LAB_NAME"
 kind delete cluster --name "$LAB_NAME" 2>/dev/null && ok "deleted" || ok "not present"
 
 if [ "${1:-}" = --all ]; then
-  step "Removing registry caches, local registry, cloud-provider-kind"
+  step "Removing registry caches, the local registry (and every image built into it), lab DNS, cloud-provider-kind"
   for c in $(docker ps -aq -f name='^lab-'); do docker rm -f "$c" >/dev/null; done
   for v in $(docker volume ls -q -f name='^lab-'); do docker volume rm "$v" >/dev/null; done
   ok "removed"

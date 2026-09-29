@@ -3,14 +3,11 @@
 . "$(dirname "$0")/../../scripts/lib.sh"
 need_cluster; need_password_grant
 # Bob's session as the edge sees it after SSO: access token + ID token (kagent)
-lp=$((18000 + RANDOM % 1000)); port_forward sv-identity keycloak "$lp" 80
-TOK=$(curl -s "http://127.0.0.1:$lp/realms/sterling-vance/protocol/openid-connect/token" -d grant_type=password \
-  -d client_id=kagent -d client_secret="$(lab_secret SV_KAGENT_CLIENT_SECRET)" -d username=bob -d password=bob-demo -d scope=openid)
+TOK=$(kc_token sv-identity sterling-vance kagent "$(lab_secret SV_KAGENT_CLIENT_SECRET)" bob bob-demo)
 BOB=$(echo "$TOK" | jq -r .access_token); BOB_ID=$(echo "$TOK" | jq -r .id_token); unset TOK
 [ -n "$BOB" ] && [ "$BOB" != null ] || die "could not get Bob's token"
 # someone else's ID token (ops, a platform admin in S&V's realm), to pair with Bob's
-OTHER_ID=$(curl -s "http://127.0.0.1:$lp/realms/sterling-vance/protocol/openid-connect/token" -d grant_type=password \
-  -d client_id=kagent -d client_secret="$(lab_secret SV_KAGENT_CLIENT_SECRET)" -d username=ops -d password=ops-demo -d scope=openid | jq -r .id_token)
+OTHER_ID=$(kc_token sv-identity sterling-vance kagent "$(lab_secret SV_KAGENT_CLIENT_SECRET)" ops ops-demo | jq -r .id_token)
 # Bob's agent's workload identity (its worker pool's ServiceAccount), another
 # workload in the same namespace, and one in another namespace.
 probe_pod sv-agents bob-assistant; probe_pod sv-agents; probe_pod observability
@@ -22,7 +19,7 @@ POD_IP=$(K get pod -n sv-mcp -l app.kubernetes.io/name=bob-workspace -o jsonpath
 pass=0 fail=0
 check() {  # check <expect-regex> <label> <ns>[/<pod>] <probe args...>
   local want=$1 label=$2 ns=${3%%/*} pod=probe; [[ $3 == */* ]] && pod=${3#*/}; shift 3
-  local out; out=$(K exec -n "$ns" "$pod" -- python3 /tmp/p.py "$@" 2>&1 | tail -1 || true)
+  local out; out=$(probe_exec "$ns/$pod" "$@" 2>&1 | tail -1 || true)
   if echo "$out" | grep -qE "$want"; then ok "$label"; pass=$((pass+1))
   else warn "$label"; echo "      got: ${out:0:300}"; fail=$((fail+1)); fi
 }

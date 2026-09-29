@@ -17,7 +17,7 @@ metadata:
   labels: {kagent.dev/worker-pool: advisor-desk}
 spec:
   replicas: 2
-  ateomImage: localhost:5001/kagent-dev/substrate/ateom-gvisor:v0.0.9-lab.1
+  ateomImage: localhost:${LAB_REGISTRY_PORT}/kagent-dev/substrate/ateom-gvisor:${SUBSTRATE_LAB_TAG}
   template:
     serviceAccountName: advisor-desk
     annotations:

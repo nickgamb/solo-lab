@@ -10,7 +10,7 @@ D="$(cd "$(dirname "$0")" && pwd)"
 need_cluster
 ED=$KAGENT_EDITION
 
-[ "$ED" = oss ] && lab_image kagent-dev/kagent/controller:0.10.2-lab.3 tools/kagent/build.sh
+[ "$ED" = oss ] && lab_image "kagent-dev/kagent/controller:$KAGENT_LAB_TAG" tools/kagent/build.sh
 step "kagent $KAGENT_VERSION ($ED)"
 # kagent's OpenAI client insists on a key. agentgateway ignores it and injects
 # the real provider credential, so this placeholder is all kagent ever holds.

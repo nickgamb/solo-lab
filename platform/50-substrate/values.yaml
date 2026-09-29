@@ -2,10 +2,10 @@
 # actor networking), built into the lab registry. Unpatched components are
 # mirrored there by digest under the same tag.
 image:
-  registry: localhost:5001/kagent-dev/substrate
-  tag: v0.0.9-lab.1
+  registry: localhost:${LAB_REGISTRY_PORT}/kagent-dev/substrate
+  tag: ${SUBSTRATE_LAB_TAG}
 atelet:
-  # atelet pulls actor images itself; localhost:5001 means the lab registry.
+  # atelet pulls actor images itself; localhost:<registry port> means the lab registry.
   extraArgs: [--localhost-registry-replacement=lab-registry:5000]
 # Substrate components export OTLP to the lab collector. Without an endpoint
 # every component dials localhost:4317 and gets connection refused.

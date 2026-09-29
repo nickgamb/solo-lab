@@ -1,6 +1,6 @@
 # Substrate components as `ko build` makes them: a static Go binary at
 # /ko-app/<name> on distroless static (root), same env and entrypoint.
-FROM golang:1.26.3 AS build
+FROM golang:1.26.3@sha256:2d6c80227255c3112a4d08e67ba98e58efd3846daf15d9d7d4c389565d881b1a AS build
 ARG VERSION
 WORKDIR /src
 COPY . .
