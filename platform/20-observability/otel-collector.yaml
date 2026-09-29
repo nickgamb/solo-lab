@@ -9,6 +9,12 @@ resources:
 podDisruptionBudget:
   enabled: true
   minAvailable: 1
+# 14317/14318: the gateways' access logs, the only logs the Observatory
+# gets. A separate port so the mesh policy can name who may send them
+# (mesh-policy.yaml): what arrives here is shown as verified by a gateway.
+ports:
+  access-grpc: {enabled: true, containerPort: 14317, servicePort: 14317, protocol: TCP, appProtocol: grpc}
+  access-http: {enabled: true, containerPort: 14318, servicePort: 14318, protocol: TCP}
 presets:
   kubernetesAttributes:
     enabled: true            # tag every span/metric with pod, namespace, deployment
@@ -18,6 +24,10 @@ config:
       protocols:
         grpc: {endpoint: "0.0.0.0:4317"}
         http: {endpoint: "0.0.0.0:4318"}
+    otlp/access:
+      protocols:
+        grpc: {endpoint: "0.0.0.0:14317"}
+        http: {endpoint: "0.0.0.0:14318"}
   processors:
     memory_limiter: {check_interval: 1s, limit_percentage: 80, spike_limit_percentage: 25}
     batch: {}
@@ -33,6 +43,7 @@ config:
       encoding: json
       tls: {insecure: true}
       retry_on_failure: {enabled: true, max_elapsed_time: 30s}
+    nop: {}
   service:
     pipelines:
       traces:
@@ -43,9 +54,13 @@ config:
         receivers: [otlp]
         processors: [memory_limiter, k8sattributes, batch]
         exporters: [otlphttp/prometheus]
-      logs:
-        # No log store (Loki is an add-on): logs stream to the observatory's
-        # live view; other emitters' logs (kagent) are accepted and dropped there.
-        receivers: [otlp]
+      logs/access:
+        # gateway access logs, live, to the observatory
+        receivers: [otlp/access]
         processors: [memory_limiter, k8sattributes, batch]
         exporters: [otlphttp/observatory]
+      logs:
+        # everything else's logs (kagent, Substrate): no log store here (Loki
+        # is an add-on), so accepted and dropped
+        receivers: [otlp]
+        exporters: [nop]

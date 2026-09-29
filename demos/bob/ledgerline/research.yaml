@@ -61,8 +61,11 @@ spec:
     audiences: [ledgerline-research]
     forwardOriginalToken: true
 ---
-# From the internet (the edge) only. The tool catalog is public; every tool
-# CALL needs a Ledgerline-issued token for ledgerline-research.
+# From the internet (the edge) only. The tool catalog is public: a request
+# that says it is an MCP handshake or tools/list (the caller's own mcp-method
+# header) passes without a token. Everything else needs a Ledgerline token
+# here, and the server verifies the token on every tool call itself, so the
+# header only decides what the waypoint turns away early.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata: {name: research-access, namespace: ledgerline}

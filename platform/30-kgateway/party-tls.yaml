@@ -1,6 +1,8 @@
-# Each party owns its edge certificate (and private key) in its own namespace
-# and grants the edge Gateway read access with a ReferenceGrant. The platform
-# never holds a party's key material.
+# Each party's edge certificate (and private key) lives in its own namespace,
+# and the party grants the edge Gateway read access with a ReferenceGrant. The
+# platform never holds a party's key. The shared lab CA signs them all, so it
+# doesn't stop one namespace from requesting another's name
+# (docs/ARCHITECTURE.md, "What the lab doesn't enforce").
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata: {name: edge-tls, namespace: kgateway-system}

@@ -214,11 +214,31 @@ deploy_keycloak() {
   K rollout status deploy/keycloak -n "$ns" --timeout=300s >/dev/null
 }
 
+# on_exit <command>: run <command> when the (sub)shell that registered it
+# exits. Commands stack (the last registered runs first), so helpers and
+# scripts never replace each other's cleanup the way a second `trap ... EXIT`
+# would. A $(...) subshell inherits the list, so each entry carries the shell
+# that registered it and only that shell runs it.
+# ($(exec sh -c 'echo $PPID') is this shell's pid: bash 3.2, macOS's, has no BASHPID.)
+_LAB_ON_EXIT=()
+on_exit() { _LAB_ON_EXIT+=("$(exec sh -c 'echo $PPID') $1"); trap _lab_on_exit EXIT; }
+_lab_on_exit() {
+  local i e me; me=$(exec sh -c 'echo $PPID')
+  for ((i = ${#_LAB_ON_EXIT[@]} - 1; i >= 0; i--)); do
+    e=${_LAB_ON_EXIT[i]}
+    if [ "${e%% *}" = "$me" ]; then eval "${e#* }" || true; fi
+  done
+  return 0
+}
+
+# free_port: an unused local TCP port (for port-forwards).
+free_port() { python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'; }
+
 # port_forward <ns> <svc> <localport> <remoteport>: background port-forward on
 # 127.0.0.1, torn down when the calling script exits.
 port_forward() {
   K port-forward -n "$1" "svc/$2" "$3:$4" >/dev/null 2>&1 &
-  local pid=$!; trap "kill $pid 2>/dev/null" EXIT
+  local pid=$!; on_exit "kill $pid 2>/dev/null"
   wait_for "port-forward $1/$2" 20 0.5 curl -s -o /dev/null "http://127.0.0.1:$3/"
 }
 
@@ -232,7 +252,7 @@ need_password_grant() {
 # the party's Keycloak (the issuer claim is still https://idp.<party>.lab).
 user_token() {
   need_password_grant
-  local lp=$((18000 + RANDOM % 1000))
+  local lp; lp=$(free_port)
   port_forward "$1" keycloak "$lp" 80
   curl -s "http://127.0.0.1:$lp/realms/$2/protocol/openid-connect/token" \
     -d grant_type=password -d client_id="$3" ${4:+-d client_secret="$4"} \
@@ -243,10 +263,11 @@ user_token() {
 # <sa> it is pod "probe" with its own ServiceAccount "probe" (so its own SPIFFE
 # identity: some workload, nobody special). With <sa> it is pod "probe-<sa>"
 # running as that existing ServiceAccount, to act as that workload (e.g. an
-# agent's worker pool) in a check.
+# agent's worker pool, or kagent's UI) in a check; it is deleted when the
+# script exits, so nothing is left holding that identity.
 probe_pod() {
   local ns=$1 sa=${2:-probe} pod=probe
-  [ "$sa" = probe ] || pod=probe-$sa
+  [ "$sa" = probe ] || { pod=probe-$sa; on_exit "K delete pod $pod -n $ns --wait=false >/dev/null 2>&1"; }
   # pod specs are immutable: replace a probe that predates the current spec
   K get pod "$pod" -n "$ns" -o jsonpath='{.spec.volumes[*].name}' 2>/dev/null | grep -q lab-ca \
     || K delete pod "$pod" -n "$ns" --now --ignore-not-found >/dev/null 2>&1
@@ -265,5 +286,6 @@ spec:
   volumes: [{name: lab-ca, configMap: {name: lab-ca-bundle}}]
 YAML
   K wait --for=condition=Ready "pod/$pod" -n "$ns" --timeout=120s >/dev/null
-  K exec -i -n "$ns" "$pod" -- sh -c 'cat > /tmp/p.py' < "$LAB_ROOT/tools/mcp-probe.py"
+  # as an argument, not stdin: `kubectl exec -i` sometimes delivers an empty stdin
+  K exec -n "$ns" "$pod" -- sh -c 'echo "$1" | base64 -d > /tmp/p.py' _ "$(base64 < "$LAB_ROOT/tools/mcp-probe.py" | tr -d '\n')"
 }

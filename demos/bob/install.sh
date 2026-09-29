@@ -25,9 +25,7 @@ docker push -q "localhost:$LAB_REGISTRY_PORT/lab/toolbox:1" >/dev/null
 step "Ledgerline Research (its own IdP, MCP server, Istio waypoint)"
 K create secret generic kc-secrets -n ledgerline-identity \
   --from-literal=KC_BOOTSTRAP_ADMIN_USERNAME=admin --from-literal=KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret LL_KC_ADMIN_PASSWORD)" \
-  --from-literal=LL_SSO_CLIENT_SECRET="$(lab_secret LL_SSO_CLIENT_SECRET)" \
   --from-literal=LL_SVKAGENT_CLIENT_SECRET="$(lab_secret LL_SVKAGENT_CLIENT_SECRET)" \
-  --from-literal=LL_UNUSED_CLIENT_SECRET="$(lab_secret LL_UNUSED_CLIENT_SECRET)" \
   --dry-run=client -o yaml | K apply -f - >/dev/null
 deploy_keycloak ledgerline-identity "$LEDGERLINE_DOMAIN" https-ledgerline "$D/ledgerline/realm-ledgerline.json" identity-assertion-jwt
 apply_tmpl "$D/ledgerline/research.yaml" "$D/ledgerline/identity.yaml"

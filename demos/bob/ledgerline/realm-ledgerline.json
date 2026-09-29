@@ -26,8 +26,6 @@
         "authorizationUrl": "https://idp.${SV_DOMAIN}/realms/sterling-vance/protocol/openid-connect/auth",
         "tokenUrl": "https://idp.${SV_DOMAIN}/realms/sterling-vance/protocol/openid-connect/token",
         "clientId": "ledgerline-sso",
-        "clientSecret": "${LL_SSO_CLIENT_SECRET}",
-        "clientAuthMethod": "client_secret_basic",
         "jwtAuthorizationGrantEnabled": "true",
         "jwtAuthorizationGrantAssertionReuseAllowed": "false",
         "jwtAuthorizationGrantMaxAllowedAssertionExpiration": "300"
@@ -78,7 +76,7 @@
       "name": "Ledgerline Research MCP (audience only)",
       "enabled": true,
       "publicClient": false,
-      "secret": "${LL_UNUSED_CLIENT_SECRET}",
+      "bearerOnly": true,
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false

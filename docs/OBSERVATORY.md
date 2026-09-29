@@ -165,8 +165,12 @@ The browser gets everything over one Server-Sent Events stream (`/api/stream`:
   (kgateway ListenerPolicy), all to the OTel collector. agentgateway sends to
   the collector's Service as a backend, so the export carries the gateway's
   mesh identity, which the collector's policy requires.
-- `platform/20-observability/otel-collector.yaml`: the collector's logs
-  pipeline (`k8sattributes`) exports to `observatory.observatory.svc:4318`.
+- `platform/20-observability/otel-collector.yaml`: access logs arrive on
+  their own ports (14317 gRPC, 14318 HTTP), which the mesh policy opens only
+  to the four gateways, and only that pipeline exports to
+  `observatory.observatory.svc:4318`. So a claim shown as verified by a
+  gateway came from one. Other components' OTLP (4317/4318) goes to Tempo and
+  Prometheus; their logs are dropped.
 
 ## Server configuration
 

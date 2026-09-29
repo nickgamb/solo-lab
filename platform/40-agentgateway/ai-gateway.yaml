@@ -1,5 +1,6 @@
-# The AI gateway data plane: 2-6 replicas across zones, PDB, ClusterIP (the
-# kgateway edge fronts it for laptop access at https://ai.${SV_DOMAIN}).
+# The AI gateway data plane: 2-6 replicas across zones, PDB, ClusterIP. In the
+# cluster only: the agents' worker pools call it (models, Cross App Access),
+# and it is S&V's way out to model providers and SaaS.
 apiVersion: ${AGW_PARAMS_API}
 kind: ${AGW_PARAMS_KIND}
 metadata:

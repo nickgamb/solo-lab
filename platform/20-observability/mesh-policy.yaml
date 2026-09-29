@@ -4,7 +4,8 @@
 # workloads that report telemetry may send it.
 #
 # Adding a component that exports OTLP? Name its ServiceAccount under
-# collector-callers.
+# collector-callers. Access logs (14317/14318) are only taken from the
+# gateways: the Observatory shows their claims as verified by a gateway.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata: {name: collector-callers, namespace: observability}
@@ -34,6 +35,14 @@ spec:
         - cluster.local/ns/ate-system/sa/atelet
         - cluster.local/ns/ate-system/sa/atenet-router
     to: [{operation: {ports: ["4317", "4318"]}}]
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/kgateway-system/sa/edge
+        - cluster.local/ns/agentgateway-system/sa/ai-gateway
+        - cluster.local/ns/sv-mcp/sa/mcp-waypoint
+        - cluster.local/ns/meridian/sa/meridian
+    to: [{operation: {ports: ["14317", "14318"]}}]
 ---
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy

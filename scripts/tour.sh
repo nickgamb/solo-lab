@@ -34,9 +34,9 @@ TOK=$(curl -s "http://127.0.0.1:$lp/realms/sterling-vance/protocol/openid-connec
   -d client_id=kagent -d client_secret="$(lab_secret SV_KAGENT_CLIENT_SECRET)" -d username=bob -d password=bob-demo -d scope=openid)
 BOB=$(echo "$TOK" | jq -r .access_token); BOB_ID=$(echo "$TOK" | jq -r .id_token); unset TOK
 [ -n "$BOB" ] && [ "$BOB" != null ] || die "could not get Bob's token"
-probe_pod kagent; probe_pod sv-agents bob-assistant; probe_pod sv-agents; probe_pod observability
+probe_pod kagent kagent-ui; probe_pod sv-agents bob-assistant; probe_pod sv-agents; probe_pod observability
 AGENT=sv-agents/probe-bob-assistant   # Bob's agent's workload identity
-trap 'kill $(jobs -p) 2>/dev/null' EXIT
+on_exit 'kill $(jobs -p) 2>/dev/null'
 ok "tokens for bob; probe pods in kagent, sv-agents, observability"
 
 CTX=$(new_uuid)   # one conversation, like one chat in the UI
@@ -44,7 +44,7 @@ ask() {  # ask <question>: Bob asks his agent through kagent, prints its reply
   local body reply
   say "Bob: ${_B}$1${_N}"
   body=$(jq -nc --arg q "$1" --arg c "$CTX" '{jsonrpc:"2.0",id:"1",method:"message/send",params:{message:{role:"user",kind:"message",messageId:(now|tostring),contextId:$c,parts:[{kind:"text",text:$q}]}}}')
-  reply=$(K exec -n kagent probe -- curl -s -m 300 http://kagent-controller.kagent:8083/api/a2a-sandboxes/sv-agents/bob-assistant/ \
+  reply=$(K exec -n kagent probe-kagent-ui -- curl -s -m 300 http://kagent-controller.kagent:8083/api/a2a-sandboxes/sv-agents/bob-assistant/ \
     -H "authorization: Bearer $BOB" -H "cookie: IdToken=$BOB_ID" -H 'content-type: application/json' -d "$body" \
     | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"')
   say "Agent: $(echo "$reply" | tr '\n' ' ' | cut -c1-240)"
@@ -109,7 +109,6 @@ if scene 4 "Bob to Alice (UMA for agents)"; then
     look "Topology: bob-assistant → u4a-adapter → Meridian's gateway → uma-pep → Alice's authorization server"
     look "Alice's lane lights up. On a first contact the call waits for her; the tour approves as her."
     ALICE=$(user_token alice-identity alice alice-portal "" alice alice-demo)
-    trap 'kill $(jobs -p) 2>/dev/null' EXIT   # user_token replaced it
     AS="https://as.$ALICE_DOMAIN"
     ( for _ in $(seq 1 45); do   # approve her next pending ask, if one comes
         fam=$(curl -s "${CA[@]}" "$AS/owner/pending" -H "authorization: Bearer $ALICE" \
