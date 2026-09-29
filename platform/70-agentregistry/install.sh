@@ -3,7 +3,7 @@
 # OSS 0.4.0 has no authentication of its own, so it sits behind S&V's SSO at
 # the kgateway edge (https://registry.sterling.lab), and it may only manage
 # kagent resources in sv-agents.
-#   enterprise: agentregistry-enterprise (native OIDC; see docs/ENTERPRISE.md)
+#   agentregistry-enterprise (native OIDC) isn't wired here; docs/ENTERPRISE.md
 . "$(dirname "$0")/../../scripts/lib.sh"
 D="$(cd "$(dirname "$0")" && pwd)"
 need_cluster

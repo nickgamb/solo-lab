@@ -4,11 +4,14 @@
 #   runtime -> pods, or Agent Substrate for SandboxAgents
 #   traces  -> otel-collector
 #   oss:        kagent 0.10.2
-#   enterprise: kagent-enterprise (see docs/ENTERPRISE.md; two tracks)
+#   enterprise: not wired yet (docs/ENTERPRISE.md)
 . "$(dirname "$0")/../../scripts/lib.sh"
 D="$(cd "$(dirname "$0")" && pwd)"
 need_cluster
 ED=$KAGENT_EDITION
+# kagent-enterprise is a different chart with its own values, OIDC and
+# management plane; this layer only knows OSS kagent (plus tools/kagent)
+[ "$ED" = oss ] || die "KAGENT_EDITION=$ED: kagent-enterprise isn't wired into this lab yet (docs/ENTERPRISE.md); use KAGENT_EDITION=oss"
 
 [ "$ED" = oss ] && lab_image "kagent-dev/kagent/controller:$KAGENT_LAB_TAG" tools/kagent/build.sh
 step "kagent $KAGENT_VERSION ($ED)"

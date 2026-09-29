@@ -14,7 +14,8 @@ A local, production-shaped lab for the [Solo.io](https://www.solo.io) AI platfor
 ambient, kgateway, agentgateway, kagent + kmcp, Agent Substrate,
 agentregistry and Keycloak, plus two lab apps: the **Observatory** (a live
 control-plane UI) and an **identity continuity** controller (IdP failover).
-Everything runs OSS; each product can switch to Solo Enterprise on its own
+Everything runs OSS. Istio, kgateway and agentgateway can each switch to
+Solo Enterprise on their own; kagent and agentregistry aren't wired for it yet
 ([docs/ENTERPRISE.md](docs/ENTERPRISE.md)).
 
 ![The whole lab in the Observatory: the edge on the left, one lane per party, external services on the right](docs/images/observatory-export-topology-all.jpg)
@@ -79,7 +80,7 @@ a rebuild after `make down` is much faster than the first.
 
 What it leaves running in Docker: pull-through mirrors for each upstream
 registry (`lab-mirror-*`), a push registry for lab-built images
-(`lab-registry`, `localhost:5001`), `lab-dns` (answers `*.lab` on port
+(`lab-registry`, `localhost:5001` unless `LAB_REGISTRY_PORT` says otherwise), `lab-dns` (answers `*.lab` on port
 15353), `cloud-provider-kind`, and the kind nodes (one control plane, three
 workers in zones a, b and c). The full lab uses about 17 GB of memory.
 
@@ -91,11 +92,23 @@ workers in zones a, b and c). The full lab uses about 17 GB of memory.
 | --- | --- | --- |
 | https://observatory.ops.lab | Observatory: topology, traffic, identity continuity | `ops` / `ops-demo` |
 | https://kagent.sterling.lab | kagent, where Bob's agents run | `bob` / `bob-demo` (or Bob's upstream IdP account) |
-| https://registry.sterling.lab | agentregistry | S&V sign-in |
+| https://registry.sterling.lab | agentregistry | `bob` / `bob-demo` (S&V sign-in) |
 | https://portal.alice.lab | Alice's portal (her grants and terms) | `alice` / `alice-demo` |
 | https://grafana.ops.lab | Grafana | `ops` / `ops-demo` |
 | https://kiali.ops.lab | Kiali mesh graph (view-only) | `ops` / `ops-demo` |
 | https://idp.sterling.lab/realms/sterling-vance/account | S&V Keycloak: a user's own account | `bob` / `bob-demo` |
+
+APIs on the edge, for agents and the checks rather than browsers:
+`https://as.alice.lab` (Alice's authorization server), `https://gateway.meridian.lab/mcp`
+(Meridian's MCP gateway; UMA-protected), `https://mcp.ledgerline.lab/mcp`
+(Ledgerline Research; needs a Ledgerline token), and each party's issuer,
+`https://idp.<party>.lab/realms/<realm>` (`sterling-vance`, `alice`,
+`ledgerline`, `ops`).
+
+Demo accounts: `bob` (S&V, group `advisors`), `ops` (S&V and realm `ops`,
+group `platform-admins` / `observatory-admins`), `alice` (her own realm). No
+user is in S&V's `compliance` group, which the `export_book` tool needs; add
+one in S&V's Keycloak to try it.
 
 Generated secrets (Keycloak admin passwords, client secrets) are in
 `.lab/secrets.env`, created on first install and gitignored. The edge publishes
@@ -109,7 +122,7 @@ Open it in a browser (`open docs/cards/<card>.html` on macOS, `xdg-open` on Linu
 
 | Card | Shows | Checks |
 | --- | --- | --- |
-| [Bob](docs/cards/bob.html) | Bob's agent acts for Bob: RFC 8693 delegation at the MCP waypoint, per-tool policy, human approval for writes, Cross App Access (ID-JAG) to a SaaS | `make bob-verify` |
+| [Bob](docs/cards/bob.html) | Bob's agent acts for Bob: RFC 8693 token exchange at the MCP waypoint, per-tool policy, human approval for writes, Cross App Access (ID-JAG) to a SaaS | `make bob-verify` |
 | [Bob to Alice](docs/cards/bob-to-alice.html) | the same agent asks Alice for her data on her terms (UMA for agents) | `make alice-verify` |
 | [Observatory tour](docs/cards/observatory.html) | every story end to end from one command, watched live: the agent waking, verified tokens per hop, refusals, Alice's terms, an IdP outage | `make tour` |
 | [Identity continuity](docs/cards/identity-continuity.html) | a real network outage of the upstream IdP, automatic failover to local accounts, and failback, live in the Observatory | `make continuity-verify` |
@@ -120,8 +133,9 @@ demo needs an Auth0 tenant (free tier is enough):
 
 ## Observatory
 
-A single pane of glass over the running lab, built from the cluster at
-runtime, so a different lab renders the same way.
+A live view of the running lab (topology, traffic with the tokens each hop
+verified, identity continuity), built from the cluster at runtime, so a
+different lab renders the same way.
 
 - **Topology:** every workload by zone and call stage, live traffic on the
   wires, a details panel per node with its live YAML (edit and apply), four
@@ -159,7 +173,7 @@ count, host ports, party domains, registry port; `config/oss.env` and
 
 | Target | Does |
 | --- | --- |
-| `machine-setup` | one-time: `*.lab` resolver and lab CA trust (one sudo) |
+| `machine-setup` | once per machine, sudo: `*.lab` DNS and trust in the lab CA (macOS, Linux, WSL2) |
 | `up` | `cluster` then `platform` |
 | `cluster` | kind cluster, registry caches, cloud-provider-kind, lab DNS |
 | `platform` | every layer under `platform/` in order |
@@ -170,6 +184,7 @@ count, host ports, party domains, registry port; `config/oss.env` and
 | `llm` | switch the model: `make llm LLM_PROVIDER=anthropic` |
 | `status` | pods, the active sign-in tier, URLs |
 | `preflight` | tools, Docker resources, Ollama |
+| `help` | every target, with its one-line description |
 | `down` | delete the cluster (keeps caches and the CA) |
 | `nuke` | delete the cluster and every `lab-*` container and volume: registry caches, the local registry with every image built into it, lab DNS (`make up` recreates them) |
 
@@ -177,30 +192,32 @@ count, host ports, party domains, registry port; `config/oss.env` and
 
 ```
 config/          lab shape (lab.env) and edition pins (oss.env, enterprise.env)
-scripts/         cluster lifecycle, DNS, CA, helpers (lib.sh), status, reset, llm
+scripts/         cluster lifecycle, DNS, CA, machine setup, preflight, helpers (lib.sh),
+                 status, reset, llm, tour
 platform/NN-*/   one install.sh per layer, applied in order by make platform
 demos/           each story: install.sh, verify.sh, manifests, agents, tools
 apps/observatory Observatory: Go server (server/) and React UI (web/)
 apps/continuity  IdentityContinuity CRD and controller
-tools/           patched upstream builds (kagent, Substrate, Keycloak), toolbox image
-docs/            architecture, per-app docs, gotchas, demo cards
+tools/           patched upstream builds (kagent, Substrate, Keycloak), the probe
+                 toolbox image and mcp-probe.py (MCP calls from a pod, for the checks)
+docs/            architecture, per-app docs, commands, demo cards, images and videos
 ```
 
 Layers:
 
 | Layer | Installs |
 | --- | --- |
-| `00-foundation` | Gateway API, metrics-server, cert-manager, trust-manager, lab CA, namespaces |
+| `00-foundation` | Gateway API, metrics-server, cert-manager, trust-manager, lab CA, namespaces, CoreDNS `*.lab` → edge |
 | `10-istio` | Istio ambient: base, istiod, istio-cni, ztunnel |
 | `20-observability` | kube-prometheus-stack, Tempo, OTel collector, Kiali |
 | `30-kgateway` | the edge: per-party TLS listeners on NodePorts 30080/30443 |
 | `40-agentgateway` | ai-gateway: LLM backend, MCP, A2A |
-| `45-identity` | S&V Keycloak and the client secrets S&V components use |
+| `45-identity` | S&V's mesh baseline, S&V Keycloak and the client secrets S&V components use |
 | `47-continuity` | IdentityContinuity CRD and controller, S&V egress waypoint |
 | `50-substrate` | Agent Substrate (patched), in the mesh |
 | `60-kagent` | kagent + kmcp (patched), ops agents on Substrate, edge SSO |
 | `70-agentregistry` | agentregistry behind S&V SSO |
-| `80-mesh-policy` | S&V's mesh baseline |
+| `80-mesh-policy` | S&V's mesh baseline, re-applied, and its egress fences |
 | `90-observatory` | Observatory, its Keycloak (realm `ops`), Grafana and Kiali on the edge behind it, gateway access logs |
 | `95-demos` | every story: `demos/bob`, then `demos/bob-to-alice` |
 
@@ -210,7 +227,7 @@ Layers:
 | --- | --- |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | parties, workloads and identities, enforcement layers, DNS and TLS, patches |
 | [COMMANDS.md](docs/COMMANDS.md) | terminal commands for every part of the running lab: cluster, mesh, gateways, identity, agents, observability |
-| [IDENTITY-FLOWS.md](docs/IDENTITY-FLOWS.md) | delegation (RFC 8693), Cross App Access (ID-JAG), UMA for agents: every hop, policy and check |
+| [IDENTITY-FLOWS.md](docs/IDENTITY-FLOWS.md) | acting for a user (RFC 8693 token exchange), Cross App Access (ID-JAG), UMA for agents: every hop, policy and check |
 | [OBSERVATORY.md](docs/OBSERVATORY.md) | using the Observatory, how it derives the map, access model, local development |
 | [IDENTITY-CONTINUITY.md](docs/IDENTITY-CONTINUITY.md) | the IdentityContinuity API, the controller, Auth0 setup, the kill switch |
 | [ENTERPRISE.md](docs/ENTERPRISE.md) | switching products to Solo Enterprise |
