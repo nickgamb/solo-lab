@@ -45,9 +45,9 @@ r=$(ask_with_alice approved "What is in Alice's portfolio? Use get_positions.")
 expect '^connection/tier1 .*VTI' "held for Alice, approved, holdings returned" "$r"
 
 step "Tier 2: transactions. A new tier asks again, then her terms cover it"
-r=$(ask_with_alice approved "Show Alice's transaction history. Use get_transactions.")
+r=$(ask_with_alice approved "Show Alice's transaction history. Use get_transactions with no account argument.")
 expect 'tier2.*(buy|sell|dividend|VTI|AAPL)' "held at a new tier, approved, history returned" "$r"
-r=$(ask_bob "Show Alice's transaction history again. Use get_transactions.")
+r=$(ask_bob "Show Alice's transaction history again. Use get_transactions with no account argument.")
 expect '(buy|sell|dividend|VTI|AAPL)' "same ask again: through on her standing terms" "$r"
 
 step "Tier 3: a trade always asks, and she can say no"
