@@ -44,6 +44,13 @@ Bob's workspace (`sv-mcp/bob-workspace`, a kmcp server) never sees Bob's
 token. The waypoint in front of it verifies Bob and the agent, then swaps
 Bob's token for one only the workspace accepts, for two minutes.
 
+In RFC 8693's terms the swap is *impersonation*, not delegation: the
+waypoint sends only a subject token (Bob's), so the new token names Bob and
+has no `act` claim for the agent. Which agent is calling is established by
+the mesh (the worker pool's SPIFFE ID, checked at the waypoint), not
+recorded in the token. Keycloak's standard token exchange doesn't take an
+actor token yet; with one, the token would carry `act: {sub: <agent>}`.
+
 ```mermaid
 sequenceDiagram
   participant A as Bob's agent (sv-agents)
@@ -73,7 +80,8 @@ sequenceDiagram
     Bob's token is refused.
   - Per-tool CEL: advisors get `whoami`, `list_clients`, `get_client`,
     `get_meeting_notes`, `log_followup`. `export_book` needs group
-    `compliance`, and a tool the caller may not use is removed from
+    `compliance` (no user in the lab is in it; add one in S&V's Keycloak to
+    try it), and a tool the caller may not use is removed from
     `tools/list`, so the agent is never shown it.
   - Backend auth: `oauthTokenExchange` against S&V's Keycloak as client
     `mcp-waypoint`, with subject `jwt.rawToken.unredacted()`, audience
@@ -136,8 +144,11 @@ sequenceDiagram
     The gateway only reads the ID token's subject; S&V's Keycloak verifies
     its signature when it exchanges it, and issues an ID-JAG only for an ID
     token issued to `kagent`.
-  - Backend auth `crossAppAccess`: subject from header `x-id-token`, type
-    ID token; scopes `xaa-ledgerline research:read`; `accessTokenScopes: []`
+  - Backend auth `crossAppAccess`, authenticating to S&V's Keycloak as
+    client `kagent` (Secret `agentgateway-system/kagent-client`): in Cross
+    App Access the requesting app is the one Bob signed into, and Keycloak
+    issues an ID-JAG only for an ID token issued to that client. Subject from
+    header `x-id-token`, type ID token; scopes `xaa-ledgerline research:read`; `accessTokenScopes: []`
     so those scopes aren't sent on to Ledgerline.
   - The agent's tool (`RemoteMCPServer ledgerline-research`) points at
     `ai-gateway/xaa/ledgerline/mcp` and lists `x-id-token` in
@@ -223,7 +234,10 @@ sequenceDiagram
   - S&V: `sv-u4a/u4a-adapter`, the UMA client. It holds the agent's Ed25519
     key (a fresh one per pod, so the agent is pseudonymous to Alice) and runs
     ticket, terms, agreement, and RPT for the agent. Only Bob's agent and the
-    kagent controller can reach it.
+    kagent controller can reach it. It agrees to Alice's terms on the agent's
+    behalf by itself, within `UMA4A_STANDING_MAX_EXPIRES` (7 days): no person
+    at S&V signs each agreement, and it doesn't know which user a call is
+    for ([ARCHITECTURE.md](ARCHITECTURE.md#what-the-lab-doesnt-enforce)).
   - Meridian: its gateway (agentgateway), `uma-pep` (ext-auth: challenges,
     introspection, proof-of-possession checks, tool-to-resource scoping,
     single-use consumption) and `alice-vault` (a stock MCP server with no
@@ -275,6 +289,9 @@ new agent key, so the next run starts as a first contact.
 | --- | --- | --- |
 | `tools/kagent` 0001 | Cross App Access | forwards the user's ID token to agents, bound to that user |
 | `tools/kagent` 0002 | all three | Substrate actors call the kagent controller back with the caller's credential (they have no ServiceAccount token) |
+| `tools/kagent` 0003 | writes that wait for approval, UMA holds | a turn sent as the last one closes (after a human approval) no longer races the actor's suspend |
+| `tools/substrate-mesh` 0001, 0002 | all three | a worker pool runs as its agent's ServiceAccount, so the agent's calls carry that SPIFFE ID (which the waypoint, ai-gateway and the adapter check), and only serves its own namespace |
+| `tools/substrate-mesh` 0003 | all three | actors work under the mesh's in-pod traffic capture |
 | `tools/keycloak-idjag` | Cross App Access | ID-JAG issuing (keycloak/keycloak#49998) |
 
 ## Seeing them in the Observatory

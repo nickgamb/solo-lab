@@ -1,7 +1,7 @@
 # Data-plane shape for the edge: 2-4 Envoy replicas across zones, PDB, and
 # pinned NodePorts (kind maps 127.0.0.1:${LAB_HTTP_PORT} -> 30080).
 # Without infrastructure.parametersRef kgateway ignores GatewayParameters and
-# provisions a LoadBalancer on random nodePorts (uma4agents gotcha).
+# provisions a LoadBalancer on random nodePorts.
 apiVersion: gateway.kgateway.dev/v1alpha1
 kind: GatewayParameters
 metadata:

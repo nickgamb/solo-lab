@@ -5,8 +5,8 @@
 # model), and where it went. Raw tokens are never logged.
 #
 # agentgateway: S&V's ai-gateway and MCP waypoint, and Meridian's gateway.
-apiVersion: agentgateway.dev/v1alpha1
-kind: AgentgatewayPolicy
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
 metadata: {name: access-log, namespace: agentgateway-system}
 spec:
   targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: ai-gateway}]
@@ -26,8 +26,8 @@ spec:
         backendRef: {kind: Service, name: otel-collector, namespace: observability, port: 14318}
         protocol: HTTP
 ---
-apiVersion: agentgateway.dev/v1alpha1
-kind: AgentgatewayPolicy
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
 metadata: {name: access-log, namespace: sv-mcp}
 spec:
   targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: mcp-waypoint}]
@@ -47,8 +47,8 @@ spec:
         backendRef: {kind: Service, name: otel-collector, namespace: observability, port: 14318}
         protocol: HTTP
 ---
-apiVersion: agentgateway.dev/v1alpha1
-kind: AgentgatewayPolicy
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
 metadata: {name: access-log, namespace: meridian}
 spec:
   targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: meridian}]
@@ -101,7 +101,7 @@ metadata: {name: edge-access-log, namespace: observability}
 spec:
   from:
   - {group: gateway.kgateway.dev, kind: ListenerPolicy, namespace: kgateway-system}
-  - {group: agentgateway.dev, kind: AgentgatewayPolicy, namespace: agentgateway-system}
-  - {group: agentgateway.dev, kind: AgentgatewayPolicy, namespace: sv-mcp}
-  - {group: agentgateway.dev, kind: AgentgatewayPolicy, namespace: meridian}
+  - {group: ${AGW_POLICY_GROUP}, kind: ${AGW_POLICY_KIND}, namespace: agentgateway-system}
+  - {group: ${AGW_POLICY_GROUP}, kind: ${AGW_POLICY_KIND}, namespace: sv-mcp}
+  - {group: ${AGW_POLICY_GROUP}, kind: ${AGW_POLICY_KIND}, namespace: meridian}
   to: [{group: "", kind: Service, name: otel-collector}]
