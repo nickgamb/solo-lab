@@ -1,0 +1,23 @@
+# Ledgerline's IdP: mTLS only, and only the callers with business here: the
+# edge (browsers; S&V's egress gateway exchanging an ID-JAG, which arrives
+# through the edge like any other company's call), Ledgerline's MCP server
+# (its token-signing keys), and Prometheus (metrics port).
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: strict, namespace: ledgerline-identity}
+spec: {mtls: {mode: STRICT}}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: keycloak-callers, namespace: ledgerline-identity}
+spec:
+  selector: {matchLabels: {app: keycloak}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/kgateway-system/sa/edge
+        - cluster.local/ns/ledgerline/sa/ledgerline-research
+  - from: [{source: {principals: [cluster.local/ns/observability/sa/kps-prometheus]}}]
+    to: [{operation: {ports: ["9000"]}}]

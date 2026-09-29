@@ -60,14 +60,16 @@ spec:
       group: ${AGW_PARAMS_GROUP}
       kind: ${AGW_PARAMS_KIND}
       name: ai-gateway
+  # Only routes the firm puts next to its gateway: a route from any other
+  # namespace would receive the firm's agents' calls, tokens and all.
   listeners:
   - name: mesh
     protocol: HBONE
     port: 15008
     allowedRoutes:
-      namespaces: {from: All}
+      namespaces: {from: Same}
   - name: http
     protocol: HTTP
     port: 80
     allowedRoutes:
-      namespaces: {from: All}
+      namespaces: {from: Same}

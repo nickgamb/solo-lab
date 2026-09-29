@@ -62,9 +62,19 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 	ping := time.NewTicker(15 * time.Second)
 	defer ping.Stop()
+	// the stream lives no longer than the token that opened it; the browser
+	// reconnects through the edge, which refreshes the session or signs in again
+	var expired <-chan time.Time
+	if u := userFrom(r.Context()); !u.Expiry.IsZero() {
+		t := time.NewTimer(time.Until(u.Expiry))
+		defer t.Stop()
+		expired = t.C
+	}
 	for {
 		select {
 		case <-r.Context().Done():
+			return
+		case <-expired:
 			return
 		case m := <-c:
 			w.Write(m)

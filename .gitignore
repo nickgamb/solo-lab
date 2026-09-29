@@ -7,3 +7,4 @@ node_modules/
 # screen recordings: the README GIF is committed; the full video is on YouTube
 docs/videos/*.mov
 docs/videos/*.mp4
+__pycache__/

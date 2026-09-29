@@ -49,10 +49,11 @@ sequenceDiagram
   participant K as S&V Keycloak
   participant T as bob-workspace
   A->>W: tools/call, Authorization: Bob's access token (HBONE, SPIFFE ID of the agent)
-  W->>W: verify JWT (aud mcp-waypoint), agent in sv-agents, Bob in advisors, tool allowed
+  W->>W: verify JWT (aud mcp-waypoint), caller is an agent's pool, Bob in advisors, tool allowed
   W->>K: token exchange (RFC 8693) as client mcp-waypoint, subject = Bob's token
   K-->>W: token for Bob, aud bob-workspace, 120 s
   W->>T: tools/call, Authorization: the exchanged token (Bob's own token removed)
+  T->>K: JWKS (cached): verify the exchanged token's signature, issuer, audience, expiry
   T-->>A: result, acting for bob
 ```
 
@@ -64,7 +65,10 @@ sequenceDiagram
   `demos/bob/manifests/20-waypoint.yaml`:
   - JWT, strict: issuer `https://idp.sterling.lab/realms/sterling-vance`,
     audience `mcp-waypoint`.
-  - Authorization: `source.identity.namespace == "sv-agents" && "advisors" in jwt.groups`.
+  - Authorization: the caller is an agent's worker pool, named by
+    ServiceAccount (`bob-assistant` or `advisor-desk` in `sv-agents`), and
+    `"advisors" in jwt.groups`. Another workload in `sv-agents` holding
+    Bob's token is refused.
   - Per-tool CEL: advisors get `whoami`, `list_clients`, `get_client`,
     `get_meeting_notes`, `log_followup`. `export_book` needs group
     `compliance`, and a tool the caller may not use is removed from
@@ -72,9 +76,14 @@ sequenceDiagram
   - Backend auth: `oauthTokenExchange` against S&V's Keycloak as client
     `mcp-waypoint`, with subject `jwt.rawToken.unredacted()`, audience
     `bob-workspace`. The client's token lifespan is 120 s.
+  - The workspace verifies that token itself (signature against S&V's JWKS,
+    issuer, audience `bob-workspace`, expiry) before any tool runs, so a
+    forged or replayed token is refused even if something reached the pod.
 - **Discovery lane** (no token): only the kagent controller's SPIFFE ID, so
-  the UI can list tools. Same tool filter, no exchange. A call on this lane
-  has no delegated token and the workspace refuses it.
+  the UI can list tools. Same tool filter, no exchange, and the route strips
+  `Authorization` and `X-Id-Token`, so nothing that looks like a credential
+  reaches the workspace on it. A tool call here has no delegated token and
+  the workspace refuses it.
 - **Writes wait for Bob.** `log_followup` is in the agent's
   `requireApproval`, so the agent pauses for his approval in the chat. The
   entry records the user (`bob`) and the party that carried it out
@@ -88,6 +97,7 @@ Checks (`make bob-verify`, from real pods with their own identities):
 | `export_book` as an advisor | not in the list; refused |
 | an S&V agent workload with no user token | refused (discovery lane is controller-only) |
 | Bob's token from another namespace (`observability`) | refused |
+| Bob's token from a workload in `sv-agents` that isn't an agent's pool | refused |
 | Bob's token sent straight to a workspace pod IP | refused (the pod only accepts the waypoint) |
 
 ## 2. Cross App Access (ID-JAG) to a SaaS
@@ -106,7 +116,7 @@ sequenceDiagram
   participant L as Ledgerline Keycloak (resource AS)
   participant R as ledgerline-research (behind Ledgerline's waypoint)
   A->>G: tools/call /xaa/ledgerline/mcp, Authorization: access token, X-Id-Token: ID token
-  G->>G: verify JWT (aud ai-gateway), agent in sv-agents, Bob in advisors, ID token present
+  G->>G: verify JWT (aud ai-gateway), caller is an agent's pool, Bob in advisors, ID token for the same user
   G->>K: token exchange as client kagent: subject = Bob's ID token, requested type ID-JAG, audience = Ledgerline's issuer
   K-->>G: ID-JAG for Bob, for this connection only
   G->>L: JWT authorization grant (RFC 7523) as client sterling-vance-kagent, assertion = ID-JAG
@@ -117,8 +127,13 @@ sequenceDiagram
 
 - **Requesting side** (`demos/bob/manifests/40-xaa-ledgerline.yaml`):
   - Route `xaa-ledgerline` on ai-gateway, matched only with a bearer token.
-  - JWT, strict, audience `ai-gateway`. Authorization:
-    `source.identity.namespace == "sv-agents" && "advisors" in jwt.groups && "x-id-token" in request.headers`.
+  - JWT, strict, audience `ai-gateway`. Authorization: the caller is an
+    agent's worker pool (by ServiceAccount), `"advisors" in jwt.groups`, and
+    an `x-id-token` whose subject is the access token's
+    (`unvalidatedJwtPayload(request.headers["x-id-token"]).sub == jwt.sub`).
+    The gateway only reads the ID token's subject; S&V's Keycloak verifies
+    its signature when it exchanges it, and issues an ID-JAG only for an ID
+    token issued to `kagent`.
   - Backend auth `crossAppAccess`: subject from header `x-id-token`, type
     ID token; scopes `xaa-ledgerline research:read`; `accessTokenScopes: []`
     so those scopes aren't sent on to Ledgerline.
@@ -149,10 +164,11 @@ sequenceDiagram
 - **Resource server** (`demos/bob/ledgerline/research.yaml`): a standard Istio
   waypoint, not an AI gateway. It accepts tokens from Ledgerline's issuer
   only, with audience `ledgerline-research`, and only from the edge. The tool
-  catalog is public; every tool call needs a Ledgerline token.
+  catalog is public; every tool call needs a Ledgerline token, which the
+  server verifies again against Ledgerline's JWKS.
 - **Discovery lane:** the kagent controller's SPIFFE ID may list Ledgerline's
-  public catalog through `/xaa/ledgerline` without a user. It can never get
-  a Ledgerline token.
+  public catalog through `/xaa/ledgerline` without a user. The route strips
+  `Authorization` and `X-Id-Token`, and it can never get a Ledgerline token.
 
 Checks (`make bob-verify`):
 
@@ -162,6 +178,7 @@ Checks (`make bob-verify`):
 | `sector_outlook` through XAA | result |
 | no ID token | refused at the egress gateway |
 | right tokens, wrong workload (`observability`) | refused |
+| Bob's access token with another user's ID token | refused at the egress gateway |
 | Bob's S&V token sent straight to `mcp.ledgerline.lab` | refused by Ledgerline |
 
 ## 3. UMA for agents (Bob to Alice)

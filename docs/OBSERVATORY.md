@@ -133,6 +133,17 @@ The browser gets everything over one Server-Sent Events stream (`/api/stream`:
 
 ## Access model
 
+- The edge signs the admin in (realm `ops`) and forwards the access token.
+  The server verifies it again: signature, issuer, audience `observatory`,
+  issued to the edge's client (`azp`), an access token (`typ: Bearer`, not an
+  ID token), and group `observatory-admins`. The live stream closes when that
+  token expires; the browser reconnects through the edge, which refreshes
+  the session or asks the admin to sign in again.
+- Writes must come from the Observatory's own page: a request another site
+  sends with the admin's session cookie is refused (`Sec-Fetch-Site` and
+  `Origin`), and a write needs a JSON or YAML body, which a plain HTML form
+  can't send. Every response carries a Content-Security-Policy that loads
+  only the Observatory's own code and forbids framing.
 - The server runs as ServiceAccount `observatory` with ClusterRole
   `observatory-read`: read the lab's resources (no Secrets), and impersonate
   exactly one identity.
@@ -151,7 +162,9 @@ The browser gets everything over one Server-Sent Events stream (`/api/stream`:
 
 - `platform/90-observatory/telemetry.yaml`: access-log policies on ai-gateway,
   the S&V MCP waypoint and Meridian's gateway (agentgateway), and on the edge
-  (kgateway ListenerPolicy), all to the OTel collector.
+  (kgateway ListenerPolicy), all to the OTel collector. agentgateway sends to
+  the collector's Service as a backend, so the export carries the gateway's
+  mesh identity, which the collector's policy requires.
 - `platform/20-observability/otel-collector.yaml`: the collector's logs
   pipeline (`k8sattributes`) exports to `observatory.observatory.svc:4318`.
 
@@ -162,6 +175,7 @@ The browser gets everything over one Server-Sent Events stream (`/api/stream`:
 | `OIDC_ISSUER` | | issuer of admin tokens |
 | `OIDC_JWKS_URL` | | JWKS the server verifies against (the Keycloak Service, in-cluster) |
 | `OIDC_AUDIENCE` | `observatory` | required audience |
+| `OIDC_CLIENT_ID` | `observatory` | required `azp`: the client the edge signs in with |
 | `ADMIN_GROUP` | `observatory-admins` | required group |
 | `PROMETHEUS_URL` | | Prometheus for mesh edges and L4 rates (optional) |
 | `KAGENT_URL` | | kagent controller for Substrate status (optional) |

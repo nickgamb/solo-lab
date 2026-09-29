@@ -29,8 +29,10 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | --- | --- | --- | --- | --- |
 | `kgateway-system` | edge (kgateway/Envoy) | `edge` | platform | laptop (NodePort 30080/30443) |
 | `observatory` | Observatory (reads the cluster; writes only by impersonating the signed-in admin) | `observatory` | platform | edge (UI/API); otel-collector (OTLP logs); `ops-identity` Keycloak |
-| `ops-identity` | Keycloak `ops` (platform admins, for the Observatory) | `keycloak` | platform | edge; the Observatory (JWKS) |
-| `sv-identity` | Keycloak `sterling-vance` | `keycloak` | S&V | edge; S&V gateways/apps (JWKS, token exchange); continuity-controller (admin API) |
+| `ops-identity` | Keycloak `ops` (platform admins, for the Observatory) | `keycloak` | platform | edge (the realm only); the Observatory (JWKS) |
+| `observability` | otel-collector, Prometheus, Tempo, Grafana | one SA per component | platform | collector: the components that report telemetry, by ServiceAccount; Prometheus: the collector, Tempo, Grafana, Kiali, the Observatory; Tempo: the collector, Grafana, Kiali; Grafana: edge (after sign-in), Kiali, Prometheus |
+| `kiali` | Kiali (view-only) | `kiali` | platform | edge (after sign-in); Prometheus (metrics) |
+| `sv-identity` | Keycloak `sterling-vance` | `keycloak` | S&V | edge (the realm only); S&V gateways/apps and `bob-workspace` (JWKS, token exchange); continuity-controller (admin API) |
 | `sv-identity` | `continuity-controller` (2 replicas, leader-elected) | `continuity-controller` | S&V | nobody (calls out only) |
 | `sv-egress` | `egress-waypoint` (Istio waypoint for external upstream IdPs) | `egress-waypoint` | S&V | Keycloak and continuity-controller only |
 | `kagent` | controller, UI, oauth2-proxy, tools | `kagent-*` | S&V | edge → oauth2-proxy → UI → controller |
@@ -40,11 +42,11 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | `agentregistry` | agentregistry | `agentregistry` | S&V | edge via ai-gateway (JWT required); kagent controller |
 | `sv-agents` | `bob-assistant`: SandboxAgent on pool `bob-assistant` | `bob-assistant` | S&V / Bob | atenet-router only (kagent controller → ate-api → router) |
 | `sv-agents` | advisor desk (meeting-prep, market-brief, compliance-check): SandboxAgents on pool `advisor-desk` | `advisor-desk` | S&V | atenet-router only |
-| `sv-mcp` | `bob-workspace` (kmcp) | `bob-workspace` | S&V / Bob | **mcp-waypoint only** (the workspace also checks the delegated token) |
+| `sv-mcp` | `bob-workspace` (kmcp) | `bob-workspace` | S&V / Bob | **mcp-waypoint only** (the workspace verifies the delegated token's signature too) |
 | `sv-mcp` | `mcp-waypoint` (agentgateway as the namespace's waypoint) | `mcp-waypoint` | S&V | every caller of S&V tools, via ztunnel |
 | `sv-u4a` | `u4a-adapter` (UMA client: holds Bob's agent's key) | `u4a-adapter` | S&V / Bob | Bob's agent and the kagent controller only |
-| `ledgerline-identity` | Keycloak `ledgerline` (ID-JAG receiver) | `keycloak` | Ledgerline | edge |
-| `ledgerline` | `ledgerline-research` (kmcp) behind an Istio waypoint | `ledgerline-research` | Ledgerline | edge (Ledgerline token for calls) |
+| `ledgerline-identity` | Keycloak `ledgerline` (ID-JAG receiver) | `keycloak` | Ledgerline | edge (the realm only); `ledgerline-research` (JWKS) |
+| `ledgerline` | `ledgerline-research` (kmcp) behind an Istio waypoint | `ledgerline-research` | Ledgerline | edge (Ledgerline token for calls, verified again by the server) |
 | `alice-identity` | Keycloak `alice` | `keycloak` | Alice | edge; `alice/uma-as` (JWKS) |
 | `alice` | uma-as (Alice's AS) | `uma-as` | Alice | edge (grant surface); `meridian/uma-pep` (protection API); portal (owner API) |
 | `alice` | alice-portal | `portal` | Alice | edge |
@@ -72,11 +74,17 @@ as kagent controller → atenet-router → worker, each hop mTLS.
    becomes a deny.
 3. **Gateways (L7, per request).**
    - Edge ([kgateway](https://docs.solo.io/kgateway/)): TLS, one listener per party hostname, and each
-     listener only accepts routes from that party's namespaces.
+     listener only accepts routes from that party's namespaces. On each
+     `idp.<party>.lab` it publishes only the party's realm
+     (`/realms/<realm>`) and the login pages' assets (`/resources`): the
+     admin console, admin API and `master` realm answer 404, and admins use a
+     port-forward.
    - ai-gateway ([agentgateway](https://docs.solo.io/agentgateway/), S&V): JWT validation against S&V's Keycloak,
      per-tool MCP authorization in CEL, RFC 8693 token exchange / ID-JAG
      toward tools, provider credentials for LLMs. The model route admits only
-     the agents' worker pools, by ServiceAccount.
+     the agents' worker pools, by ServiceAccount. Its listeners take routes
+     only from `agentgateway-system`, so no other namespace can publish a
+     path on it.
    - meridian gateway (agentgateway, Meridian): ext-auth to uma-pep, which
      enforces Alice's terms (UMA tickets, PoP RPTs, single-use grants).
 
@@ -112,8 +120,39 @@ Observatory. Prometheus also scrapes ztunnel, waypoints and gateways, which is
 where the Observatory's observed edges come from. Kiali (view-only) and
 Grafana sit on the edge behind the platform admins' sign-in (realm `ops`), and
 take connections only from the edge. They read the
-same data. The Observatory derives its map from the cluster's own objects;
+same data.
+
+What the collector receives is what the Observatory shows, so it takes OTLP
+only from the ServiceAccounts that report telemetry
+(`platform/20-observability/mesh-policy.yaml`). agentgateway exports its
+access logs to the collector's Service as a backend (not a URL), so they
+leave over the mesh with the gateway's own identity. Prometheus, Tempo and
+kube-state-metrics are fenced the same way. Kiali runs in its own `kiali`
+namespace, in the mesh: istio-cni excludes `istio-system`, so a workload there
+has no identity to be named by. The Observatory derives its map from the cluster's own objects;
 see [OBSERVATORY.md](OBSERVATORY.md).
+
+## What the lab doesn't enforce
+
+Known gaps, kept on purpose or pending upstream work:
+
+- **Alice's portal reads her vault directly.** `meridian/alice-vault` admits
+  `alice/portal` as well as Meridian's gateway, so the portal shows Alice
+  her own holdings without an UMA grant. Agents only reach the vault through
+  the gateway and Alice's terms.
+- **The UMA adapter signs for any caller it admits.** `sv-u4a/u4a-adapter`
+  holds Bob's agent's key and takes calls from Bob's agent's pool and the
+  kagent controller (tool listing). It doesn't know which user a call is
+  for, and a standing grant from Alice lasts up to 7 days
+  (`UMA4A_STANDING_MAX_EXPIRES`).
+- **Any namespace can get a lab CA certificate.** The `lab-ca` ClusterIssuer
+  signs any `.lab` name for any cert-manager Certificate. In production,
+  bind names to namespaces with cert-manager's approver-policy.
+- **The password grant is on** for `kagent` (S&V) and `alice-portal`
+  (Alice), so the scripted checks can sign in as Bob and Alice. People sign in
+  through the browser either way. `LAB_PASSWORD_GRANT=false` in
+  `config/lab.env` turns it off. Every realm locks an account for a while
+  after 10 wrong passwords.
 
 ## Naming and DNS
 
