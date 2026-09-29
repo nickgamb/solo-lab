@@ -5,7 +5,7 @@ run on. Each party gets its own namespaces, its own service accounts (so its
 own SPIFFE identities), its own IdP where the story needs one, and its own
 hostnames. Parties never talk pod-to-pod: they meet at the **edge**, the way
 separate companies meet on the internet. That is enforced by mesh identity,
-not by convention.
+not by convention ([zero trust](https://www.solo.io/topics/security-and-compliance/zero-trust)).
 
 | Party | Role in the stories | Domain | Namespaces |
 | --- | --- | --- | --- |
@@ -36,7 +36,7 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | `kagent` | controller, UI, oauth2-proxy, tools | `kagent-*` | S&V | edge → oauth2-proxy → UI → controller |
 | `kagent` | ops agents (k8s, istio, helm, promql, kgateway): SandboxAgents on pool `kagent-ops` | `kagent-ops` | S&V | atenet-router only |
 | `ate-system` | Agent Substrate: ate-api, atenet-router, atelet, ate-controller, valkey, rustfs | one SA per component | platform | ate-api and router: kagent controller only (ate-api also the Observatory); the rest: `ate-system` only |
-| `agentgateway-system` | ai-gateway (LLM + MCP) | `ai-gateway` | S&V | S&V agents; edge (`ai.sterling.lab`, JWT required) |
+| `agentgateway-system` | ai-gateway (LLM + MCP) | `ai-gateway` | S&V | the agents' worker pools, by ServiceAccount (models, Cross App Access); the kagent controller (Ledgerline's public catalog) |
 | `agentregistry` | agentregistry | `agentregistry` | S&V | edge via ai-gateway (JWT required); kagent controller |
 | `sv-agents` | `bob-assistant`: SandboxAgent on pool `bob-assistant` | `bob-assistant` | S&V / Bob | atenet-router only (kagent controller → ate-api → router) |
 | `sv-agents` | advisor desk (meeting-prep, market-brief, compliance-check): SandboxAgents on pool `advisor-desk` | `advisor-desk` | S&V | atenet-router only |
@@ -61,21 +61,30 @@ as kagent controller → atenet-router → worker, each hop mTLS.
 
 ## Enforcement layers
 
-1. **ztunnel (L4, every pod).** Mesh-wide STRICT mTLS. Each party namespace
-   is default-deny; ALLOW rules name SPIFFE principals from the table above.
+1. **ztunnel (L4, every pod, [Istio ambient](https://docs.solo.io/istio/)).** STRICT mTLS in the party
+   namespaces; ALLOW rules name SPIFFE principals from the table above, and
+   a workload no ALLOW names takes no connections (`kagent` has an explicit
+   `default-deny`).
 2. **Waypoints (L7, per party namespace).** `sv-mcp`, `alice`, `meridian`
    and the identity namespaces each run a waypoint (`istio.io/waypoint-for:
    all`). Path- and JWT-based rules live there and bind with `targetRefs`,
    never `selector`: a selector policy with L7 attributes lands on ztunnel and
    becomes a deny.
 3. **Gateways (L7, per request).**
-   - Edge (kgateway): TLS, one listener per party hostname, and each
+   - Edge ([kgateway](https://docs.solo.io/kgateway/)): TLS, one listener per party hostname, and each
      listener only accepts routes from that party's namespaces.
-   - ai-gateway (agentgateway, S&V): JWT validation against S&V's Keycloak,
+   - ai-gateway ([agentgateway](https://docs.solo.io/agentgateway/), S&V): JWT validation against S&V's Keycloak,
      per-tool MCP authorization in CEL, RFC 8693 token exchange / ID-JAG
-     toward tools, provider credentials for LLMs.
+     toward tools, provider credentials for LLMs. The model route admits only
+     the agents' worker pools, by ServiceAccount.
    - meridian gateway (agentgateway, Meridian): ext-auth to uma-pep, which
      enforces Alice's terms (UMA tickets, PoP RPTs, single-use grants).
+
+**Egress.** Every party namespace has NetworkPolicy `no-internet`: its pods
+reach the cluster and nothing else. The ways out are the gateways built for
+it: ai-gateway (models, Cross App Access) and `sv-egress/egress-waypoint`
+(upstream IdPs). Istio ambient doesn't enforce `outboundTrafficPolicy`, so the
+CNI (kindnet) does.
 
 ## Identity flows
 
@@ -100,7 +109,9 @@ policy on that ServiceEntry. Details, the API and Auth0 setup:
 Every component sends OTLP to one collector (`observability/otel-collector`):
 traces to Tempo, metrics to Prometheus, gateway access logs to the
 Observatory. Prometheus also scrapes ztunnel, waypoints and gateways, which is
-where the Observatory's observed edges come from. Kiali and Grafana read the
+where the Observatory's observed edges come from. Kiali (view-only) and
+Grafana sit on the edge behind the platform admins' sign-in (realm `ops`), and
+take connections only from the edge. They read the
 same data. The Observatory derives its map from the cluster's own objects;
 see [OBSERVATORY.md](OBSERVATORY.md).
 
@@ -154,12 +165,12 @@ installs every story, so any card runs in any order on the same lab.
 20-observability kube-prometheus-stack, Tempo, OTel collector, Kiali
 30-kgateway     edge (HA, pinned NodePorts, per-party TLS listeners)
 40-agentgateway ai-gateway (HA, mesh-native), LLM backend (make llm)
-45-identity     S&V Keycloak, DNS rewrite, SSO for kagent/Grafana/Kiali
+45-identity     S&V Keycloak (patched for ID-JAG), DNS rewrite, client secrets for S&V components
 47-continuity   upstream IdP failover for S&V Keycloak (IdentityContinuity, controller, egress waypoint)
 50-substrate    Agent Substrate (patched, ate-system in the mesh)
 60-kagent       kagent + kmcp, model via ai-gateway, ops agents on Substrate
 70-agentregistry agentregistry behind S&V SSO at the edge
 80-mesh-policy  S&V mesh baseline (other parties own theirs, in their story)
-90-observatory  Observatory, its Keycloak (realm ops), gateway access logs to it
+90-observatory  Observatory, its Keycloak (realm ops), Grafana and Kiali behind it, gateway access logs
 95-demos        every story: bob, then bob-to-alice
 ```

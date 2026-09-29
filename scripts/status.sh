@@ -19,8 +19,8 @@ fi
 step "URLs"
 row() { printf '  %-36s %-22s %s\n' "$@"; }
 row "https://observatory.$OPS_DOMAIN" "Observatory" "ops / ops-demo (realm ops)"
-row "https://grafana.$OPS_DOMAIN" "Grafana" "admin / solo-lab"
-row "https://kiali.$OPS_DOMAIN" "Kiali" "no sign-in (anonymous)"
+row "https://grafana.$OPS_DOMAIN" "Grafana" "ops / ops-demo (realm ops)"
+row "https://kiali.$OPS_DOMAIN" "Kiali (view-only)" "ops / ops-demo (realm ops)"
 row "https://kagent.$SV_DOMAIN" "kagent" "bob / bob-demo, or Bob's upstream IdP account"
 row "https://registry.$SV_DOMAIN" "agentregistry" "S&V sign-in (bob or ops)"
 row "https://idp.$SV_DOMAIN" "S&V Keycloak" "admin password: SV_KC_ADMIN_PASSWORD in .lab/secrets.env"

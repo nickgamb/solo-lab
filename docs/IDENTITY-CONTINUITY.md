@@ -82,7 +82,17 @@ Every `health.intervalSeconds`, two replicas, one leader (Lease
 
 Users signing in through an upstream are linked to their existing S&V user
 by verified email (`idp-detect-existing-broker-user`, `idp-auto-link`), so
-`sub` and group membership never change. The DNS capture that makes the
+`sub` and group membership never change. Each managed IdP carries a username
+mapper (`username-from-email`) that makes the brokered username the verified
+email, because the first-broker-login lookup matches by email or username:
+without it, an upstream account named `bob` would be linked to S&V's Bob
+whatever its email.
+
+The controller's RBAC in `sv-identity` is the IdentityContinuity resources, a
+Lease, events, and `get` on the Secrets it is configured with, by name
+(Role `continuity-controller-secrets`). It cannot list or watch Secrets, so it
+never sees Keycloak's own admin or signing-key Secrets. Credentials are re-read
+on every reconcile, so a rotated secret takes effect within one interval. The DNS capture that makes the
 ServiceEntry apply is Istio ambient's (`AMBIENT_DNS_CAPTURE`, on in 1.31).
 
 ## Kill switch
@@ -195,8 +205,10 @@ rule builder, **Add OIDC tier**: name, display name, issuer, client ID and
 secret. Register `<broker issuer>/broker/<name>/endpoint` as the app's
 callback (shown in the form and in `status.tiers[].redirectURI`), allow
 `openid email profile`, use `client_secret_post`, and make sure the IdP
-sends `email_verified: true` for the user. Or edit `spec.tiers` and create
-the Secret directly.
+sends `email_verified: true` for the user. The rule builder also grants the
+controller read access to the new tier's Secret. Editing `spec.tiers` by hand,
+create the Secret and add its name to Role `sv-identity/continuity-controller-secrets`
+(the controller reads Secrets by name only, and never lists or watches them).
 
 ## Checks
 

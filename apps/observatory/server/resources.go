@@ -16,13 +16,21 @@ import (
 )
 
 // Resources is the Advanced editor: read any object as YAML, dry-run an
-// edit, apply it. Writes run as the signed-in admin (impersonation), so the
-// API server's RBAC and audit log see a person, not the observatory.
+// edit, apply it. Writes run as the signed-in admin through impersonation.
 type Resources struct {
-	k *Kube
+	k     *Kube
+	admin string // the group every signed-in user has (the auth middleware checks it)
 }
 
 const fieldManager = "observatory"
+
+// The only identity the observatory may assume, pinned in rbac.yaml: one fixed
+// user, the admin group, and the person as an extra (in the audit log's
+// impersonatedUser.extra), so no token or bug can make it anyone else.
+const (
+	impersonatedUser = "observatory:admin"
+	userExtra        = "observatory-user"
+)
 
 func (s *Resources) client(r *http.Request) (dynamic.Interface, error) {
 	u := userFrom(r.Context())
@@ -30,9 +38,10 @@ func (s *Resources) client(r *http.Request) (dynamic.Interface, error) {
 		return nil, errors.New("no user")
 	}
 	cfg := rest.CopyConfig(s.k.cfg)
-	cfg.Impersonate = rest.ImpersonationConfig{UserName: "observatory:" + u.Name}
-	for _, g := range u.Groups {
-		cfg.Impersonate.Groups = append(cfg.Impersonate.Groups, "observatory:"+g)
+	cfg.Impersonate = rest.ImpersonationConfig{
+		UserName: impersonatedUser,
+		Groups:   []string{"observatory:" + s.admin},
+		Extra:    map[string][]string{userExtra: {u.Name}},
 	}
 	return dynamic.NewForConfig(cfg)
 }

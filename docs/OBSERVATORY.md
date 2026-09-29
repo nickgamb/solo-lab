@@ -67,7 +67,10 @@ Interactions:
   gateways that check tokens, and where each agent's token goes);
   **Agents & tools** (agents, gateways, MCP servers, models);
   **Cross-party** (only calls that cross a zone). Each view re-lays out.
-- Product rail (right): hover or pin a Solo product to light its instances.
+- Product rail (right): hover or pin a Solo product to light every instance:
+  tiles, badges on wires, Substrate trays, and a count on the status bar of a
+  zone whose instances are folded away. Each product links to its docs on
+  [docs.solo.io](https://docs.solo.io).
 - Export (map controls, bottom left): saves the whole map, in its current
   view, as a PNG, such as [the All view](images/observatory-export-topology-all.jpg) or
   [the Identity view](images/observatory-export-topology-identity.jpg).
@@ -131,11 +134,15 @@ The browser gets everything over one Server-Sent Events stream (`/api/stream`:
 ## Access model
 
 - The server runs as ServiceAccount `observatory` with ClusterRole
-  `observatory-read`: read everything except Secrets, and `impersonate`.
+  `observatory-read`: read the lab's resources (no Secrets), and impersonate
+  exactly one identity.
 - Every write (Apply, rule edits, secrets, outages) is made by impersonating
-  the signed-in admin as user `observatory:<name>` with groups prefixed
-  `observatory:`. `observatory:observatory-admins` is bound to `cluster-admin`
-  (`platform/90-observatory/rbac.yaml`). Kubernetes audit logs show who did it.
+  user `observatory:admin` in group `observatory:observatory-admins`, with the
+  signed-in person's name as the extra `observatory-user`. RBAC names all
+  three (`platform/90-observatory/rbac.yaml`), so no request can make the
+  Observatory any other user or group. The group is bound to `cluster-admin`.
+  With API server audit logging on, each write records the person in
+  `impersonatedUser.extra`.
 - Client secrets entered in the rule builder are write-only.
 - The namespace is STRICT mTLS; only the edge (8080), the collector (4318)
   and its Keycloak may call in.

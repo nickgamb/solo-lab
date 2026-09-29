@@ -61,6 +61,7 @@ ok "uma-as, uma-pep keys; RS credential per party"
 
 step "Alice (alice), Meridian (meridian), S&V adapter (sv-u4a)"
 apply_tmpl "$D/alice.yaml" "$D/meridian.yaml" "$D/sv-u4a.yaml"
+deny_internet alice alice-identity meridian sv-u4a   # every party reaches the others through the edge
 wait_for "Alice's database" 60 5 K wait cluster/uma-as-db -n alice --for=condition=Ready --timeout=2s
 rollout alice deploy/uma-as deploy/portal
 rollout meridian deploy/uma-pep deploy/alice-vault deploy/meridian

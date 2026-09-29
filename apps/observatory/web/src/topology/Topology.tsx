@@ -288,7 +288,11 @@ function Canvas({ lab, focus, onFocused }: { lab: Lab; focus?: string; onFocused
             </button>
           )
         })}
-        {product && <div className="blurb subtle">{PRODUCTS.find(p => p.id === product)?.blurb}</div>}
+        {product && (() => {
+          const p = PRODUCTS.find(x => x.id === product)
+          return p && <div className="blurb subtle">{p.blurb} · <a href={p.docs} target="_blank" rel="noopener noreferrer">docs ↗</a></div>
+        })()}
+        <a className="rail-foot subtle" href="https://docs.solo.io" target="_blank" rel="noopener noreferrer">docs.solo.io ↗</a>
       </div>
       <div className="legend">
         {LEGEND.map(k => <span key={k}><i style={{ background: `var(--k-${k})` }} />{k}</span>)}

@@ -1,0 +1,145 @@
+# Commands
+
+Terminal commands for working with the running lab. Every command targets the
+lab's context explicitly (`--context kind-solo-lab`), so it's safe to run with
+another cluster selected. To skip the flag, select the lab once:
+
+```bash
+kubectl config use-context kind-solo-lab
+```
+
+The `make` targets are in the [README](../README.md#make-targets). Commands
+that need the lab's helpers (`lab_secret`, `port_forward`) run under bash from
+the repo root: `bash -c '. scripts/lib.sh; ...'`.
+
+## The cluster
+
+| Command | Shows |
+| --- | --- |
+| `make status` | nodes, pods that aren't running, the active sign-in tier, URLs and sign-ins |
+| `kubectl --context kind-solo-lab get nodes -L topology.kubernetes.io/zone` | the kind nodes and their zones |
+| `kubectl --context kind-solo-lab get pods -A` | every pod |
+| `kubectl --context kind-solo-lab get pods -A --field-selector=status.phase!=Running` | pods that aren't running |
+| `kubectl --context kind-solo-lab get events -A --sort-by=.lastTimestamp \| tail -30` | the most recent events, cluster-wide |
+| `kubectl --context kind-solo-lab get ns -L lab.solo.io/party,istio.io/dataplane-mode` | each namespace's party (zone) and whether it's in the ambient mesh |
+| `kind get clusters` | kind clusters on this machine |
+| `docker ps --format '{{.Names}}\t{{.Status}}'` | the kind nodes, registry mirrors, lab DNS and cloud-provider-kind |
+| `curl -s localhost:5001/v2/_catalog \| jq` | images built by the lab, in the local registry |
+
+## The mesh (Istio ambient)
+
+| Command | Shows |
+| --- | --- |
+| `kubectl --context kind-solo-lab get peerauthentication,authorizationpolicy -A` | every mTLS mode and allow/deny policy |
+| `kubectl --context kind-solo-lab get authorizationpolicy <name> -n <ns> -o yaml` | who a policy admits, by SPIFFE principal |
+| `kubectl --context kind-solo-lab get networkpolicy -A` | the egress fences (`no-internet`) and Kiali's ingress fence |
+| `istioctl --context kind-solo-lab ztunnel-config workloads` | every workload ztunnel knows, its address, node and waypoint |
+| `istioctl --context kind-solo-lab ztunnel-config workloads --workload-namespace sv-agents` | the same, for one namespace |
+| `istioctl --context kind-solo-lab ztunnel-config certificates --node solo-lab-worker` | the SPIFFE certificates ztunnel holds on a node |
+| `istioctl --context kind-solo-lab waypoint list -A` | waypoints, what traffic they take, and whether they're programmed |
+| `kubectl --context kind-solo-lab get serviceentry -A` | external hosts the mesh knows (the continuity controller's egress entries) |
+| `kubectl --context kind-solo-lab -n istio-system logs ds/ztunnel --since=5m \| grep -i -E "deny\|rbac"` | recent connections ztunnel refused |
+
+**Try a call as a real workload identity.** `make bob-verify` creates probe pods,
+each with its own ServiceAccount (and so its own SPIFFE ID), in `kagent`,
+`sv-agents` and `observability`:
+
+```bash
+kubectl --context kind-solo-lab -n sv-agents exec probe -- curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://kiali.istio-system:20001/
+```
+
+```bash
+kubectl --context kind-solo-lab -n sv-agents exec probe -- python3 /tmp/p.py http://bob-workspace-mcp.sv-mcp:3000/mcp list
+```
+
+`/tmp/p.py` is `tools/mcp-probe.py`: `list`, or `call <tool> '<json args>'`,
+with `--token <jwt>` and `--header name=value`.
+
+## Gateways
+
+| Command | Shows |
+| --- | --- |
+| `kubectl --context kind-solo-lab get gateway,httproute -A` | every gateway and route |
+| `kubectl --context kind-solo-lab get httproute <name> -n <ns> -o jsonpath='{.status.parents[*].conditions}'` | whether a route was accepted, and why not |
+| `kubectl --context kind-solo-lab get agentgatewaypolicy,agentgatewaybackend -A` | agentgateway's policies and backends |
+| `kubectl --context kind-solo-lab get agentgatewaypolicy <name> -n <ns> -o jsonpath='{.status.ancestors[*].conditions}'` | whether a policy attached |
+| `kubectl --context kind-solo-lab get gatewayextension,trafficpolicy -A` | the edge's SSO extensions and where they attach |
+| `kubectl --context kind-solo-lab -n agentgateway-system logs deploy/ai-gateway -f \| grep request` | ai-gateway's access log, live: caller identity, route, JWT claims, status |
+| `kubectl --context kind-solo-lab -n sv-mcp logs deploy/mcp-waypoint -f \| grep request` | the MCP waypoint's access log: tool, user, allowed or refused |
+| `kubectl --context kind-solo-lab -n meridian logs deploy/meridian -f \| grep request` | Meridian's gateway |
+| `kubectl --context kind-solo-lab -n kgateway-system logs deploy/edge -f` | the edge (Envoy) |
+| `make llm LLM_PROVIDER=ollama` | point ai-gateway's model route at a provider |
+
+## Identity
+
+| Command | Shows |
+| --- | --- |
+| `curl -s https://idp.sterling.lab/realms/sterling-vance/.well-known/openid-configuration \| jq` | S&V's issuer and endpoints (same for `idp.alice.lab/realms/alice`, `idp.ledgerline.lab/realms/ledgerline`, `idp.ops.lab/realms/ops`) |
+| `grep -E 'KC_ADMIN_PASSWORD' .lab/secrets.env` | each Keycloak's admin password (user `admin`) |
+| `kubectl --context kind-solo-lab -n sv-identity port-forward svc/keycloak 18080:80` | S&V Keycloak's admin console at http://127.0.0.1:18080/admin |
+| `kubectl --context kind-solo-lab -n sv-identity logs deploy/keycloak --since=10m \| grep -i -E "claim\|IDENTITY_PROVIDER\|error"` | sign-in and broker errors (it names the claim or step that failed) |
+
+**Get Bob's tokens** (the password grant the checks use; lab test accounts only):
+
+```bash
+bash -c '. scripts/lib.sh; port_forward sv-identity keycloak 18081 80; curl -s http://127.0.0.1:18081/realms/sterling-vance/protocol/openid-connect/token -d grant_type=password -d client_id=kagent -d client_secret="$(lab_secret SV_KAGENT_CLIENT_SECRET)" -d username=bob -d password=bob-demo -d scope=openid' > /tmp/bob.json
+```
+
+**Decode a token's claims** (no verification; to see what it carries):
+
+```bash
+jq -r .access_token /tmp/bob.json | jq -R 'split(".")[1] | gsub("-";"+") | gsub("_";"/") | @base64d | fromjson'
+```
+
+## Identity continuity
+
+| Command | Shows |
+| --- | --- |
+| `kubectl --context kind-solo-lab get idc -A` | each IdentityContinuity and its active tier |
+| `kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o jsonpath='{range .status.tiers[*]}{.name}: {.reason} {.message}{"\n"}{end}'` | each tier's health |
+| `kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o jsonpath='{.status.transitions}' \| jq` | the last 20 failovers and failbacks |
+| `kubectl --context kind-solo-lab get events -n sv-identity --field-selector involvedObject.name=sterling-vance` | tier health and failover events |
+| `kubectl --context kind-solo-lab -n sv-identity logs deploy/continuity-controller -f` | the controller |
+| `kubectl --context kind-solo-lab -n sv-egress get authorizationpolicy -L continuity.lab.solo.io/tier` | outages in effect (kill-switch policies) |
+| `kubectl --context kind-solo-lab -n sv-egress delete authorizationpolicy continuity-partition-auth0` | end a simulated Auth0 outage |
+| `make continuity-verify` | the failover, kill switch and live-rule checks |
+
+The kill switch itself is in [IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#kill-switch).
+
+## Agents and Agent Substrate
+
+| Command | Shows |
+| --- | --- |
+| `kubectl --context kind-solo-lab get sandboxagents,agents -A` | agents, and which run on Substrate |
+| `kubectl --context kind-solo-lab get remotemcpservers,mcpservers,modelconfigs -A` | the tools and models agents use |
+| `kubectl --context kind-solo-lab get sandboxagent bob-assistant -n sv-agents -o yaml` | Bob's agent: tools, approvals, forwarded headers |
+| `kubectl --context kind-solo-lab get workerpools,actortemplates -A` | Substrate's worker pools and the agents' actor templates |
+| `kubectl --context kind-solo-lab get pods -A -l ate.dev/worker-pool` | the worker pods (an actor's calls leave as its pool's ServiceAccount) |
+| `kubectl --context kind-solo-lab -n kagent logs deploy/kagent-controller -f` | the kagent controller (A2A turns, sessions, Substrate resumes) |
+| `kubectl --context kind-solo-lab -n ate-system logs deploy/ate-controller --since=10m` | Substrate's controller (actors starting and suspending) |
+| `make tour` | every story end to end, with where to look in the Observatory |
+
+## Observability
+
+| Command | Shows |
+| --- | --- |
+| `kubectl --context kind-solo-lab -n observability port-forward svc/kps-prometheus 19090:9090` | Prometheus at http://127.0.0.1:19090 |
+| `curl -s --get http://127.0.0.1:19090/api/v1/query --data-urlencode 'query=sum by (source_principal,destination_workload) (istio_tcp_connections_opened_total{reporter="destination"})' \| jq '.data.result[] \| [.metric.source_principal, .metric.destination_workload, .value[1]]'` | who has connected to what, by SPIFFE identity |
+| `kubectl --context kind-solo-lab -n observability logs deploy/otel-collector --since=5m \| grep -i "exporting failed"` | the collector failing to deliver (to the Observatory, Tempo or Prometheus) |
+| `kubectl --context kind-solo-lab -n observatory logs deploy/observatory -f` | the Observatory's server |
+
+Grafana and Kiali are at https://grafana.ops.lab and https://kiali.ops.lab
+(`ops` / `ops-demo`). The Observatory's local development loop is in
+[OBSERVATORY.md](OBSERVATORY.md#local-development).
+
+## Fixing things
+
+| Command | Does |
+| --- | --- |
+| `kubectl --context kind-solo-lab describe pod <pod> -n <ns>` | why a pod isn't starting (events at the bottom) |
+| `kubectl --context kind-solo-lab logs <pod> -n <ns> --previous` | the logs of a container that crashed |
+| `kubectl --context kind-solo-lab rollout restart deploy/<name> -n <ns>` | restart a workload |
+| `make layer-NN` | re-apply one layer (idempotent); e.g. `make layer-80` restores the S&V mesh policy |
+| `make preflight` | tools, Docker memory and inotify limits (reset when Docker Desktop restarts) |
+| `make reset` | rewind the demos without a rebuild |
+| `make down && make up` | rebuild the cluster; caches and the CA survive |

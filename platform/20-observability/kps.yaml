@@ -22,14 +22,32 @@ prometheus:
     probeSelectorNilUsesHelmValues: false
     resources:
       requests: {cpu: 200m, memory: 1Gi}
+# Grafana is signed in at the edge (platform/90-observatory/platform-uis.yaml):
+# it trusts the user the edge forwards, and has no login form of its own. The
+# local admin's password is generated (GRAFANA_ADMIN_PASSWORD in .lab/secrets.env).
 grafana:
-  adminUser: admin
-  adminPassword: solo-lab          # lab only; Keycloak SSO is layered on in 45-identity
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
   grafana.ini:
     server:
       root_url: https://grafana.${OPS_DOMAIN}
     auth.anonymous:
       enabled: false
+    auth:
+      disable_login_form: true
+      disable_signout_menu: true
+    auth.basic:
+      enabled: false
+    auth.proxy:
+      enabled: true
+      header_name: X-WEBAUTH-USER
+      header_property: username
+      auto_sign_up: true
+    users:
+      allow_sign_up: false
+      auto_assign_org_role: Admin    # only platform admins can sign in at the edge
   sidecar:
     dashboards:
       enabled: true

@@ -74,6 +74,94 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "grafana",
+      "name": "Grafana",
+      "description": "Grafana, signed in at the edge (kgateway OAuth2).",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${GRAFANA_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "https://grafana.${OPS_DOMAIN}/oauth2/redirect"
+      ],
+      "webOrigins": [
+        "https://grafana.${OPS_DOMAIN}"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "https://grafana.${OPS_DOMAIN}/*",
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "aud-grafana",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "grafana",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "kiali",
+      "name": "Kiali",
+      "description": "Kiali, signed in at the edge (kgateway OAuth2).",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${KIALI_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "https://kiali.${OPS_DOMAIN}/oauth2/redirect"
+      ],
+      "webOrigins": [
+        "https://kiali.${OPS_DOMAIN}"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "https://kiali.${OPS_DOMAIN}/*",
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "aud-kiali",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "kiali",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
     }
   ],
   "components": {
