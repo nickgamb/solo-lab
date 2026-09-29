@@ -88,7 +88,7 @@ spec:
   rules:
   - matches:
     - path: {type: PathPrefix, value: /mcp}
-      headers: [{name: authorization, type: RegularExpression, value: "^[Bb]earer .+"}]
+      headers: [{name: authorization, type: RegularExpression, value: "(?i)^bearer\\s+.+"}]
     backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: bob-workspace}]
 ---
 apiVersion: gateway.networking.k8s.io/v1
@@ -100,6 +100,10 @@ spec:
   parentRefs: [{name: mcp-waypoint, sectionName: mcp}]
   rules:
   - matches: [{path: {type: PathPrefix, value: /mcp}}]
+    # no user on this lane: nothing that looks like a credential goes on
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier: {remove: [authorization, x-id-token]}
     backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: bob-workspace-discovery}]
 ---
 apiVersion: ${AGW_BACKEND_API}
@@ -153,8 +157,9 @@ spec:
       action: Allow
       policy:
         matchExpressions:
-        # an S&V agent workload, acting for an advisor
-        - 'source.identity.namespace == "sv-agents" && "advisors" in jwt.groups'
+        # one of the firm's agent workloads (its worker pool's ServiceAccount),
+        # acting for an advisor
+        - 'source.identity.namespace == "sv-agents" && source.identity.serviceAccount in ["bob-assistant", "advisor-desk"] && "advisors" in jwt.groups'
 ---
 apiVersion: ${AGW_POLICY_API}
 kind: ${AGW_POLICY_KIND}

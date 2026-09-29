@@ -1,0 +1,89 @@
+# Who may call the observability backends, by workload identity. Each is an
+# ALLOW, so a caller not named here (or with no mesh identity) is refused.
+# What lands in the collector is what the Observatory shows, so only the
+# workloads that report telemetry may send it.
+#
+# Adding a component that exports OTLP? Name its ServiceAccount under
+# collector-callers.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: collector-callers, namespace: observability}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: opentelemetry-collector}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        # gateways and waypoints (access logs, traces)
+        - cluster.local/ns/kgateway-system/sa/edge
+        - cluster.local/ns/agentgateway-system/sa/ai-gateway
+        - cluster.local/ns/sv-mcp/sa/mcp-waypoint
+        - cluster.local/ns/sv-egress/sa/egress-waypoint
+        - cluster.local/ns/meridian/sa/meridian
+        - cluster.local/ns/meridian/sa/waypoint
+        - cluster.local/ns/alice/sa/waypoint
+        - cluster.local/ns/ledgerline/sa/waypoint
+        # kagent and the agents' worker pools
+        - cluster.local/ns/kagent/sa/kagent-controller
+        - cluster.local/ns/kagent/sa/kagent-ops
+        - cluster.local/ns/sv-agents/sa/bob-assistant
+        - cluster.local/ns/sv-agents/sa/advisor-desk
+        # Agent Substrate
+        - cluster.local/ns/ate-system/sa/ate-api-server
+        - cluster.local/ns/ate-system/sa/atelet
+        - cluster.local/ns/ate-system/sa/atenet-router
+    to: [{operation: {ports: ["4317", "4318"]}}]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: prometheus-callers, namespace: observability}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: prometheus}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/observability/sa/otel-collector   # OTLP metrics
+        - cluster.local/ns/observability/sa/tempo            # span metrics (remote write)
+        - cluster.local/ns/observability/sa/kps-prometheus   # its own scrape
+        - cluster.local/ns/observability/sa/kps-grafana
+        - cluster.local/ns/kiali/sa/kiali
+        - cluster.local/ns/observatory/sa/observatory
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: tempo-callers, namespace: observability}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: tempo}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/observability/sa/otel-collector
+        - cluster.local/ns/observability/sa/kps-grafana
+        - cluster.local/ns/kiali/sa/kiali
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: kube-state-metrics-callers, namespace: observability}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: kube-state-metrics}}
+  action: ALLOW
+  rules:
+  - from: [{source: {principals: [cluster.local/ns/observability/sa/kps-prometheus]}}]
+---
+# Kiali: the edge (after its sign-in) on the UI port, Prometheus on metrics.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: kiali-callers, namespace: kiali}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: kiali}}
+  action: ALLOW
+  rules:
+  - from: [{source: {principals: [cluster.local/ns/kgateway-system/sa/edge]}}]
+    to: [{operation: {ports: ["20001"]}}]
+  - from: [{source: {principals: [cluster.local/ns/observability/sa/kps-prometheus]}}]
+    to: [{operation: {ports: ["9090"]}}]

@@ -13,9 +13,11 @@ spec:
   transportType: http
   httpTransport: {targetPort: 3000, path: /mcp}
   deployment:
-    image: localhost:5001/ledgerline/research-mcp:dev
-    imagePullPolicy: Always
+    image: ${LEDGERLINE_RESEARCH_IMAGE}
     port: 3000
+    env:
+      RESEARCH_ISSUER: https://idp.${LEDGERLINE_DOMAIN}/realms/ledgerline
+      RESEARCH_JWKS_URL: http://keycloak.ledgerline-identity.svc/realms/ledgerline/protocol/openid-connect/certs
     replicas: 2
     resources:
       requests: {cpu: 20m, memory: 64Mi}

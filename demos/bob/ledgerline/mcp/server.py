@@ -5,17 +5,18 @@ with a Ledgerline access token that Ledgerline's authorization server minted
 from an ID-JAG (Cross App Access); the ledgerline waypoint has verified its
 signature. Tool listing is a public catalog; every tool call needs the token.
 """
-import base64
 import contextvars
-import json
 import os
 import time
 
+import jwt
 import uvicorn
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 AUDIENCE = os.environ.get("RESEARCH_AUDIENCE", "ledgerline-research")
+ISSUER = os.environ["RESEARCH_ISSUER"]
+JWKS = jwt.PyJWKClient(os.environ["RESEARCH_JWKS_URL"], cache_keys=True, lifespan=300)
 _auth = contextvars.ContextVar("authorization", default="")
 
 OUTLOOK = {
@@ -32,15 +33,17 @@ NOTES = {
 
 
 def _claims() -> dict:
-    raw = _auth.get()
-    if not raw.lower().startswith("bearer "):
+    """Verified claims of the Ledgerline access token on this call."""
+    scheme, _, token = _auth.get().partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
         raise ToolError("refused: Ledgerline requires a Ledgerline access token")
-    p = raw.split()[1].split(".")[1]
-    c = json.loads(base64.urlsafe_b64decode(p + "=" * (-len(p) % 4)))
-    auds = c.get("aud") if isinstance(c.get("aud"), list) else [c.get("aud")]
-    if AUDIENCE not in auds:
-        raise ToolError(f"refused: token audience {auds} is not {AUDIENCE!r}")
-    return c
+    token = token.strip()
+    try:
+        key = JWKS.get_signing_key_from_jwt(token)
+        return jwt.decode(token, key.key, algorithms=["RS256"], audience=AUDIENCE, issuer=ISSUER,
+                          options={"require": ["exp", "iat", "sub"]}, leeway=5)
+    except jwt.PyJWTError as e:
+        raise ToolError(f"refused: {e}")
 
 
 mcp = MCPServer("ledgerline-research")

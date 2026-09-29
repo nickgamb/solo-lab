@@ -1,11 +1,13 @@
 # Kiali trusts whoever reaches it (anonymous): the sign-in is the edge's
-# (platform/90-observatory/platform-uis.yaml), and a NetworkPolicy there admits
-# only the edge. View-only: it shows the mesh's policy and cannot change it.
+# (platform/90-observatory/platform-uis.yaml), and its mesh policy
+# (mesh-policy.yaml) admits only the edge and Prometheus. View-only: it shows
+# the mesh's policy and cannot change it.
+istio_namespace: istio-system      # Kiali runs in its own namespace, kiali
 auth:
   strategy: anonymous
 deployment:
   view_only_mode: true
-  network_policy: {enabled: false}   # replaced by kiali-callers (edge and Prometheus only)
+  network_policy: {enabled: false}   # replaced by kiali-callers (mesh-policy.yaml)
   cluster_wide_access: true
   resources:
     requests: {cpu: 50m, memory: 128Mi}

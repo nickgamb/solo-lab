@@ -1,5 +1,10 @@
 {
   "realm": "sterling-vance",
+  "bruteForceProtected": true,
+  "failureFactor": 10,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "permanentLockout": false,
   "displayName": "Sterling & Vance",
   "enabled": true,
   "sslRequired": "external",
@@ -73,7 +78,7 @@
       "publicClient": false,
       "secret": "${SV_KAGENT_CLIENT_SECRET}",
       "standardFlowEnabled": true,
-      "directAccessGrantsEnabled": true,
+      "directAccessGrantsEnabled": "${KC_PASSWORD_GRANT}",
       "redirectUris": [
         "https://kagent.${SV_DOMAIN}/oauth2/redirect"
       ],
