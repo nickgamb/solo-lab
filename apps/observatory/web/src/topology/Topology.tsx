@@ -62,6 +62,26 @@ function Canvas({ lab, focus, onFocused }: { lab: Lab; focus?: string; onFocused
     requestAnimationFrame(() => requestAnimationFrame(() => rf.fitView({ padding: { top: '96px', left: '24px', bottom: '24px', right: '250px' } })))
   }, [placed, rf])
 
+  // where a product from the rail is on the map: tiles, trays, badges on
+  // wires (waypoints, the edge, the Substrate router), and, for instances
+  // folded out of view, a count on their zone's status bar
+  const productHits = useMemo(() => {
+    if (!product || !g || !placed) return undefined
+    const byId = new Map(g.nodes.map(n => [n.id, n]))
+    const is = (id: string) => !!byId.get(id)?.products?.includes(product)
+    const tiles = new Set(view.nodes.filter(n => n.products?.includes(product)).map(n => n.id))
+    const trays = new Set(Object.entries(view.trays).filter(([, t]) => t.node.products?.includes(product)).map(([id]) => id))
+    const wires = new Set(placed.wires.filter(w => w.via.some(is)).map(w => w.id))
+    const drawn = new Set<string>([...tiles, ...trays, ...placed.wires.flatMap(w => w.via)])
+    for (const n of view.nodes) for (const m of (n.summary?.members as string[] | undefined) ?? []) drawn.add(m)
+    const zones: Record<string, number> = {}
+    for (const n of g.nodes) {
+      if (!n.products?.includes(product) || drawn.has(n.id) || n.group === 'party:cluster') continue
+      zones[n.group] = (zones[n.group] ?? 0) + 1
+    }
+    return { tiles, trays, wires, zones }
+  }, [product, g, placed, view])
+
   // what's in focus: a hovered or selected node and its neighbours, or
   // every instance of a product from the rail
   const focusIds = useMemo(() => {
@@ -76,9 +96,13 @@ function Canvas({ lab, focus, onFocused }: { lab: Lab; focus?: string; onFocused
       }
       return s
     }
-    if (product) return new Set(view.nodes.filter(n => n.products?.includes(product)).map(n => n.id))
+    if (productHits && placed) {
+      const s = new Set([...productHits.tiles, ...productHits.trays])
+      for (const w of placed.wires) if (productHits.wires.has(w.id)) { s.add(w.source); s.add(w.target) }
+      return s
+    }
     return undefined
-  }, [hoverNode, selected, product, view])
+  }, [hoverNode, selected, productHits, placed, view])
 
   const rateOf = useMemo(() => (of: string[]) => {
     const r = { rps: 0, l4: 0, errors: 0 }
@@ -136,13 +160,14 @@ function Canvas({ lab, focus, onFocused }: { lab: Lab; focus?: string; onFocused
       const stats = outside ? undefined : (z?.summary?.stats as GroupData['stats'])
       out.push({ id: gid, type: 'party', position: { x: box.x, y: box.y },
         data: { label: outside ? 'Outside the lab' : grp?.label ?? gid, domain: outside ? undefined : grp?.domain, stats, outside,
+          hits: productHits?.zones[gid], product,
           onOpen: outside ? undefined : () => setSelected(`zone:${gid}`) },
         width: box.w, height: box.h, style: { width: box.w, height: box.h }, selectable: false, draggable: false, zIndex: -2 })
     }
     for (const [pid, box] of Object.entries(placed.trays)) {
       const t = view.trays[pid]
       if (!t) continue
-      const data: CardData = { n: t.node, selected: selected === pid, fog: !!focusIds && !focusIds.has(pid), ...(sub ? substrateFor(sub, t.node) : {}) }
+      const data: CardData = { n: t.node, selected: selected === pid, fog: !!focusIds && !focusIds.has(pid), lit: !!productHits?.trays.has(pid), ...(sub ? substrateFor(sub, t.node) : {}) }
       out.push({ id: pid, type: 'tray', position: { x: box.x, y: box.y }, data, width: box.w, height: box.h, style: { width: box.w, height: box.h },
         draggable: false, zIndex: -1 })
     }
@@ -155,7 +180,7 @@ function Canvas({ lab, focus, onFocused }: { lab: Lab; focus?: string; onFocused
       if (!box) continue
       const r = perNode[n.id]
       const data: CardData = { n, rps: r?.rps, err: r && r.rps > 0 ? r.errors / r.rps : 0, p95: p95[n.id], selected: selected === n.id,
-        lit: !!focusIds?.has(n.id) && !hoverNode && !selected && !!product,
+        lit: !hoverNode && !selected && !!productHits?.tiles.has(n.id),
         fog: (q !== '' && !`${n.label} ${n.namespace ?? ''} ${n.kind}`.toLowerCase().includes(q)) || (!!focusIds && !focusIds.has(n.id)) }
       if (n.kind === 'substrate' && sub) Object.assign(data, substrateFor(sub, n))
       if (n.kind === 'agent' && n.badges?.includes('substrate') && sub) data.actor = actorFor(sub, n)
@@ -167,7 +192,7 @@ function Canvas({ lab, focus, onFocused }: { lab: Lab; focus?: string; onFocused
         width: LABEL_W, height: box.h + LABEL_H + 4, style: { width: LABEL_W, height: box.h + LABEL_H + 4 }, draggable: false })
     }
     return out
-  }, [g, placed, view.nodes, zones, perNode, p95, selected, sub, query, focusIds, hoverNode, product])
+  }, [g, placed, view.nodes, zones, perNode, p95, selected, sub, query, focusIds, hoverNode, product, productHits])
 
   const names = useMemo(() => new Map(g?.nodes.map(n => [n.id, n.label]) ?? []), [g])
   const viaLabel = useMemo(() => (id: string) => {
@@ -193,14 +218,16 @@ function Canvas({ lab, focus, onFocused }: { lab: Lab; focus?: string; onFocused
     return placed.wires.map(w => {
       const r = rateOf(w.of)
       const ps = w.of.flatMap(id => (pulses[id] ?? []).map(p => ({ ...p, id: p.id + w.id }))).slice(-6)
-      const inFocus = !focusIds || w.ends.some((id, i) => i % 2 === 0 && focusIds.has(id) && focusIds.has(w.ends[i + 1]))
+      const inFocus = productHits
+        ? productHits.wires.has(w.id) || productHits.tiles.has(w.source) || productHits.tiles.has(w.target)
+        : !focusIds || w.ends.some((id, i) => i % 2 === 0 && focusIds.has(id) && focusIds.has(w.ends[i + 1]))
       const data: FlowData = { kind: w.kind, rps: r.rps, l4: r.l4, errors: r.errors, pulses: ps, points: w.points,
-        via: w.via.map(viaLabel), badgeAt: badgeFor(w), fog: !inFocus, focused: !!focusIds && inFocus }
+        via: w.via.map(viaLabel), badgeAt: badgeFor(w), fog: !inFocus, focused: !!focusIds && inFocus, badgeLit: !!productHits?.wires.has(w.id) }
       const color = r.errors > 0 ? 'var(--bad)' : `var(--k-${w.kind})`
       return { id: w.id, source: w.source, target: w.target, sourceHandle: 'o0', targetHandle: 'i0', type: 'flow', data,
         markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color }, zIndex: inFocus && focusIds ? 5 : 1 }
     })
-  }, [placed, rateOf, pulses, focusIds, viaLabel, g])
+  }, [placed, rateOf, pulses, focusIds, viaLabel, g, productHits])
 
   useEffect(() => {
     if (!focus || !placed) return
@@ -249,7 +276,7 @@ function Canvas({ lab, focus, onFocused }: { lab: Lab; focus?: string; onFocused
       <div className="rail">
         <div className="label">Solo products</div>
         {PRODUCTS.map(p => {
-          const count = g?.nodes.filter(n => n.products?.includes(p.id)).length ?? 0
+          const count = g?.nodes.filter(n => n.products?.includes(p.id) && n.group !== 'party:cluster').length ?? 0
           if (!count) return null
           return (
             <button key={p.id} className={pinned === p.id ? 'prod on' : 'prod'} title={p.blurb}

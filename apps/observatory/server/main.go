@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -194,10 +195,19 @@ func spa(root http.FileSystem) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if f, err := root.Open(r.URL.Path); err == nil {
 			f.Close()
-			if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			switch {
+			case r.URL.Path == "/" || r.URL.Path == "/index.html":
 				w.Header().Set("Cache-Control", "no-store")
+			case strings.HasPrefix(r.URL.Path, "/assets/"): // names carry a content hash
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			}
 			files.ServeHTTP(w, r)
+			return
+		}
+		// a missing build file is a 404, never the page: a stylesheet or
+		// script answered with HTML fails in ways that hide the cause
+		if strings.HasPrefix(r.URL.Path, "/assets/") {
+			http.NotFound(w, r)
 			return
 		}
 		r.URL.Path = "/"

@@ -144,6 +144,7 @@ export const SubstrateCard = memo(({ data }: NodeProps) => {
 
 export type GroupData = {
   label: string; domain?: string; fog?: boolean; outside?: boolean
+  hits?: number; product?: string // instances of the rail's product folded into this zone
   stats?: { agents: number; workloads: number; ready: number; pods: number; rps: number; err: number; idle: number; down: number }
   onOpen?: () => void
   [key: string]: unknown
@@ -162,6 +163,11 @@ export const PartyBox = memo(({ data }: NodeProps) => {
         <span className="grow" />
         {st && (
           <span className="party-stats">
+            {!!d.hits && d.product && (
+              <span className="zhit" title={`${d.hits} ${PRODUCTS.find(p => p.id === d.product)?.label ?? d.product} workloads in this zone, not drawn as tiles: open the zone to list them`}>
+                <ProductIcon id={d.product} size={15} /><b>{d.hits}</b> in this zone
+              </span>
+            )}
             {st.agents > 0 && <span><b>{st.agents}</b> agents</span>}
             <span><b>{st.workloads}</b> workloads</span>
             <span className={st.ready < st.pods ? 'warn' : ''}><b>{st.ready}/{st.pods}</b> pods ready</span>
@@ -248,7 +254,7 @@ export const TrayBox = memo(({ data }: NodeProps) => {
   const ws = d.workers ?? []
   const busy = ws.filter(w => w.actorId).length
   return (
-    <div className={['tray', d.selected ? 'selected' : '', d.fog ? 'fog' : ''].join(' ')}>
+    <div className={['tray', d.selected ? 'selected' : '', d.fog ? 'fog' : '', d.lit ? 'lit' : ''].join(' ')}>
       <div className="tray-head">
         <ProductIcon id="substrate" size={15} />
         <span className="tray-name ellipsis" title={`Agent Substrate worker pool ${d.n.label}`}>{d.n.label.replace(/-deployment$/, '')}</span>

@@ -253,3 +253,11 @@
 .door-cap { position: relative; display: grid; place-items: center; width: 56px; height: 56px; border-radius: 14px; background: var(--surface-2); }
 .door-label { writing-mode: vertical-rl; transform: rotate(180deg); display: flex; gap: 12px; align-items: center; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
 .door-label b { font: 600 20px/1 var(--font-heading); color: var(--text); }
+
+/* product rail: instances that aren't tiles */
+.ebadge.lit { border-color: var(--accent-2); background: color-mix(in hsl, var(--accent) 35%, var(--surface-solid)); color: var(--text);
+  box-shadow: 0 0 0 3px var(--accent-soft), 0 0 18px color-mix(in hsl, var(--accent) 50%, transparent); }
+.tray.lit { border-style: solid; border-color: var(--accent-2); box-shadow: 0 0 0 3px var(--accent-soft), 0 0 30px color-mix(in hsl, var(--accent) 40%, transparent); }
+.party-stats .zhit { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 99px; color: var(--text);
+  background: color-mix(in hsl, var(--accent) 35%, transparent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.party-stats .zhit b { margin-right: 0; }
