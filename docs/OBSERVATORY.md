@@ -223,7 +223,9 @@ OTLP/JSON logs body to `http://127.0.0.1:14318/v1/logs`.
 Without a local Go toolchain, build in a container:
 
 ```bash
-docker run --rm -v "$PWD":/src -w /src -e GOOS=darwin -e GOARCH=arm64 golang:1.27-alpine go build -o obs .
+docker run --rm -u "$(id -u):$(id -g)" -e GOCACHE=/tmp/gocache -e GOPATH=/tmp/go -v "$PWD":/src -w /src \
+  -e GOOS="$(uname -s | tr A-Z a-z)" -e GOARCH="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" \
+  golang:1.27-alpine go build -o obs .
 ```
 
 Tests: `go test ./...` in `server/`, `npm run build` (type-check) in `web/`.

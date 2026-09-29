@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Split-horizon: in the cluster, every *.${LAB_TLD} name resolves to the edge
-# Service, exactly as it resolves to 127.0.0.1 (-> the edge) on the Mac.
+# Service, exactly as it resolves to 127.0.0.1 (-> the edge) on the host.
 # Inserted between markers so re-runs replace rather than stack.
 . "$(dirname "$0")/../../scripts/lib.sh"
 K get cm coredns -n kube-system -o jsonpath='{.data.Corefile}' > "$LAB_STATE/Corefile.cluster"

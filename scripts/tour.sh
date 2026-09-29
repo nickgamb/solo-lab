@@ -39,7 +39,7 @@ AGENT=sv-agents/probe-bob-assistant   # Bob's agent's workload identity
 trap 'kill $(jobs -p) 2>/dev/null' EXIT
 ok "tokens for bob; probe pods in kagent, sv-agents, observability"
 
-CTX=$(uuidgen | tr A-Z a-z)   # one conversation, like one chat in the UI
+CTX=$(new_uuid)   # one conversation, like one chat in the UI
 ask() {  # ask <question>: Bob asks his agent through kagent, prints its reply
   local body reply
   say "Bob: ${_B}$1${_N}"

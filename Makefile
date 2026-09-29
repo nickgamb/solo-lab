@@ -4,11 +4,8 @@ SHELL := /bin/bash
 LAYERS := $(sort $(wildcard platform/[0-9][0-9]-*/install.sh))
 
 ## ---- one-time machine setup (sudo, run yourself) ----------------------------
-machine-setup: ## one-time, one sudo: *.lab resolver + trust the lab CA
-	@./scripts/dns.sh && ./scripts/ca.sh
-	sudo sh -c 'mkdir -p /etc/resolver && printf "nameserver 127.0.0.1\nport 15353\n" > /etc/resolver/lab && security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain '"$$HOME"'/.solo-lab/ca/ca.crt'
-	@dscacheutil -q host -a name portal.alice.lab | grep -q 127.0.0.1 && echo "  ✓ *.lab resolves to 127.0.0.1" || echo "  ! resolver not answering yet"
-	@security verify-cert -c $$HOME/.solo-lab/ca/ca.crt >/dev/null 2>&1 && echo "  ✓ lab CA trusted (name-constrained to .lab/.svc/.cluster.local)"
+machine-setup: ## one-time, sudo: *.lab resolves to the lab, trust the lab CA (macOS, Linux, WSL2)
+	@./scripts/machine-setup.sh
 
 ## ---- lifecycle ---------------------------------------------------------------
 up: cluster platform ## create the cluster and install the whole platform

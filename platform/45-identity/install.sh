@@ -27,7 +27,7 @@ KC_IMAGE="localhost:${LAB_REGISTRY_PORT}/lab/keycloak-idjag:${KEYCLOAK_VERSION}-
   deploy_keycloak sv-identity "$SV_DOMAIN" https-sterling "$D/realm-sterling-vance.json" \
   token-exchange-standard,identity-assertion-jwt
 wait_for "https://idp.$SV_DOMAIN discovery" 30 3 \
-  sh -c "curl -sf https://idp.$SV_DOMAIN/realms/sterling-vance/.well-known/openid-configuration >/dev/null"
+  sh -c "curl -sf --cacert '$LAB_CA_DIR/ca.crt' https://idp.$SV_DOMAIN/realms/sterling-vance/.well-known/openid-configuration >/dev/null"
 ok "issuer https://idp.$SV_DOMAIN/realms/sterling-vance  (admin: see .lab/secrets.env)"
 
 step "Client secrets, in the namespace that uses each"

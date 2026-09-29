@@ -1,4 +1,4 @@
-# Ollama on the Mac host (Metal GPU). OpenAI-compatible API on :11434.
+# Ollama on the host machine (scripts/llm.sh finds it). OpenAI-compatible API on :11434.
 apiVersion: ${AGW_BACKEND_API}
 kind: ${AGW_BACKEND_KIND}
 metadata:

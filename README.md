@@ -39,20 +39,31 @@ Enterprise editions, trial licences and support: [solo.io/get-started](https://w
 
 ## Requirements
 
-- macOS (built and tested on Apple silicon; the DNS resolver and CA trust steps are macOS-specific)
-- Docker Desktop with 24 GB or more for its VM (`make preflight` refuses under 16 GB; the full lab uses about 17 GB)
-- `brew install kind kubectl helm jq yq gettext openssl node`, with kind v0.32 or newer
+- macOS, Linux or Windows with WSL2 (developed on macOS on Apple silicon; x86_64 and arm64 images throughout)
+- Docker Desktop, or Docker Engine with buildx on Linux, with 24 GB or more for Docker (`make preflight` refuses under 16 GB; the full lab uses about 17 GB)
+- kind v0.32 or newer, kubectl, helm, jq, [yq v4](https://github.com/mikefarah/yq), envsubst (gettext), openssl, python3, git, curl
+  - macOS: `brew install kind kubectl helm jq yq gettext openssl`
+  - Debian/Ubuntu: `sudo apt-get install jq gettext-base openssl python3 git curl docker-buildx-plugin libnss3-tools`, then kind, kubectl, helm and yq from their release pages
+  - Fedora: `sudo dnf install jq gettext openssl python3 git curl nss-tools`, same for the rest
 - Ports 80 and 443 free on 127.0.0.1, or set `LAB_HTTP_PORT`/`LAB_HTTPS_PORT` in `.env`
 - A model: [Ollama](https://ollama.com) on the host (`ollama pull qwen3.8:27b`), or an Anthropic or OpenAI key
 
-`make preflight` checks all of this. It also raises the Docker VM's inotify
-limits, which reset whenever Docker Desktop restarts.
+`make preflight` checks all of this. With Docker Desktop it also raises the
+inotify limits inside Docker's VM, which reset whenever Docker Desktop
+restarts. With Docker Engine they are the host's own, and preflight says what
+to run if they're too low.
+
+`make machine-setup` makes `*.lab` resolve to 127.0.0.1 and trusts the lab CA:
+`/etc/resolver` and the System keychain on macOS; systemd-resolved (or a
+marked block in `/etc/hosts`) and the distro's trust store on Linux, plus the
+NSS databases Chrome and Firefox read. On WSL2 it sets up the distro and
+prints the two commands for a browser on Windows.
 
 ## Quick start
 
 ```bash
 cp .env.example .env          # optional: model provider, keys, Auth0, enterprise
-make machine-setup            # once per Mac, one sudo: *.lab DNS and the lab CA
+make machine-setup            # once per machine, sudo: *.lab DNS and the lab CA
 make up                       # cluster, platform and every demo (~30 min cold)
 make verify                   # every demo's enforcement checks
 make status                   # pods, active IdP, URLs and sign-ins
@@ -94,7 +105,7 @@ port-forward ([COMMANDS.md](docs/COMMANDS.md#identity)).
 ## Demos
 
 Each demo has a card: a two-screen script of what to do and what to say.
-Open it in a browser (`open docs/cards/<card>.html`).
+Open it in a browser (`open docs/cards/<card>.html` on macOS, `xdg-open` on Linux).
 
 | Card | Shows | Checks |
 | --- | --- | --- |

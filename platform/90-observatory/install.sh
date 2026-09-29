@@ -11,7 +11,7 @@ need_cluster
 
 step "observatory image (local registry)"
 # tagged by source content, so a code change is a new image and a rollout
-tag=$(cd "$APP" && find server web/src web/index.html web/package.json web/public -type f -not -path 'server/web/*' | LC_ALL=C sort | xargs cat | shasum | cut -c1-12)
+tag=$(cd "$APP" && find server web/src web/index.html web/package.json web/public -type f -not -path 'server/web/*' -not -name .DS_Store | LC_ALL=C sort | xargs cat | sha1 | cut -c1-12)
 export OBSERVATORY_IMAGE="localhost:$LAB_REGISTRY_PORT/lab/observatory:$tag"
 docker image inspect "$OBSERVATORY_IMAGE" >/dev/null 2>&1 || docker build -q -t "$OBSERVATORY_IMAGE" "$APP" >/dev/null
 docker push -q "$OBSERVATORY_IMAGE" >/dev/null
@@ -46,5 +46,5 @@ apply_tmpl "$D/observatory.yaml"
 K apply -f "$D/telemetry.yaml" >/dev/null
 rollout observatory deploy/observatory
 wait_for "https://observatory.$OPS_DOMAIN" 30 3 \
-  sh -c "curl -s -o /dev/null -w '%{http_code}' https://observatory.$OPS_DOMAIN/ | grep -q 302"
+  sh -c "curl -s --cacert '$LAB_CA_DIR/ca.crt' -o /dev/null -w '%{http_code}' https://observatory.$OPS_DOMAIN/ | grep -q 302"
 ok "https://observatory.$OPS_DOMAIN"
