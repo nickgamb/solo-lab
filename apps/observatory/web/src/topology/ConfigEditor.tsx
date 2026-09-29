@@ -2,7 +2,7 @@ import { DiffEditor, Editor, loader } from '@monaco-editor/react'
 import * as monaco from 'monaco-editor'
 import editorWorker from 'monaco-editor/editor/editor.worker?worker'
 import { useEffect, useState } from 'react'
-import { api, type Ref } from '../api'
+import { api, ApiError, type Ref } from '../api'
 
 // Monaco from the bundle, not a CDN: the observatory works offline and
 // under a strict CSP.
@@ -24,20 +24,28 @@ export function ConfigEditor({ target }: { target: Ref }) {
   const [preview, setPreview] = useState<string>()
   const [msg, setMsg] = useState<{ kind: 'ok' | 'bad'; text: string }>()
   const [busy, setBusy] = useState(false)
+  // an apply refused because the object changed since it was loaded, or
+  // because another manager owns a field: shown, and applied only if asked
+  const [conflict, setConflict] = useState(false)
 
-  const load = () => api<string>(`/api/resource?${q(target)}`).then(y => { setOriginal(y); setText(y); setPreview(undefined) })
+  const load = () => api<string>(`/api/resource?${q(target)}`).then(y => { setOriginal(y); setText(y); setPreview(undefined); setConflict(false) })
     .catch(e => setMsg({ kind: 'bad', text: String(e.message ?? e) }))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load() }, [])
 
-  const send = async (dry: boolean) => {
-    setBusy(true); setMsg(undefined)
+  const send = async (dry: boolean, force = false) => {
+    setBusy(true); setMsg(undefined); setConflict(false)
+    const qs = [dry && 'dryRun=true', force && 'force=true'].filter(Boolean).join('&')
     try {
-      const out = await api<string>(`/api/resource${dry ? '?dryRun=true' : ''}`, { method: 'POST', body: text, headers: { 'Content-Type': 'application/yaml' } })
+      const out = await api<string>(`/api/resource${qs ? '?' + qs : ''}`, { method: 'POST', body: text, headers: { 'Content-Type': 'application/yaml' } })
       if (dry) { setPreview(out); setMsg({ kind: 'ok', text: 'Dry run accepted. Review what would be stored, then apply.' }) }
       else { setOriginal(out); setText(out); setPreview(undefined); setMsg({ kind: 'ok', text: 'Applied.' }) }
     } catch (e) {
-      setMsg({ kind: 'bad', text: String((e as Error).message ?? e) })
+      const conflicted = e instanceof ApiError && e.status === 409
+      setConflict(conflicted)
+      setMsg({ kind: 'bad', text: conflicted
+        ? `Conflict: ${e.message}. Reload to start from the current object, or apply anyway to overwrite it and take over those fields.`
+        : String((e as Error).message ?? e) })
     } finally { setBusy(false) }
   }
 
@@ -60,6 +68,7 @@ export function ConfigEditor({ target }: { target: Ref }) {
         <span className="grow" />
         {preview !== undefined && <button className="btn small" onClick={() => setPreview(undefined)}>Back to edit</button>}
         <button className="btn small" disabled={busy || !dirty} onClick={() => send(true)}>Dry run</button>
+        {conflict && <button className="btn small danger" disabled={busy} onClick={() => send(false, true)}>Apply anyway</button>}
         <button className="btn small primary" disabled={busy || !dirty} onClick={() => send(false)}>Apply</button>
       </div>
     </div>

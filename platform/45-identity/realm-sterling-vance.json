@@ -256,6 +256,16 @@
       "attributes": {
         "access.token.lifespan": "120"
       }
+    },
+    {
+      "clientId": "observatory",
+      "name": "Observatory (reads Agent Substrate status from kagent)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${SV_OBSERVATORY_CLIENT_SECRET}",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true
     }
   ],
   "browserFlow": "continuity-browser",

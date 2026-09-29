@@ -12,7 +12,7 @@ COPY server/go.mod server/go.sum ./
 RUN go mod download
 COPY server/ ./
 COPY --from=web /out/web ./web
-RUN go vet ./... && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/observatory .
+RUN go vet ./... && go test ./... && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/observatory .
 
 FROM gcr.io/distroless/static-debian13:nonroot
 COPY --from=server /out/observatory /observatory

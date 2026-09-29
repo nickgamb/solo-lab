@@ -15,6 +15,7 @@ K create secret generic kc-secrets -n sv-identity \
   --from-literal=SV_MCP_WAYPOINT_CLIENT_SECRET="$(lab_secret SV_MCP_WAYPOINT_CLIENT_SECRET)" \
   --from-literal=SV_AGENTREGISTRY_CLIENT_SECRET="$(lab_secret SV_AGENTREGISTRY_CLIENT_SECRET)" \
   --from-literal=SV_CONTINUITY_CLIENT_SECRET="$(lab_secret SV_CONTINUITY_CLIENT_SECRET)" \
+  --from-literal=SV_OBSERVATORY_CLIENT_SECRET="$(lab_secret SV_OBSERVATORY_CLIENT_SECRET)" \
   --dry-run=client -o yaml | K apply -f - >/dev/null
 # S&V's IdP is the enterprise IdP for Cross App Access, so it must ISSUE
 # ID-JAGs: Keycloak 26.7.4 + keycloak/keycloak PR #49998 (tools/keycloak-idjag).

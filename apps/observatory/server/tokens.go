@@ -13,6 +13,10 @@ import (
 // A JWT anywhere in a log record: header.payload.signature, base64url.
 var jwtRe = regexp.MustCompile(`eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*`)
 
+// Credentials that aren't JWTs but ride in URLs (a logged path with its
+// query, a redirect's fragment): authorization codes, opaque tokens, secrets.
+var credParamRe = regexp.MustCompile(`(?i)([?&#;](?:code|access_token|refresh_token|id_token|token|subject_token|actor_token|assertion|client_secret|code_verifier|password|session_state)=)[^&#\s"';]*`)
+
 // tokens pulls the credentials out of an access-log record:
 //
 //   - claims the gateway verified (agentgateway's `jwt`, logged as a map or
@@ -41,6 +45,14 @@ func tokens(a map[string]string) []Token {
 				out = append(out, t)
 			}
 			return "‹token " + t.Fingerprint + "›"
+		})
+		// then opaque credentials in URLs; a JWT there is already a fingerprint
+		a[k] = credParamRe.ReplaceAllStringFunc(a[k], func(m string) string {
+			name, val, _ := strings.Cut(m, "=")
+			if strings.HasPrefix(val, "‹") {
+				return m
+			}
+			return name + "=‹redacted›"
 		})
 	}
 	return out

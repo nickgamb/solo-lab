@@ -30,8 +30,20 @@ type Observed struct {
 	ConnPerSec                       float64
 }
 
+// trustDomain is the mesh's SPIFFE trust domain; telemetryNS is where the
+// telemetry backends run (their edges are drawn as plumbing). main sets both
+// from TRUST_DOMAIN and TELEMETRY_NAMESPACE.
+var (
+	trustDomain = "cluster.local"
+	telemetryNS = "observability"
+)
+
+// kindLabel lets a workload name its own role on the map.
+const kindLabel = "observatory.solo.io/kind"
+
 type builder struct {
 	k       *Kube
+	pods    []*unstructured.Unstructured // listed once per build
 	g       Graph
 	nodes   map[string]*Node
 	edges   map[string]*Edge
@@ -141,13 +153,15 @@ func (b *builder) workloads() {
 			n.Status = "idle"
 			n.Summary["replicas"] = i64(w.Object, "spec", "replicas")
 			n.Summary["images"] = images(w.Object, "spec", "template", "spec")
+			n.kindLabel = w.GetLabels()[kindLabel]
 			b.byOwner[w.GetNamespace()+"/"+w.GetKind()+"/"+w.GetName()] = n.ID
 			for _, o := range w.GetOwnerReferences() {
 				b.byOwner[w.GetNamespace()+"/"+o.Kind+"/"+o.Name] = n.ID
 			}
 		}
 	}
-	for _, p := range b.k.List("pods") {
+	b.pods = b.k.List("pods")
+	for _, p := range b.pods {
 		phase := str(p.Object, "status", "phase")
 		if phase == "Succeeded" || phase == "Failed" {
 			continue
@@ -176,6 +190,9 @@ func (b *builder) workloads() {
 		}
 		n := b.nodes[owner]
 		n.Pods = append(n.Pods, podOf(p))
+		if n.kindLabel == "" {
+			n.kindLabel = p.GetLabels()[kindLabel]
+		}
 		// a host-network pod shares its node's address, which is also where
 		// NodePort traffic (a browser at the edge) comes from: it names nobody
 		if ip := str(p.Object, "status", "podIP"); ip != "" && !boolAt(p.Object, "spec", "hostNetwork") {
@@ -185,7 +202,7 @@ func (b *builder) workloads() {
 		if sa == "" {
 			sa = "default"
 		}
-		id := "spiffe://cluster.local/ns/" + ns + "/sa/" + sa
+		id := "spiffe://" + trustDomain + "/ns/" + ns + "/sa/" + sa
 		if !contains(b.bySA[id], owner) {
 			b.bySA[id] = append(b.bySA[id], owner)
 			n.Identity = append(n.Identity, id)
@@ -292,7 +309,7 @@ func (b *builder) primaries() {
 }
 
 func (b *builder) services() {
-	pods := b.k.List("pods")
+	pods := b.pods
 	for _, s := range b.k.List("services") {
 		k := s.GetNamespace() + "/" + s.GetName()
 		b.svcObj[k] = s
@@ -784,7 +801,7 @@ func (b *builder) policySubjects(pol *unstructured.Unstructured) []string {
 	}
 	if sel := strmap(pol.Object, "spec", "selector", "matchLabels"); len(sel) > 0 {
 		ls := labels.SelectorFromSet(sel)
-		for _, p := range b.k.List("pods") {
+		for _, p := range b.pods {
 			if p.GetNamespace() == ns && ls.Matches(labels.Set(p.GetLabels())) {
 				out = appendUniq(out, b.byPod[str(p.Object, "status", "podIP")])
 			}
@@ -841,20 +858,27 @@ func (b *builder) substrate() {
 		n.Summary["replicas"] = i64(wp.Object, "spec", "replicas")
 		n.Summary["sandboxClass"] = str(wp.Object, "spec", "sandboxClass")
 	}
+	// a pool reference names a pool in the referrer's namespace unless it
+	// says otherwise; one with no name refers to nothing
+	pool := func(o *unstructured.Unstructured, path ...string) string {
+		name := str(o.Object, append(path, "name")...)
+		if name == "" {
+			return ""
+		}
+		ns := str(o.Object, append(path, "namespace")...)
+		if ns == "" {
+			ns = o.GetNamespace()
+		}
+		return b.byOwner[ns+"/WorkerPool/"+name]
+	}
 	for _, a := range b.k.List("sandboxagents") {
-		id := b.byOwner[a.GetNamespace()+"/SandboxAgent/"+a.GetName()]
-		pool := str(a.Object, "spec", "substrate", "workerPoolRef", "name")
-		for k, pid := range b.byOwner {
-			if strings.HasSuffix(k, "/WorkerPool/"+pool) {
-				b.edge(id, pid, "substrate", "runs on", true)
-			}
+		if pid := pool(a, "spec", "substrate", "workerPoolRef"); pid != "" {
+			b.edge(b.byOwner[a.GetNamespace()+"/SandboxAgent/"+a.GetName()], pid, "substrate", "runs on", true)
 		}
 	}
 	for _, at := range b.k.List("actortemplates") {
-		for k, pid := range b.byOwner {
-			if strings.HasSuffix(k, "/WorkerPool/"+str(at.Object, "spec", "workerPoolRef", "name")) {
-				b.nodes[pid].Related = append(b.nodes[pid].Related, *refOf(at))
-			}
+		if pid := pool(at, "spec", "workerPoolRef"); pid != "" && b.nodes[pid] != nil {
+			b.nodes[pid].Related = append(b.nodes[pid].Related, *refOf(at))
 		}
 	}
 }
@@ -872,7 +896,7 @@ func (b *builder) observed(obs []Observed) {
 			// between controllers and their proxies
 			kind := supportKind(b.nodes[dst])
 			switch s := b.nodes[src]; {
-			case s.Namespace == "observability" && s.Kind != "ui":
+			case s.Namespace == telemetryNS && s.Kind != "ui":
 				kind = "telemetry"
 			case s.Kind == "controller":
 				kind = "control"
@@ -885,9 +909,6 @@ func (b *builder) observed(obs []Observed) {
 }
 
 func (b *builder) lookup(ns, wl, principal string) string {
-	if ids := b.bySA[strings.TrimPrefix(principal, "spiffe://")]; len(ids) == 1 {
-		return ids[0]
-	}
 	if ids := b.bySA["spiffe://"+strings.TrimPrefix(principal, "spiffe://")]; len(ids) == 1 {
 		return ids[0]
 	}
@@ -1110,8 +1131,13 @@ func (b *builder) through(e *Edge, declared bool) {
 	}
 }
 
-// classify picks a node's role from what it runs.
+// classify picks a node's role from what it runs. A workload labelled
+// observatory.solo.io/kind (idp, db, ui, controller, tool, workload) says
+// so itself; the rest is guessed from images and names.
 func classify(n *Node) string {
+	if k := n.kindLabel; k != "" {
+		return k
+	}
 	imgs := strings.ToLower(fmt.Sprint(n.Summary["images"]))
 	name := strings.ToLower(n.Label)
 	switch {
@@ -1136,7 +1162,7 @@ func classify(n *Node) string {
 // supportKind separates the calls a workload makes for its job from the
 // plumbing every workload has (telemetry export, control-plane config).
 func supportKind(n *Node) string {
-	if n != nil && n.Namespace == "observability" && n.Kind != "ui" {
+	if n != nil && n.Namespace == telemetryNS && n.Kind != "ui" {
 		return "telemetry"
 	}
 	if n != nil && n.Kind == "controller" {

@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -14,6 +17,7 @@ import (
 // Actor transitions become events in the traffic feed.
 type Substrate struct {
 	url     string
+	token   *clientToken // kagent needs a caller token (its own service account here)
 	hc      *http.Client
 	hub     *Hub
 	traffic *TrafficStore
@@ -116,6 +120,13 @@ func (s *Substrate) Run(ctx context.Context) {
 
 func (s *Substrate) fromKagent(ctx context.Context) (*SubstrateState, error) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, s.url+"/api/substrate/status", nil)
+	if s.token != nil {
+		tok, err := s.token.get(ctx, s.hc)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 	res, err := s.hc.Do(req)
 	if err != nil {
 		return nil, err
@@ -165,4 +176,39 @@ func orDash(s string) string {
 		return "new"
 	}
 	return s
+}
+
+// clientToken is an OAuth2 client-credentials token, fetched when needed and
+// reused until shortly before it expires.
+type clientToken struct {
+	tokenURL, id, secret string
+
+	mu      sync.Mutex
+	tok     string
+	expires time.Time
+}
+
+func (c *clientToken) get(ctx context.Context, hc *http.Client) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.tok != "" && time.Now().Before(c.expires) {
+		return c.tok, nil
+	}
+	form := url.Values{"grant_type": {"client_credentials"}, "client_id": {c.id}, "client_secret": {c.secret}}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.tokenURL, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	res, err := hc.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	var t struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&t); err != nil || res.StatusCode != http.StatusOK || t.AccessToken == "" {
+		return "", fmt.Errorf("kagent client token: %s", res.Status)
+	}
+	c.tok, c.expires = t.AccessToken, time.Now().Add(time.Duration(max(t.ExpiresIn-30, 10))*time.Second)
+	return c.tok, nil
 }
