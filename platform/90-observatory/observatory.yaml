@@ -30,6 +30,13 @@ spec:
         - {name: OIDC_CLIENT_ID, value: observatory}      # the edge's client (azp)
         - {name: ADMIN_GROUP, value: observatory-admins}
         - {name: PROMETHEUS_URL, value: "http://kps-prometheus.observability.svc:9090"}
+        # Agent Substrate's runtime (pools, workers, actors) from kagent, which
+        # wants a caller token: the Observatory's own S&V service account
+        - {name: KAGENT_URL, value: "http://kagent-controller.kagent:8083"}
+        - {name: KAGENT_TOKEN_URL, value: "http://keycloak.sv-identity.svc/realms/sterling-vance/protocol/openid-connect/token"}
+        - {name: KAGENT_CLIENT_ID, value: observatory}
+        - name: KAGENT_CLIENT_SECRET
+          valueFrom: {secretKeyRef: {name: kagent-client, key: client-secret}}
         ports:
         - {name: http, containerPort: 8080}
         - {name: otlp, containerPort: 4318}

@@ -22,125 +22,7 @@ export type CardData = {
   [key: string]: unknown
 }
 
-// Every side can start or end an edge; the canvas picks the pair that
-// faces the other node, so wires don't loop around cards.
-const SIDES = [['l', Position.Left], ['r', Position.Right], ['t', Position.Top], ['b', Position.Bottom]] as const
-
 const fmt = (v?: number) => (v === undefined ? '—' : v >= 10 ? v.toFixed(0) : v.toFixed(1))
-
-function Pods({ n }: { n: LabNode }) {
-  const pods = n.pods ?? []
-  if (!pods.length) return null
-  return (
-    <span className="pods" title={pods.map(p => `${p.name} · ${p.node ?? ''} ${p.zone ?? ''} · ${p.ready ? 'ready' : p.phase}`).join('\n')}>
-      {pods.slice(0, 8).map(p => <i key={p.name} className={p.ready ? 'pd ok' : p.phase === 'Terminating' ? 'pd term' : 'pd warn'} />)}
-      {pods.length > 8 && <span className="subtle">+{pods.length - 8}</span>}
-    </span>
-  )
-}
-
-function Products({ n }: { n: LabNode }) {
-  if (!n.products?.length) return null
-  return <span className="prods" title={n.products.join(', ')}>{n.products.map(p => <ProductIcon key={p} id={p} size={13} />)}</span>
-}
-
-function Shell({ d, children, className = '' }: { d: CardData; children: React.ReactNode; className?: string }) {
-  const n = d.n
-  const cls = ['card', `k-${n.kind}`, `s-${n.status}`, className, d.selected ? 'selected' : '', d.fog ? 'fog' : '', d.lit ? 'lit' : '', d.highlight ? `hl-${d.highlight}` : '']
-  return (
-    <div className={cls.join(' ')}>
-      {children}
-      {SIDES.map(([side, pos]) => (
-        <span key={side}>
-          <Handle id={`${side}-s`} type="source" position={pos} className="h" />
-          <Handle id={`${side}-t`} type="target" position={pos} className="h" />
-        </span>
-      ))}
-    </div>
-  )
-}
-
-export const LabCard = memo(({ data }: NodeProps) => {
-  const d = data as CardData
-  const n = d.n
-  if (d.compact) {
-    return (
-      <Shell d={d} className="compact">
-        <div className="row">
-          <NodeIcon n={n} size={14} />
-          <span className="title ellipsis grow">{n.label}</span>
-          <Pods n={n} />
-        </div>
-      </Shell>
-    )
-  }
-  const gw = n.kind === 'gateway' || n.kind === 'waypoint'
-  const big = n.id.endsWith('/ai-gateway')
-  return (
-    <Shell d={d} className={big ? 'hero' : gw ? 'gw' : ''}>
-      <div className="row">
-        <NodeIcon n={n} size={big ? 22 : 18} />
-        <div className="grow">
-          <div className="title ellipsis">{n.label}</div>
-          <div className="meta ellipsis">{n.namespace ? `${n.namespace} · ` : ''}{kindLabel[n.kind] ?? n.kind}</div>
-        </div>
-        <Products n={n} />
-        <span className={`dot ${n.status}`} />
-      </div>
-      {gw ? (
-        <div className="gstats">
-          <div><b>{fmt(d.rps)}</b><span>req/s</span></div>
-          <div><b className={(d.err ?? 0) > 0 ? 'bad' : ''}>{((d.err ?? 0) * 100).toFixed(1)}%</b><span>denied/err</span></div>
-          <div><b>{d.p95 ? `${Math.round(d.p95)}ms` : '—'}</b><span>p95</span></div>
-        </div>
-      ) : (
-        <div className="row foot">
-          {n.badges?.filter(b => !n.products?.includes(b)).map(b => <span key={b} className="chip accent">{b}</span>)}
-          {d.actor && <span className={`chip ${d.actor.status === 'Running' ? 'ok' : d.actor.status === 'Suspended' ? '' : 'warn'}`}>{d.actor.status}</span>}
-          <span className="grow" />
-          <Pods n={n} />
-          {(d.rps ?? 0) > 0 && <span className="rps">{fmt(d.rps)}/s</span>}
-        </div>
-      )}
-    </Shell>
-  )
-})
-
-// A WorkerPool: one bay per worker pod, showing the actor running in it.
-export const SubstrateCard = memo(({ data }: NodeProps) => {
-  const d = data as CardData
-  const n = d.n
-  const workers = d.workers ?? []
-  const parked = (d.actors ?? []).filter(a => a.status === 'Suspended').length
-  const bays = workers.length ? workers : (n.pods ?? []).map(p => ({ workerPod: p.name } as SubWorker))
-  return (
-    <Shell d={d} className="sub">
-      <div className="row">
-        <NodeIcon n={n} size={16} />
-        <div className="grow">
-          <div className="title ellipsis">{n.label}</div>
-          <div className="meta ellipsis">{n.namespace} · Agent Substrate · {String(n.summary?.sandboxClass ?? 'gvisor')}</div>
-        </div>
-        <span className={`dot ${n.status}`} />
-      </div>
-      <div className="bays">
-        {bays.map(w => {
-          const a = (d.actors ?? []).find(x => x.actorId && x.actorId === w.actorId)
-          return (
-            <div key={w.workerPod} className={a ? `bay busy ${a.status.toLowerCase()}` : 'bay'} title={w.workerPod}>
-              {a ? <span className="ellipsis">{a.actorTemplateName.replace(/-[a-z0-9]{6,}$/, '')}</span> : <span className="subtle">idle</span>}
-            </div>
-          )
-        })}
-      </div>
-      <div className="row foot">
-        <span className="chip">{parked} snapshot{parked === 1 ? '' : 's'} parked</span>
-        <span className="grow" />
-        <Pods n={n} />
-      </div>
-    </Shell>
-  )
-})
 
 export type GroupData = {
   label: string; domain?: string; fog?: boolean; outside?: boolean
@@ -227,26 +109,6 @@ function Slots(_: { d: CardData }) {
   )
 }
 
-// Chip: platform plumbing, shown only when asked for.
-export const Chip = memo(({ data }: NodeProps) => {
-  const d = data as CardData
-  const n = d.n
-  return (
-    <div className={['chipnode', d.selected ? 'selected' : '', d.fog ? 'fog' : '', d.lit ? 'lit' : ''].join(' ')}>
-      <Slots d={d} />
-      <span className={`dot ${n.status}`} />
-      <span className="ellipsis grow" title={`${n.label}: no traffic on the layers shown`}>{n.label}</span>
-    </div>
-  )
-})
-
-// Port: where bundled wires enter a party.
-export const Port = memo(({ data }: NodeProps) => (
-  <div className="port">
-    <Slots d={data as CardData} />
-  </div>
-))
-
 // Tray: a Substrate worker pool, drawn around the agents it runs, with a
 // bay per worker (lit while it holds an agent's session).
 export const TrayBox = memo(({ data }: NodeProps) => {
@@ -290,4 +152,4 @@ export const ColHead = memo(({ data }: NodeProps) => {
   return <div className="colhead">{d.label}</div>
 })
 
-export const nodeTypes = { card: LabCard, substrate: SubstrateCard, party: PartyBox, tile: Tile, chip: Chip, port: Port, tray: TrayBox, colhead: ColHead, door: DoorPillar }
+export const nodeTypes = { party: PartyBox, tile: Tile, tray: TrayBox, colhead: ColHead, door: DoorPillar }

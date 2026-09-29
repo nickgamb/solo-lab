@@ -19,3 +19,7 @@ istio:
   network: ${MESH_NETWORK}
 monitoring:
   enabled: true
+  # The proxies' own metrics can't be scraped from inside the mesh: they take
+  # HBONE themselves, and their HBONE listener doesn't serve the metrics port.
+  # What they do is in their access logs (OTLP, platform/90-observatory).
+  proxy: {podMonitor: {enabled: false}}

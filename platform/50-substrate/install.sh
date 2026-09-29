@@ -28,5 +28,5 @@ state() { K exec -n ate-system valkey-cluster-0 -- redis-cli -p 6379 cluster inf
 wait_for "valkey cluster_state:ok" 60 5 sh -c "[ \"\$(kubectl --context $KCTX exec -n ate-system valkey-cluster-0 -- redis-cli -p 6379 cluster info 2>/dev/null | tr -d '\r' | awk -F: '/^cluster_state:/{print \$2}')\" = ok ]"
 ok "valkey cluster_state:ok"
 apply_tmpl "$D/mesh.yaml"
-ok "STRICT; router <- kagent controller; ate-api <- kagent controller, observatory"
+ok "STRICT; router <- kagent controller; ate-api <- kagent controller"
 K get pods -n ate-system --no-headers | awk '{print "    "$1" "$3}'

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -54,6 +55,7 @@ func main() {
 		}
 	}
 	cfg.QPS, cfg.Burst = 50, 100
+	trustDomain, telemetryNS = env("TRUST_DOMAIN", trustDomain), env("TELEMETRY_NAMESPACE", telemetryNS)
 
 	k, err := NewKube(cfg)
 	if err != nil {
@@ -77,6 +79,9 @@ func main() {
 	cont := &Continuity{k: k, res: &Resources{k: k, admin: env("ADMIN_GROUP", "observatory-admins")}, traffic: traffic}
 	sub := &Substrate{url: env("KAGENT_URL", ""), hc: &http.Client{Timeout: 5 * time.Second}, hub: hub, traffic: traffic,
 		index: func() *Index { return index.Load() }}
+	if u := os.Getenv("KAGENT_TOKEN_URL"); u != "" {
+		sub.token = &clientToken{tokenURL: u, id: os.Getenv("KAGENT_CLIENT_ID"), secret: os.Getenv("KAGENT_CLIENT_SECRET")}
+	}
 
 	// Graph: rebuilt when the cluster changes (debounced) and every few
 	// seconds for the mesh's observed edges; published only when it differs.
@@ -172,7 +177,10 @@ func main() {
 	otlp := http.NewServeMux()
 	otlp.HandleFunc("/v1/logs", traffic.ServeOTLP)
 
-	srv := &http.Server{Addr: env("LISTEN", ":8080"), Handler: securityHeaders(mux), ReadHeaderTimeout: 10 * time.Second}
+	// requests carry ctx, so on SIGTERM the live streams end and Shutdown
+	// doesn't wait out its timeout for them
+	base := func(net.Listener) context.Context { return ctx }
+	srv := &http.Server{Addr: env("LISTEN", ":8080"), Handler: securityHeaders(mux), ReadHeaderTimeout: 10 * time.Second, BaseContext: base}
 	osrv := &http.Server{Addr: env("OTLP_LISTEN", ":4318"), Handler: otlp, ReadHeaderTimeout: 10 * time.Second}
 	go func() { slog.Info("otlp", "addr", osrv.Addr); logFatal(osrv.ListenAndServe()) }()
 	go func() { slog.Info("http", "addr", srv.Addr); logFatal(srv.ListenAndServe()) }()

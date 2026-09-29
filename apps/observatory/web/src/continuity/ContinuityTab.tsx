@@ -19,7 +19,9 @@ export function ContinuityTab({ lab }: { lab: Lab }) {
   }
   return (
     <ReactFlowProvider>
-      <Continuity lab={lab} ic={ic} items={items} pick={pick} setPick={setPick} />
+      {/* keyed by instance: switching instances starts fresh (unsaved rule
+          edits never carry over to another IdentityContinuity) */}
+      <Continuity key={`${ic.metadata.namespace}/${ic.metadata.name}`} lab={lab} ic={ic} items={items} pick={pick} setPick={setPick} />
     </ReactFlowProvider>
   )
 }
@@ -43,15 +45,17 @@ function Continuity({ lab, ic, items, pick, setPick }: {
   const health = ic.spec.health ?? {}
   const pst = primary ? status.get(primary.name) : undefined
   // where the story is: a cut the controller hasn't reacted to yet, a
-  // failover, or a restored path it is still verifying before failing back
-  const phase: 'ok' | 'detecting' | 'failover' | 'recovering' | 'down' =
+  // failover, the primary answering again while the controller verifies it,
+  // or a healthy primary waiting on a manual failback
+  const phase: Phase =
     !active ? 'down'
       : cut && active === target?.name ? 'detecting'
-        : failover && !cut && !!pst?.healthy === false && primary?.name === target?.name ? 'recovering'
-          : failover ? 'failover' : 'ok'
+        : failover && !cut && pst && !pst.healthy && (pst.consecutiveSuccesses ?? 0) > 0 ? 'recovering'
+          : failover && pst?.healthy && ic.spec.failback === 'Manual' ? 'held'
+            : failover ? 'failover' : 'ok'
   const nodes = useMemo(() => new Map(lab.graph?.nodes.map(n => [n.id, n]) ?? []), [lab.graph])
   const key = `${ic.metadata.namespace}/${ic.metadata.name}`
-  const paths = (lab.continuity?.paths ?? []).filter(p => p.instance === key)
+  const paths = useMemo(() => (lab.continuity?.paths ?? []).filter(p => p.instance === key), [lab.continuity?.paths, key])
   const brokerNode = paths[0] ? nodes.get(paths[0].broker) : undefined
   const egress = ic.spec.egress
     ? lab.graph?.nodes.find(n => n.namespace === ic.spec.egress!.namespace && n.label === ic.spec.egress!.waypoint) : undefined
@@ -128,6 +132,7 @@ function Continuity({ lab, ic, items, pick, setPick }: {
   return (
     <div className="cont">
       <Banner phase={phase} active={activeName} primary={primary?.displayName ?? primary?.name} since={ic.status?.activeSince}
+        reason={pst && !pst.healthy ? `${pst.reason}${pst.message ? `: ${pst.message}` : ''}` : undefined}
         cut={cut} checks={phase === 'recovering' ? `${pst?.consecutiveSuccesses ?? 0}/${health.healthyThreshold ?? 3} healthy checks`
           : phase === 'detecting' ? `${status.get(target?.name ?? '')?.consecutiveFailures ?? 0}/${health.unhealthyThreshold ?? 2} failed checks` : undefined} />
       <div className="cont-main">
@@ -164,7 +169,7 @@ function Continuity({ lab, ic, items, pick, setPick }: {
           </ReactFlow>
           <TierHealth tiers={ic.status?.tiers ?? []} />
         </div>
-        <RuleBuilder ic={ic} broker={brokerNode?.label ?? 'the broker'} />
+        <RuleBuilder key={key} ic={ic} broker={brokerNode?.label ?? 'the broker'} />
       </div>
       <div className="cont-foot">
         <div className="cont-col">
@@ -192,25 +197,27 @@ function Continuity({ lab, ic, items, pick, setPick }: {
   )
 }
 
-type Phase = 'ok' | 'detecting' | 'failover' | 'recovering' | 'down'
+type Phase = 'ok' | 'detecting' | 'failover' | 'recovering' | 'held' | 'down'
 
 // Banner: the one line a room reads from the back: which IdP is signing
 // people in, and, during an outage, what happened and what the lab did.
-function Banner({ phase, active, primary, since, cut, checks }: {
-  phase: Phase; active?: string; primary?: string; since?: string; cut?: { path?: string; since?: string; by?: string }; checks?: string
+function Banner({ phase, active, primary, since, cut, checks, reason }: {
+  phase: Phase; active?: string; primary?: string; since?: string; cut?: { path?: string; since?: string; by?: string }; checks?: string; reason?: string
 }) {
   const up = (x?: string) => String(x ?? '').toUpperCase()
-  const cls = phase === 'ok' ? 'ok' : phase === 'detecting' || phase === 'recovering' ? 'warn' : 'bad'
+  const cls = phase === 'ok' ? 'ok' : phase === 'detecting' || phase === 'recovering' || phase === 'held' ? 'warn' : 'bad'
   const head = {
     ok: `CONNECTED · ${up(active)} SIGNING PEOPLE IN`,
     detecting: `OUTAGE · ${up(primary)} UNREACHABLE · FAILING OVER`,
     failover: `FAILOVER ACTIVE · ${up(active)} → REPLACING ${up(primary)}`,
-    recovering: `NETWORK RESTORED · VERIFYING ${up(primary)} BEFORE FAILING BACK`,
+    recovering: `${up(primary)} ANSWERING AGAIN · VERIFYING BEFORE FAILING BACK`,
+    held: `${up(active)} SIGNING PEOPLE IN · ${up(primary)} HEALTHY, FAILBACK IS MANUAL`,
     down: 'SIGN-IN UNAVAILABLE · NO HEALTHY TIER',
   }[phase]
-  const why = phase === 'ok' ? undefined
+  const why = phase === 'ok' || phase === 'held' ? undefined
     : cut ? `network to ${cut.path ?? primary} cut${cut.by ? ` by ${cut.by}` : ''}${cut.since ? ` at ${new Date(cut.since).toLocaleTimeString()}` : ''}`
-      : phase === 'recovering' ? 'the network is back; the controller waits for steady health checks' : undefined
+      : phase === 'recovering' ? 'the controller waits for steady health checks'
+        : reason
   return (
     <div className={`banner ${cls} p-${phase}`}>
       <span className={`dot ${cls}`} />
