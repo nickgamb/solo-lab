@@ -25,8 +25,10 @@ cross-company token.
      `mcp-waypoint`. The edge forwards it to kagent as `Authorization`.
    - `IdToken`: Bob's **ID token**, issued to `kagent`.
 2. The kagent controller runs in trusted-proxy mode: it takes the user from
-   the forwarded token and passes `Authorization` to the agent on each A2A
-   turn. With `tools/kagent` patch 0001 it also passes `X-Id-Token`, but only
+   the forwarded token without checking its signature, so the mesh admits
+   only the UI (which forwards what the edge verified) and the agents' worker
+   pools ([ARCHITECTURE.md](ARCHITECTURE.md#what-the-lab-doesnt-enforce)). It
+   passes `Authorization` to the agent on each A2A turn. With `tools/kagent` patch 0001 it also passes `X-Id-Token`, but only
    when that ID token is bound to the same user: same `sub`, issued to
    `kagent`, not expired.
 3. The agent (`sv-agents/bob-assistant`, a SandboxAgent on Agent Substrate)

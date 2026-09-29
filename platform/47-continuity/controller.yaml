@@ -62,25 +62,15 @@ rules:
 - apiGroups: [networking.istio.io]
   resources: [serviceentries]
   verbs: [get, list, watch, create, update, patch, delete]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata: {name: continuity-controller, namespace: sv-egress}
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: continuity-controller}
-subjects: [{kind: ServiceAccount, name: continuity-controller, namespace: sv-identity}]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata: {name: continuity-controller-partitions}
-rules:
+# partitions (DENY on a tier's ServiceEntry) are read only here, in the egress
 - apiGroups: [security.istio.io]
   resources: [authorizationpolicies]
   verbs: [get, list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata: {name: continuity-controller-partitions}
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: continuity-controller-partitions}
+kind: RoleBinding
+metadata: {name: continuity-controller, namespace: sv-egress}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: continuity-controller}
 subjects: [{kind: ServiceAccount, name: continuity-controller, namespace: sv-identity}]
 ---
 apiVersion: apps/v1

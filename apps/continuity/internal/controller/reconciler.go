@@ -294,23 +294,47 @@ func (r *Reconciler) cachedDiscovery(ic *v1.IdentityContinuity, t v1.Tier) *prob
 }
 
 // markPartitions flags tiers that have a partition policy. Informational only.
+// A partition counts only where it can cut this instance's path: a DENY in its
+// egress namespace that targets the tier's own ServiceEntry. A policy elsewhere
+// carrying the tier label says nothing about S&V's path.
 func (r *Reconciler) markPartitions(ctx context.Context, ic *v1.IdentityContinuity) {
+	for i := range ic.Status.Tiers {
+		ic.Status.Tiers[i].Partitioned = false
+	}
+	if ic.Spec.Egress == nil {
+		return
+	}
 	var list unstructured.UnstructuredList
 	list.SetGroupVersionKind(authzPolicyGVK.GroupVersion().WithKind("AuthorizationPolicyList"))
 	sel, _ := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: LabelTier, Operator: metav1.LabelSelectorOpExists}}})
-	if err := r.Reader.List(ctx, &list, client.MatchingLabelsSelector{Selector: sel}); err != nil {
+	if err := r.Reader.List(ctx, &list, client.InNamespace(ic.Spec.Egress.Namespace), client.MatchingLabelsSelector{Selector: sel}); err != nil {
 		log.FromContext(ctx).V(1).Info("listing partition policies", "err", err.Error())
 		return
 	}
 	cut := map[string]bool{}
 	for _, p := range list.Items {
-		if a, _, _ := unstructured.NestedString(p.Object, "spec", "action"); a == "DENY" {
-			cut[p.GetLabels()[LabelTier]] = true
+		tier := p.GetLabels()[LabelTier]
+		if a, _, _ := unstructured.NestedString(p.Object, "spec", "action"); a == "DENY" && targetsServiceEntry(p, serviceEntryName(tier)) {
+			cut[tier] = true
 		}
 	}
 	for i := range ic.Status.Tiers {
 		ic.Status.Tiers[i].Partitioned = cut[ic.Status.Tiers[i].Name]
 	}
+}
+
+// serviceEntryName is the ServiceEntry reconcileEgress keeps for a tier.
+func serviceEntryName(tier string) string { return "continuity-" + tier }
+
+func targetsServiceEntry(p unstructured.Unstructured, name string) bool {
+	refs, _, _ := unstructured.NestedSlice(p.Object, "spec", "targetRefs")
+	for _, r := range refs {
+		m, _ := r.(map[string]any)
+		if m["kind"] == "ServiceEntry" && m["name"] == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Reconciler) recordActive(ic *v1.IdentityContinuity, active, why string) {
@@ -506,7 +530,7 @@ func (r *Reconciler) reconcileEgress(ctx context.Context, ic *v1.IdentityContinu
 		}
 		hosts := externalHosts(e.InternalDomains, t.OIDC.Issuer, r.cachedDiscovery(ic, t))
 		if len(hosts) > 0 {
-			want["continuity-"+t.Name] = serviceEntry(e, ic.Namespace, instance, t.Name, hosts)
+			want[serviceEntryName(t.Name)] = serviceEntry(e, ic.Namespace, instance, t.Name, hosts)
 		}
 	}
 	var errs []error
@@ -569,7 +593,7 @@ func serviceEntry(e *v1.Egress, callerNS, instance, tier string, hosts []string)
 	}}
 	se.SetGroupVersionKind(serviceEntryGVK)
 	se.SetNamespace(e.Namespace)
-	se.SetName("continuity-" + tier)
+	se.SetName(serviceEntryName(tier))
 	se.SetLabels(map[string]string{"istio.io/use-waypoint": e.Waypoint, LabelTier: tier, LabelInstance: instance})
 	return se
 }

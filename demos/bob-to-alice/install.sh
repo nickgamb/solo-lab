@@ -30,6 +30,7 @@ step "CloudNativePG operator (Alice's database)"
 K create namespace cnpg-system --dry-run=client -o yaml | K apply -f - >/dev/null
 K label namespace cnpg-system istio.io/dataplane-mode=ambient lab.solo.io/party=platform --overwrite >/dev/null
 helm_up cnpg cloudnative-pg "$CNPG_VERSION" cnpg-system --repo https://cloudnative-pg.github.io/charts
+deny_internet cnpg-system
 
 step "Alice's IdP (alice-identity)"
 K create secret generic kc-secrets -n alice-identity \
