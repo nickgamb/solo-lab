@@ -84,10 +84,12 @@ workers in zones a, b and c). The full lab uses about 17 GB of memory.
 | https://portal.alice.lab | Alice's portal (her grants and terms) | `alice` / `alice-demo` |
 | https://grafana.ops.lab | Grafana | `ops` / `ops-demo` |
 | https://kiali.ops.lab | Kiali mesh graph (view-only) | `ops` / `ops-demo` |
-| https://idp.sterling.lab | S&V Keycloak | admin password in `.lab/secrets.env` |
+| https://idp.sterling.lab/realms/sterling-vance/account | S&V Keycloak: a user's own account | `bob` / `bob-demo` |
 
 Generated secrets (Keycloak admin passwords, client secrets) are in
-`.lab/secrets.env`, created on first install and gitignored.
+`.lab/secrets.env`, created on first install and gitignored. The edge publishes
+only each party's realm, not Keycloak's admin console; reach that with a
+port-forward ([COMMANDS.md](docs/COMMANDS.md#identity)).
 
 ## Demos
 

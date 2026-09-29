@@ -122,8 +122,12 @@ function dedupe(ts: Traffic[]) {
   return ts.filter(t => (seen.has(t.id) ? false : (seen.add(t.id), true))).sort((a, b) => b.time.localeCompare(a.time)).slice(0, TRAFFIC_KEEP)
 }
 
+// Writes carry a JSON body unless the caller says otherwise (the server
+// refuses writes without a JSON or YAML content type).
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(path, init)
+  const headers = new Headers(init?.headers)
+  if (init?.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  const r = await fetch(path, { ...init, headers })
   const text = await r.text()
   if (!r.ok) throw new Error(text.trim() || r.statusText)
   const ct = r.headers.get('content-type') ?? ''

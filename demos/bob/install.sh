@@ -7,10 +7,20 @@ D="$(cd "$(dirname "$0")" && pwd)"
 need_cluster
 
 step "Images (local registry)"
-build() { docker image inspect "$1" >/dev/null 2>&1 || docker build -q -t "$1" "$2" >/dev/null; docker push -q "$1" >/dev/null; ok "$1"; }
-build "localhost:$LAB_REGISTRY_PORT/sv/bob-workspace:dev" "$D/mcp/bob-workspace"
-build "localhost:$LAB_REGISTRY_PORT/ledgerline/research-mcp:dev" "$D/ledgerline/mcp"
-build "localhost:$LAB_REGISTRY_PORT/lab/toolbox:1" "$LAB_ROOT/tools/toolbox"
+# Tagged by a hash of the build context, so a source change is a new image and
+# a rollout, and an unchanged one is never rebuilt.
+build() {  # build <var> <repo> <dir>: exports <var>=<repo>:<content hash>
+  local tag img; tag=$(cd "$3" && find . -type f | LC_ALL=C sort | xargs cat | shasum | cut -c1-12)
+  img="localhost:$LAB_REGISTRY_PORT/$2:$tag"
+  docker image inspect "$img" >/dev/null 2>&1 || docker build -q -t "$img" "$3" >/dev/null
+  docker push -q "$img" >/dev/null
+  export "$1=$img"; ok "$img"
+}
+build BOB_WORKSPACE_IMAGE sv/bob-workspace "$D/mcp/bob-workspace"
+build LEDGERLINE_RESEARCH_IMAGE ledgerline/research-mcp "$D/ledgerline/mcp"
+docker image inspect "localhost:$LAB_REGISTRY_PORT/lab/toolbox:1" >/dev/null 2>&1 \
+  || docker build -q -t "localhost:$LAB_REGISTRY_PORT/lab/toolbox:1" "$LAB_ROOT/tools/toolbox" >/dev/null
+docker push -q "localhost:$LAB_REGISTRY_PORT/lab/toolbox:1" >/dev/null
 
 step "Ledgerline Research (its own IdP, MCP server, Istio waypoint)"
 K create secret generic kc-secrets -n ledgerline-identity \
@@ -20,7 +30,7 @@ K create secret generic kc-secrets -n ledgerline-identity \
   --from-literal=LL_UNUSED_CLIENT_SECRET="$(lab_secret LL_UNUSED_CLIENT_SECRET)" \
   --dry-run=client -o yaml | K apply -f - >/dev/null
 deploy_keycloak ledgerline-identity "$LEDGERLINE_DOMAIN" https-ledgerline "$D/ledgerline/realm-ledgerline.json" identity-assertion-jwt
-apply_tmpl "$D/ledgerline/research.yaml"
+apply_tmpl "$D/ledgerline/research.yaml" "$D/ledgerline/identity.yaml"
 deny_internet ledgerline ledgerline-identity
 ok "https://idp.$LEDGERLINE_DOMAIN  https://mcp.$LEDGERLINE_DOMAIN"
 

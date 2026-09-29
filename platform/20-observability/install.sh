@@ -26,8 +26,20 @@ helm_up otel-collector opentelemetry-collector "$OTEL_COLLECTOR_VERSION" $NS \
   --repo https://open-telemetry.github.io/opentelemetry-helm-charts ${VALS[@]+"${VALS[@]}"}
 
 step "Kiali $KIALI_VERSION"
+# Kiali runs in its own meshed namespace. A lab from before that has it in
+# istio-system (outside the mesh): remove that install and its edge route.
+if H status kiali -n istio-system >/dev/null 2>&1; then
+  H uninstall kiali -n istio-system --wait >/dev/null
+  K delete httproutes.gateway.networking.k8s.io,trafficpolicies.gateway.kgateway.dev,gatewayextensions.gateway.kgateway.dev -n istio-system kiali kiali-sso --ignore-not-found >/dev/null 2>&1 || true
+  K delete networkpolicy kiali-callers -n istio-system --ignore-not-found >/dev/null
+  K delete secret kiali-sso -n istio-system --ignore-not-found >/dev/null
+fi
 values_for "$D" kiali oss
-helm_up kiali kiali-server "$KIALI_VERSION" istio-system --repo https://kiali.org/helm-charts ${VALS[@]+"${VALS[@]}"}
+helm_up kiali kiali-server "$KIALI_VERSION" kiali --repo https://kiali.org/helm-charts ${VALS[@]+"${VALS[@]}"}
+
+step "Mesh policy"
+K apply -f "$D/mesh-policy.yaml" >/dev/null
+ok "collector, Prometheus, Tempo, kube-state-metrics and Kiali take only their named callers"
 
 step "Mesh scrape targets"
 K apply -f "$D/monitors.yaml" >/dev/null

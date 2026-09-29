@@ -196,6 +196,7 @@ deploy_keycloak() {
     --dry-run=client -o yaml | K apply -f - >/dev/null
   export PARTY_NS=$ns PARTY_DOMAIN=$domain PARTY_LISTENER=$listener KC_FEATURES=$features
   export KC_REALM_CM="realm-$(basename "$realm" .json | sed 's/^realm-//')"
+  export KC_REALM; KC_REALM=$(jq -r .realm "$realm")
   export KC_REALM_SHA; KC_REALM_SHA=$(shasum -a 256 "$realm" | cut -c1-16)
   export KC_KEY_SHA; KC_KEY_SHA=$(shasum -a 256 "$LAB_STATE/keys/$rname.crt" | cut -c1-16)
   K create configmap "$KC_REALM_CM" -n "$ns" --from-file="$(basename "$realm")=$realm" \
@@ -212,10 +213,16 @@ port_forward() {
   wait_for "port-forward $1/$2" 20 0.5 curl -s -o /dev/null "http://127.0.0.1:$3/"
 }
 
+# need_password_grant: the scripted checks sign in with the password grant.
+need_password_grant() {
+  [ "$LAB_PASSWORD_GRANT" = true ] || die "these checks sign in with the password grant, which is off (LAB_PASSWORD_GRANT=$LAB_PASSWORD_GRANT in config/lab.env)"
+}
+
 # user_token <ns> <realm> <client> <secret> <user> <pass>: a password-grant
 # access token for scripted checks, fetched over a localhost port-forward to
 # the party's Keycloak (the issuer claim is still https://idp.<party>.lab).
 user_token() {
+  need_password_grant
   local lp=$((18000 + RANDOM % 1000))
   port_forward "$1" keycloak "$lp" 80
   curl -s "http://127.0.0.1:$lp/realms/$2/protocol/openid-connect/token" \
@@ -223,22 +230,24 @@ user_token() {
     -d username="$5" -d password="$6" -d scope=openid | jq -r .access_token
 }
 
-# probe_pod <ns>: a toolbox pod with its own ServiceAccount (so its own SPIFFE
-# identity) in <ns>, with tools/mcp-probe.py copied in.
+# probe_pod <ns> [sa]: a toolbox pod with tools/mcp-probe.py, in <ns>. With no
+# <sa> it is pod "probe" with its own ServiceAccount "probe" (so its own SPIFFE
+# identity: some workload, nobody special). With <sa> it is pod "probe-<sa>"
+# running as that existing ServiceAccount, to act as that workload (e.g. an
+# agent's worker pool) in a check.
 probe_pod() {
+  local ns=$1 sa=${2:-probe} pod=probe
+  [ "$sa" = probe ] || pod=probe-$sa
   # pod specs are immutable: replace a probe that predates the current spec
-  K get pod probe -n "$1" -o jsonpath='{.spec.volumes[*].name}' 2>/dev/null | grep -q lab-ca \
-    || K delete pod probe -n "$1" --now --ignore-not-found >/dev/null 2>&1
+  K get pod "$pod" -n "$ns" -o jsonpath='{.spec.volumes[*].name}' 2>/dev/null | grep -q lab-ca \
+    || K delete pod "$pod" -n "$ns" --now --ignore-not-found >/dev/null 2>&1
+  [ "$sa" = probe ] && K create serviceaccount probe -n "$ns" --dry-run=client -o yaml | K apply -f - >/dev/null
   K apply -f - >/dev/null <<YAML
 apiVersion: v1
-kind: ServiceAccount
-metadata: {name: probe, namespace: $1}
----
-apiVersion: v1
 kind: Pod
-metadata: {name: probe, namespace: $1, labels: {app: probe}}
+metadata: {name: $pod, namespace: $ns, labels: {app: probe}}
 spec:
-  serviceAccountName: probe
+  serviceAccountName: $sa
   containers:
   - name: probe
     image: localhost:${LAB_REGISTRY_PORT}/lab/toolbox:1
@@ -246,6 +255,6 @@ spec:
     volumeMounts: [{name: lab-ca, mountPath: /etc/lab-ca, readOnly: true}]
   volumes: [{name: lab-ca, configMap: {name: lab-ca-bundle}}]
 YAML
-  K wait --for=condition=Ready "pod/probe" -n "$1" --timeout=120s >/dev/null
-  K exec -i -n "$1" probe -- sh -c 'cat > /tmp/p.py' < "$LAB_ROOT/tools/mcp-probe.py"
+  K wait --for=condition=Ready "pod/$pod" -n "$ns" --timeout=120s >/dev/null
+  K exec -i -n "$ns" "$pod" -- sh -c 'cat > /tmp/p.py' < "$LAB_ROOT/tools/mcp-probe.py"
 }

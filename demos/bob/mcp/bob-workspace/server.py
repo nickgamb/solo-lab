@@ -1,15 +1,15 @@
 """bob-workspace: Bob's book of business at Sterling & Vance, as an MCP server.
 
-It holds no OAuth code and verifies no signatures. Its one rule: it only
-answers a token *delegated to it*. That token is minted per call by the firm's
-agentgateway (RFC 8693, audience bob-workspace, 120 s), and the sv-mcp
-waypoint has already verified its signature before this process sees it.
+Its one rule: it only answers a token *delegated to it*. That token is minted
+per call by the firm's agentgateway (RFC 8693, audience bob-workspace, 120 s).
+The sv-mcp waypoint verifies the caller's token before this process sees the
+call, and this process verifies the delegated one itself (signature against
+S&V's keys, issuer, audience, expiry): no check trusts the one before it.
 
 Bob's own sign-in token (audience ai-gateway) is refused here, so an agent
 that skipped the gateway and replayed Bob's token would get nothing. Each tool
 also acts as the user in the token: an advisor sees their own book, not Bob's.
 """
-import base64
 import contextvars
 import copy
 import json
@@ -17,11 +17,14 @@ import os
 import pathlib
 import time
 
+import jwt
 import uvicorn
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 AUDIENCE = os.environ.get("WORKSPACE_AUDIENCE", "bob-workspace")
+ISSUER = os.environ["WORKSPACE_ISSUER"]
+JWKS = jwt.PyJWKClient(os.environ["WORKSPACE_JWKS_URL"], cache_keys=True, lifespan=300)
 BOOK = json.loads((pathlib.Path(__file__).parent / "book.json").read_text())
 FOLLOWUPS: list[dict] = []
 
@@ -29,23 +32,20 @@ _auth = contextvars.ContextVar("authorization", default="")
 
 
 def _claims() -> dict:
-    """Claims of the bearer token on this call. Signature was checked upstream."""
-    raw = _auth.get()
-    if not raw.lower().startswith("bearer "):
+    """Verified claims of the bearer token on this call."""
+    scheme, _, token = _auth.get().partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
         raise ToolError("refused: no delegated token on this call")
+    token = token.strip()
     try:
-        payload = raw.split()[1].split(".")[1]
-        payload += "=" * (-len(payload) % 4)
-        claims = json.loads(base64.urlsafe_b64decode(payload))
-    except Exception as e:  # noqa: BLE001
-        raise ToolError(f"refused: unreadable token: {e}")
-    aud = claims.get("aud")
-    auds = aud if isinstance(aud, list) else [aud]
-    if AUDIENCE not in auds:
-        raise ToolError(
-            f"refused: token audience {auds} is not {AUDIENCE!r}. This workspace only "
-            "accepts tokens delegated to it by the firm's gateway")
-    return claims
+        key = JWKS.get_signing_key_from_jwt(token)
+        return jwt.decode(token, key.key, algorithms=["RS256"], audience=AUDIENCE, issuer=ISSUER,
+                          options={"require": ["exp", "iat", "sub"]}, leeway=5)
+    except jwt.InvalidAudienceError:
+        raise ToolError(f"refused: token audience is not {AUDIENCE!r}. This workspace only "
+                        "accepts tokens delegated to it by the firm's gateway")
+    except jwt.PyJWTError as e:
+        raise ToolError(f"refused: {e}")
 
 
 def _book_for(claims: dict) -> dict:

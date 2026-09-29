@@ -4,7 +4,7 @@
 # pointed at an issuer the lab already runs (Ledgerline's IdP) and the spec is
 # restored on exit. Checks what a browser would see, via the edge.
 . "$(dirname "$0")/../../scripts/lib.sh"
-need_cluster
+need_cluster; need_password_grant
 NS=sv-identity IC=sterling-vance BOB_ID=5b0b0000-0000-4000-8000-000000000b0b
 T=verify-ledgerline TNS=ledgerline-identity
 CA=(--cacert "$LAB_CA_DIR/ca.crt")

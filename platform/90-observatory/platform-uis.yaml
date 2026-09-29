@@ -52,7 +52,7 @@ spec:
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
-metadata: {name: kiali, namespace: istio-system}
+metadata: {name: kiali, namespace: kiali}
 spec:
   parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-ops}]
   hostnames: ["kiali.${OPS_DOMAIN}"]
@@ -61,7 +61,7 @@ spec:
 ---
 apiVersion: gateway.kgateway.dev/v1alpha1
 kind: GatewayExtension
-metadata: {name: kiali-sso, namespace: istio-system}
+metadata: {name: kiali-sso, namespace: kiali}
 spec:
   type: OAuth2
   oauth2:
@@ -85,7 +85,7 @@ spec:
 ---
 apiVersion: gateway.kgateway.dev/v1alpha1
 kind: TrafficPolicy
-metadata: {name: kiali-sso, namespace: istio-system}
+metadata: {name: kiali-sso, namespace: kiali}
 spec:
   targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: kiali}]
   oauth2: {extensionRef: {name: kiali-sso}}
@@ -96,12 +96,13 @@ metadata: {name: platform-uis-sso-to-keycloak, namespace: ops-identity}
 spec:
   from:
   - {group: gateway.kgateway.dev, kind: GatewayExtension, namespace: observability}
-  - {group: gateway.kgateway.dev, kind: GatewayExtension, namespace: istio-system}
+  - {group: gateway.kgateway.dev, kind: GatewayExtension, namespace: kiali}
   to: [{group: "", kind: Service, name: keycloak}]
 ---
 # No way around the edge's sign-in: each UI's pods take connections only from
 # the edge (and what the other UI or Prometheus needs). A caller with no mesh
-# identity matches no principal and is refused.
+# identity matches no principal and is refused. Kiali's is kiali-callers
+# (platform/20-observability/mesh-policy.yaml).
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata: {name: grafana-callers, namespace: observability}
@@ -113,23 +114,5 @@ spec:
     - source:
         principals:
         - cluster.local/ns/kgateway-system/sa/edge
-        - cluster.local/ns/istio-system/sa/kiali           # Kiali's links to dashboards
+        - cluster.local/ns/kiali/sa/kiali                  # Kiali's links to dashboards
         - cluster.local/ns/observability/sa/kps-prometheus
----
-# istio-system is not in the ambient mesh, so Kiali is fenced by a
-# NetworkPolicy (by pod) instead: the edge on the UI port, Prometheus on metrics.
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata: {name: kiali-callers, namespace: istio-system}
-spec:
-  podSelector: {matchLabels: {app.kubernetes.io/name: kiali}}
-  policyTypes: [Ingress]
-  ingress:
-  - from:
-    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kgateway-system}}
-      podSelector: {matchLabels: {gateway.networking.k8s.io/gateway-name: edge}}
-    ports: [{port: 20001, protocol: TCP}]
-  - from:
-    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: observability}}
-      podSelector: {matchLabels: {app.kubernetes.io/name: prometheus}}
-    ports: [{port: 9090, protocol: TCP}]

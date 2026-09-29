@@ -11,7 +11,7 @@
 #
 # It leaves state behind (Alice's grants, agent sessions); make reset clears it.
 . "$(dirname "$0")/lib.sh"
-need_cluster
+need_cluster; need_password_grant
 PAUSE=${TOUR_PAUSE:-12} FROM=${TOUR_FROM:-1}
 AUTO=${TOUR_AUTO:-}; [ -t 0 ] || AUTO=1
 CA=(--cacert "$LAB_CA_DIR/ca.crt")
@@ -34,7 +34,8 @@ TOK=$(curl -s "http://127.0.0.1:$lp/realms/sterling-vance/protocol/openid-connec
   -d client_id=kagent -d client_secret="$(lab_secret SV_KAGENT_CLIENT_SECRET)" -d username=bob -d password=bob-demo -d scope=openid)
 BOB=$(echo "$TOK" | jq -r .access_token); BOB_ID=$(echo "$TOK" | jq -r .id_token); unset TOK
 [ -n "$BOB" ] && [ "$BOB" != null ] || die "could not get Bob's token"
-probe_pod kagent; probe_pod sv-agents; probe_pod observability
+probe_pod kagent; probe_pod sv-agents bob-assistant; probe_pod sv-agents; probe_pod observability
+AGENT=sv-agents/probe-bob-assistant   # Bob's agent's workload identity
 trap 'kill $(jobs -p) 2>/dev/null' EXIT
 ok "tokens for bob; probe pods in kagent, sv-agents, observability"
 
@@ -48,9 +49,9 @@ ask() {  # ask <question>: Bob asks his agent through kagent, prints its reply
     | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"')
   say "Agent: $(echo "$reply" | tr '\n' ' ' | cut -c1-240)"
 }
-probe() {  # probe <ns> <label> <url> <args...>: one call from a probe pod's identity
-  local ns=$1 label=$2; shift 2
-  local out; out=$(K exec -n "$ns" probe -- python3 /tmp/p.py "$@" 2>&1 | tail -1 || true)
+probe() {  # probe <ns>[/<pod>] <label> <url> <args...>: one call from a probe pod's identity
+  local ns=${1%%/*} pod=probe label=$2; [[ $1 == */* ]] && pod=${1#*/}; shift 2
+  local out; out=$(K exec -n "$ns" "$pod" -- python3 /tmp/p.py "$@" 2>&1 | tail -1 || true)
   local code what; code=$(echo "$out" | jq -r '.http // empty' 2>/dev/null)
   case "$code" in
     0|"") what="refused: the mesh closed the connection" ;;
@@ -92,12 +93,13 @@ if scene 3 "What isn't allowed (probe pods, no model)"; then
   look "Traffic: turn on only denied. Each row is a refusal; the line below names the layer."
   GW=http://bob-workspace-mcp.sv-mcp:3000/mcp XAA=http://ai-gateway.agentgateway-system/xaa/ledgerline/mcp
   POD_IP=$(K get pod -n sv-mcp -l app.kubernetes.io/name=bob-workspace -o jsonpath='{.items[0].status.podIP}')
-  probe sv-agents     "export_book as an advisor (compliance only)"       "$GW" call export_book '{}' --token "$BOB"
-  probe sv-agents     "an agent workload with no user token"              "$GW" call whoami '{}'
+  probe $AGENT        "export_book as an advisor (compliance only)"       "$GW" call export_book '{}' --token "$BOB"
+  probe $AGENT        "an agent workload with no user token"              "$GW" call whoami '{}'
   probe observability "Bob's token from the wrong workload"               "$GW" call whoami '{}' --token "$BOB"
-  probe sv-agents     "skip the waypoint: dial the tool's pod directly"   "http://$POD_IP:3000/mcp" call whoami '{}' --token "$BOB"
-  probe sv-agents     "Ledgerline via XAA without an ID token"            "$XAA" call account_info '{}' --token "$BOB"
-  probe sv-agents     "straight to Ledgerline with Bob's S&V token"       "https://mcp.$LEDGERLINE_DOMAIN/mcp" call account_info '{}' --token "$BOB"
+  probe sv-agents     "Bob's token from a non-agent pod beside the agents" "$GW" call whoami '{}' --token "$BOB"
+  probe $AGENT        "skip the waypoint: dial the tool's pod directly"   "http://$POD_IP:3000/mcp" call whoami '{}' --token "$BOB"
+  probe $AGENT        "Ledgerline via XAA without an ID token"            "$XAA" call account_info '{}' --token "$BOB"
+  probe $AGENT        "straight to Ledgerline with Bob's S&V token"       "https://mcp.$LEDGERLINE_DOMAIN/mcp" call account_info '{}' --token "$BOB"
   look "Topology, view Cross-party: the only wires left are the calls that cross a company boundary."
   next
 fi

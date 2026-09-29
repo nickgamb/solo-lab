@@ -27,6 +27,7 @@ spec:
         - {name: OIDC_ISSUER, value: "https://idp.${OPS_DOMAIN}/realms/ops"}
         - {name: OIDC_JWKS_URL, value: "http://keycloak.ops-identity.svc/realms/ops/protocol/openid-connect/certs"}
         - {name: OIDC_AUDIENCE, value: observatory}
+        - {name: OIDC_CLIENT_ID, value: observatory}      # the edge's client (azp)
         - {name: ADMIN_GROUP, value: observatory-admins}
         - {name: PROMETHEUS_URL, value: "http://kps-prometheus.observability.svc:9090"}
         ports:

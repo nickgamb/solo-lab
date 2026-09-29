@@ -1,5 +1,10 @@
 {
   "realm": "ops",
+  "bruteForceProtected": true,
+  "failureFactor": 10,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "permanentLockout": false,
   "displayName": "Platform operations",
   "enabled": true,
   "sslRequired": "external",
