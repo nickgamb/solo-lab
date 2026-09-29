@@ -4,7 +4,6 @@ node_modules/
 *.log
 .DS_Store
 
-# screen recordings: the README GIF is committed; the full video is on YouTube
+# raw screen recordings; the optimized MP4s and GIFs in docs/videos are committed
 docs/videos/*.mov
-docs/videos/*.mp4
 __pycache__/
