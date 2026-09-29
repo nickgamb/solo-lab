@@ -140,6 +140,31 @@ func (c *Client) UpdateIdP(ctx context.Context, alias string, p IdP) error {
 	return c.do(ctx, http.MethodPut, "/identity-provider/instances/"+url.PathEscape(alias), p, nil)
 }
 
+// UsernameMapper is the mapper EnsureUsernameFromEmail keeps on an IdP.
+const UsernameMapper = "username-from-email"
+
+// EnsureUsernameFromEmail makes a brokered user's username their email. The
+// first-broker-login flow finds an existing user by email OR username, so
+// without it an upstream account whose username is "bob" would be linked to
+// the local bob whatever its email. With it, both lookups use the email the
+// upstream verified.
+func (c *Client) EnsureUsernameFromEmail(ctx context.Context, alias string) error {
+	var have []map[string]any
+	base := "/identity-provider/instances/" + url.PathEscape(alias) + "/mappers"
+	if err := c.do(ctx, http.MethodGet, base, nil, &have); err != nil {
+		return err
+	}
+	for _, m := range have {
+		if m["name"] == UsernameMapper {
+			return nil
+		}
+	}
+	return c.do(ctx, http.MethodPost, base, map[string]any{
+		"name": UsernameMapper, "identityProviderAlias": alias, "identityProviderMapper": "oidc-username-idp-mapper",
+		"config": map[string]any{"template": "${CLAIM.email}", "target": "LOCAL", "syncMode": "INHERIT"},
+	}, nil)
+}
+
 func (c *Client) DeleteIdP(ctx context.Context, alias string) error {
 	err := c.do(ctx, http.MethodDelete, "/identity-provider/instances/"+url.PathEscape(alias), nil, nil)
 	if errors.Is(err, ErrNotFound) {

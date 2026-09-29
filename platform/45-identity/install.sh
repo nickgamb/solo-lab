@@ -22,6 +22,7 @@ K create secret generic kc-secrets -n sv-identity \
 # S&V's IdP is the enterprise IdP for Cross App Access, so it must ISSUE
 # ID-JAGs: Keycloak 26.7.4 + keycloak/keycloak PR #49998 (tools/keycloak-idjag).
 # Back to stock KC_IMAGE once that PR ships upstream.
+lab_image lab/keycloak-idjag:${KEYCLOAK_VERSION}-pr49998 tools/keycloak-idjag/build.sh
 KC_IMAGE="localhost:${LAB_REGISTRY_PORT}/lab/keycloak-idjag:${KEYCLOAK_VERSION}-pr49998" \
   deploy_keycloak sv-identity "$SV_DOMAIN" https-sterling "$D/realm-sterling-vance.json" \
   token-exchange-standard,identity-assertion-jwt

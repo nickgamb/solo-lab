@@ -261,3 +261,6 @@
 .party-stats .zhit { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 99px; color: var(--text);
   background: color-mix(in hsl, var(--accent) 35%, transparent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .party-stats .zhit b { margin-right: 0; }
+.blurb a, .rail-foot { color: var(--accent-2); text-decoration: none; }
+.blurb a:hover, .rail-foot:hover { text-decoration: underline; }
+.rail-foot { display: block; margin-top: 8px; font-size: 12px; }

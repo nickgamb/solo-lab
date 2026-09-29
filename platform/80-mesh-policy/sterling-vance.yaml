@@ -32,8 +32,8 @@ metadata: {name: strict, namespace: sv-egress}
 spec: {mtls: {mode: STRICT}}
 ---
 # Keycloak: the edge (browsers, SSO token calls), the firm's gateways (JWKS,
-# token exchange), the platform UIs that use S&V workforce SSO, and the
-# continuity controller (admin API: upstream IdPs, login redirector).
+# token exchange), agentregistry, and the continuity controller (admin API:
+# upstream IdPs, login redirector).
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata: {name: keycloak-callers, namespace: sv-identity}
@@ -48,8 +48,6 @@ spec:
         - cluster.local/ns/agentgateway-system/sa/ai-gateway
         - cluster.local/ns/agentgateway-system/sa/agentgateway   # controller: JWKS fetch
         - cluster.local/ns/sv-mcp/sa/mcp-waypoint
-        - cluster.local/ns/observability/sa/kps-grafana
-        - cluster.local/ns/istio-system/sa/kiali
         - cluster.local/ns/agentregistry/sa/agentregistry
         - cluster.local/ns/sv-identity/sa/continuity-controller
 ---
@@ -77,9 +75,19 @@ spec:
         - cluster.local/ns/sv-identity/sa/keycloak
         - cluster.local/ns/sv-identity/sa/continuity-controller
 ---
+# kagent: nothing in the namespace takes a connection unless a policy below
+# names the caller. kagent-tools can act on the cluster, the controller trusts
+# forwarded user claims, and the database holds every session.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: default-deny, namespace: kagent}
+spec: {}
+---
 # kagent controller (:8083) trusts forwarded JWT claims WITHOUT verifying the
-# signature (trusted-proxy mode), so this fence is what makes that safe: only
-# the UI (behind edge SSO) and agent workloads may reach it.
+# signature (trusted-proxy mode), so this fence is what makes that safe: the
+# UI (behind edge SSO), the agents' worker pools calling back with the user's
+# own token, and the lab's check identity. A new agent pool adds its
+# ServiceAccount here.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata: {name: kagent-controller-callers, namespace: kagent}
@@ -87,11 +95,62 @@ spec:
   selector: {matchLabels: {app.kubernetes.io/name: kagent, app.kubernetes.io/component: controller}}
   action: ALLOW
   rules:
-  # Entries in one `from` are OR'd; fields inside one `source` are AND'd.
   - from:
-    - source: {principals: [cluster.local/ns/observability/sa/kps-prometheus]}  # metrics
-    - source: {namespaces: [kagent]}      # UI, tools, the ops agents (kagent-ops workers)
-    - source: {namespaces: [sv-agents]}   # the firm's agents
+    - source:
+        principals:
+        - cluster.local/ns/kagent/sa/kagent-ui          # the UI, behind the edge's SSO
+        - cluster.local/ns/kagent/sa/kagent-ops         # ops agents' workers
+        - cluster.local/ns/sv-agents/sa/bob-assistant   # Bob's agent's workers
+        - cluster.local/ns/sv-agents/sa/advisor-desk    # the advisor desk's workers
+        - cluster.local/ns/kagent/sa/probe              # make verify / make tour
+        - cluster.local/ns/observability/sa/kps-prometheus
+---
+# kagent-tools can act on the cluster: only the agents that use it (the ops
+# agents) and the controller (tool discovery).
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: kagent-tools-callers, namespace: kagent}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: kagent-tools}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/kagent/sa/kagent-ops
+        - cluster.local/ns/kagent/sa/kagent-controller
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: grafana-mcp-callers, namespace: kagent}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: grafana-mcp}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/kagent/sa/kagent-ops
+        - cluster.local/ns/kagent/sa/kagent-controller
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: database-callers, namespace: kagent}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: kagent, app.kubernetes.io/component: database}}
+  action: ALLOW
+  rules:
+  - from: [{source: {principals: [cluster.local/ns/kagent/sa/kagent-controller]}}]
+---
+# kmcp's controller only serves metrics to Prometheus.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: kmcp-callers, namespace: kagent}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: kmcp}}
+  action: ALLOW
+  rules:
+  - from: [{source: {principals: [cluster.local/ns/observability/sa/kps-prometheus]}}]
 ---
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
 )
 
 // Continuity drives the IdP failover chain (IdentityContinuity, reconciled
@@ -58,14 +61,18 @@ func (c *Continuity) Report(v ContinuityView, t *TrafficStore, ix *Index) {
 	}
 }
 
-const tierLabel = "continuity.lab.solo.io/tier"
+const (
+	tierLabel        = "continuity.lab.solo.io/tier"
+	secretsRoleLabel = "continuity.lab.solo.io/secrets-role"
+)
 
 var (
-	gvrIC  = schema.GroupVersionResource{Group: "continuity.lab.solo.io", Version: "v1alpha1", Resource: "identitycontinuities"}
-	gvrAP  = schema.GroupVersionResource{Group: "security.istio.io", Version: "v1", Resource: "authorizationpolicies"}
-	gvrSE  = schema.GroupVersionResource{Group: "networking.istio.io", Version: "v1", Resource: "serviceentries"}
-	gvrSec = schema.GroupVersionResource{Version: "v1", Resource: "secrets"}
-	nameRe = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+	gvrIC   = schema.GroupVersionResource{Group: "continuity.lab.solo.io", Version: "v1alpha1", Resource: "identitycontinuities"}
+	gvrAP   = schema.GroupVersionResource{Group: "security.istio.io", Version: "v1", Resource: "authorizationpolicies"}
+	gvrSE   = schema.GroupVersionResource{Group: "networking.istio.io", Version: "v1", Resource: "serviceentries"}
+	gvrSec  = schema.GroupVersionResource{Version: "v1", Resource: "secrets"}
+	gvrRole = schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "roles"}
+	nameRe  = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 )
 
 type ContinuityView struct {
@@ -175,7 +182,65 @@ func (c *Continuity) PutSecret(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, err)
 		return
 	}
+	if err := grantSecret(r.Context(), cl, ns, in.Name); err != nil {
+		http.Error(w, "stored the secret, but could not let the controller read it: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	writeJSON(w, map[string]string{"name": in.Name, "key": in.Key})
+}
+
+// grantSecret adds a tier's Secret to the Role that lets the continuity
+// controller read Secrets by name (labelled continuity.lab.solo.io/secrets-role).
+// The controller has no list or watch on Secrets, so this is how a tier added
+// at runtime becomes readable to it.
+func grantSecret(ctx context.Context, cl dynamic.Interface, ns, name string) error {
+	roles, err := cl.Resource(gvrRole).Namespace(ns).List(ctx, metav1.ListOptions{LabelSelector: secretsRoleLabel + "=true"})
+	if err != nil {
+		return err
+	}
+	if len(roles.Items) == 0 {
+		return errors.New("no Role labelled " + secretsRoleLabel + " in " + ns)
+	}
+	for i := range roles.Items {
+		role := &roles.Items[i]
+		rules, _, _ := unstructured.NestedSlice(role.Object, "rules")
+		changed := false
+		for j, rule := range rules {
+			m, _ := rule.(map[string]any)
+			if !slices.Contains(toStrings(m["resources"]), "secrets") {
+				continue
+			}
+			names := toStrings(m["resourceNames"])
+			if !slices.Contains(names, name) {
+				l := make([]any, 0, len(names)+1) // unstructured wants []any, not []string
+				for _, n := range append(names, name) {
+					l = append(l, n)
+				}
+				m["resourceNames"] = l
+				rules[j], changed = m, true
+			}
+		}
+		if !changed {
+			continue
+		}
+		if err := unstructured.SetNestedSlice(role.Object, rules, "rules"); err != nil {
+			return err
+		}
+		if _, err := cl.Resource(gvrRole).Namespace(ns).Update(ctx, role, metav1.UpdateOptions{FieldManager: fieldManager}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func toStrings(v any) []string {
+	var out []string
+	if l, ok := v.([]any); ok {
+		for _, x := range l {
+			out = append(out, fmt.Sprint(x))
+		}
+	}
+	return out
 }
 
 // Partition cuts (down=true) or restores the network path to one tier. It

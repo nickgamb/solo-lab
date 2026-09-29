@@ -1,6 +1,8 @@
 # The observatory reads the cluster as itself (no Secrets) and writes only as
-# the signed-in admin: it impersonates observatory:<user> with the user's
-# groups prefixed observatory:, and RBAC decides what that person may change.
+# the signed-in admin. It may impersonate exactly one identity: user
+# observatory:admin in group observatory:observatory-admins, carrying the
+# person's name as the extra observatory-user. RBAC names all three, so no
+# request can make it any other user or group (system:masters included).
 apiVersion: v1
 kind: ServiceAccount
 metadata: {name: observatory, namespace: observatory}
@@ -17,7 +19,15 @@ rules:
   resources: ["*"]
   verbs: [get, list, watch]
 - apiGroups: [""]
-  resources: [users, groups]
+  resources: [users]
+  resourceNames: ["observatory:admin"]
+  verbs: [impersonate]
+- apiGroups: [""]
+  resources: [groups]
+  resourceNames: ["observatory:observatory-admins"]
+  verbs: [impersonate]
+- apiGroups: [authentication.k8s.io]
+  resources: [userextras/observatory-user]
   verbs: [impersonate]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

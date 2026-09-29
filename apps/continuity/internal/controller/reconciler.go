@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -29,10 +28,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/recorder"
 
 	v1 "github.com/nickgamb/solo-lab/apps/continuity/api/v1alpha1"
@@ -71,29 +68,11 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.discovery = map[string]*probe.Discovery{}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1.IdentityContinuity{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
-		// Credentials arriving or rotating take effect at once, no restart.
-		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.forSecret), builder.OnlyMetadata).
+		// Secrets are not watched: listing or watching them would mean reading
+		// every Secret in the namespace. Credentials are read by name on each
+		// reconcile (every health interval), so a rotation takes effect within
+		// one interval, and RBAC grants get on those names only.
 		Complete(r)
-}
-
-func (r *Reconciler) forSecret(ctx context.Context, o client.Object) []reconcile.Request {
-	var list v1.IdentityContinuityList
-	if err := r.List(ctx, &list, client.InNamespace(o.GetNamespace())); err != nil {
-		return nil
-	}
-	var out []reconcile.Request
-	for _, ic := range list.Items {
-		refs := []string{ic.Spec.Broker.Keycloak.CredentialsRef.Name}
-		for _, t := range ic.Spec.Tiers {
-			if t.OIDC != nil {
-				refs = append(refs, t.OIDC.ClientSecretRef.Name)
-			}
-		}
-		if slices.Contains(refs, o.GetName()) {
-			out = append(out, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&ic)})
-		}
-	}
-	return out
 }
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -433,6 +412,9 @@ func (r *Reconciler) reconcileKeycloak(ctx context.Context, ic *v1.IdentityConti
 			continue
 		}
 		keep[t.Name] = true
+		if err == nil {
+			err = kc.EnsureUsernameFromEmail(ctx, t.Name)
+		}
 		if err != nil {
 			errs = append(errs, err)
 		} else if t.Name == active {

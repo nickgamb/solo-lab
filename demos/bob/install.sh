@@ -21,6 +21,7 @@ K create secret generic kc-secrets -n ledgerline-identity \
   --dry-run=client -o yaml | K apply -f - >/dev/null
 deploy_keycloak ledgerline-identity "$LEDGERLINE_DOMAIN" https-ledgerline "$D/ledgerline/realm-ledgerline.json" identity-assertion-jwt
 apply_tmpl "$D/ledgerline/research.yaml"
+deny_internet ledgerline ledgerline-identity
 ok "https://idp.$LEDGERLINE_DOMAIN  https://mcp.$LEDGERLINE_DOMAIN"
 
 step "Sterling & Vance: workspace, waypoint, agent, Cross App Access"
