@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Lab DNS: answers every *.<LAB_TLD> name with 127.0.0.1 on 127.0.0.1:$LAB_DNS_PORT.
-# The Mac's resolver is pointed at it by `make dns-setup` (one-time sudo).
+# The host's resolver is pointed at it by `make machine-setup` (one-time sudo).
 . "$(dirname "$0")/lib.sh"
 f="$LAB_STATE/Corefile"
 cat > "$f" <<CF

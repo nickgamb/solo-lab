@@ -10,7 +10,7 @@ step "Images (local registry)"
 # Tagged by a hash of the build context, so a source change is a new image and
 # a rollout, and an unchanged one is never rebuilt.
 build() {  # build <var> <repo> <dir>: exports <var>=<repo>:<content hash>
-  local tag img; tag=$(cd "$3" && find . -type f | LC_ALL=C sort | xargs cat | shasum | cut -c1-12)
+  local tag img; tag=$(cd "$3" && find . -type f -not -name .DS_Store | LC_ALL=C sort | xargs cat | sha1 | cut -c1-12)
   img="localhost:$LAB_REGISTRY_PORT/$2:$tag"
   docker image inspect "$img" >/dev/null 2>&1 || docker build -q -t "$img" "$3" >/dev/null
   docker push -q "$img" >/dev/null

@@ -1,0 +1,5 @@
+# The lab is bash and YAML: keep LF line endings on every checkout (WSL, Windows git).
+* text=auto eol=lf
+*.gif binary
+*.png binary
+*.jpg binary

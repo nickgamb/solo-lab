@@ -15,7 +15,7 @@ chart() {  # chart <base|istiod|cni|ztunnel>
     local os; os=$([ "$(uname -s)" = Darwin ] && echo osx || echo linux)
     local url="https://github.com/istio/istio/releases/download/$ISTIO_VERSION/istio-$ISTIO_VERSION-$os-$arch.tar.gz"
     [ -s "$tgz" ] || curl -fsSL -o "$tgz" "$url"
-    (cd "$LAB_STATE/cache" && curl -fsSL "$url.sha256" | awk -v f="istio-$ISTIO_VERSION.tgz" '{print $1"  "f}' | shasum -a 256 -c >/dev/null) \
+    (cd "$LAB_STATE/cache" && curl -fsSL "$url.sha256" | awk -v f="istio-$ISTIO_VERSION.tgz" '{print $1"  "f}' | sha256 -c >/dev/null) \
       || die "istio tarball checksum mismatch"
     tar xzf "$tgz" -C "$LAB_STATE/cache" "istio-$ISTIO_VERSION/manifests/charts"
   fi

@@ -18,7 +18,7 @@ probe_pod kagent; probe_pod sv-agents
 AS="https://as.$ALICE_DOMAIN"; CA=(--cacert "$LAB_CA_DIR/ca.crt")
 
 ask_bob() {  # ask_bob <question> -> the agent's last reply (what the UI shows), in a new session
-  local body; body=$(jq -nc --arg q "$1" --arg c "$(uuidgen | tr A-Z a-z)" '{jsonrpc:"2.0",id:"1",method:"message/send",params:{message:{role:"user",kind:"message",messageId:(now|tostring),contextId:$c,parts:[{kind:"text",text:$q}]}}}')
+  local body; body=$(jq -nc --arg q "$1" --arg c "$(new_uuid)" '{jsonrpc:"2.0",id:"1",method:"message/send",params:{message:{role:"user",kind:"message",messageId:(now|tostring),contextId:$c,parts:[{kind:"text",text:$q}]}}}')
   K exec -n kagent probe -- curl -s -m 300 http://kagent-controller.kagent:8083/api/a2a-sandboxes/sv-agents/bob-assistant/ \
     -H "authorization: Bearer $BOB" -H "cookie: IdToken=$BOB_ID" -H 'content-type: application/json' -d "$body" \
     | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"'
