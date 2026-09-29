@@ -28,7 +28,8 @@ helm_up trust-manager trust-manager "$TRUST_MANAGER_VERSION" cert-manager \
 "$LAB_ROOT/scripts/ca.sh"
 K create secret tls lab-ca -n cert-manager --cert="$LAB_CA_DIR/ca.crt" --key="$LAB_CA_DIR/ca.key" \
   --dry-run=client -o yaml | K apply -f - >/dev/null
-K apply -f "$D/lab-ca.yaml" >/dev/null
+# the Bundle goes through trust-manager's webhook, which can lag its pod being Ready
+wait_for "trust-manager webhook" 30 2 K apply -f "$D/lab-ca.yaml"
 wait_for "ClusterIssuer lab-ca Ready" 30 2 K wait clusterissuer/lab-ca --for=condition=Ready --timeout=2s
 ok "ClusterIssuer lab-ca + Bundle lab-ca-bundle (all namespaces)"
 
