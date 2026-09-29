@@ -72,8 +72,11 @@ func Eligible(t v1.Tier, st *v1.TierStatus) bool {
 
 // Select picks the active tier. Automatic failback: the first eligible tier.
 // Manual: stay on the current tier while it is eligible. With nothing
-// eligible, the broker's own login (the first local tier) is the last resort,
-// which is also what the realm does with no controller at all.
+// eligible, the broker's own login (the first local tier that is enabled and
+// not drained) is the last resort, which is also what the realm does with no
+// controller at all. A disabled or drained tier is never picked; with no
+// local tier left either, nothing is active and the realm's own login form
+// is what people get.
 func Select(spec v1.IdentityContinuitySpec, status map[string]*v1.TierStatus, current string) (active, reason string) {
 	if spec.Failback == "Manual" {
 		for _, t := range spec.Tiers {
@@ -88,11 +91,18 @@ func Select(spec v1.IdentityContinuitySpec, status map[string]*v1.TierStatus, cu
 		}
 	}
 	for _, t := range spec.Tiers {
-		if t.Type == "local" {
+		if t.Type == "local" && on(t.Enabled) && !t.Drain {
 			return t.Name, "NoEligibleTier"
 		}
 	}
 	return "", "NoEligibleTier"
+}
+
+// Due reports whether a new probe counts toward the thresholds: at most once
+// per interval, so reconciles triggered by spec edits don't speed up failover
+// or failback. A tier never probed is always due.
+func Due(prev *v1.TierStatus, now time.Time, interval time.Duration) bool {
+	return prev == nil || prev.LastProbe == nil || now.Sub(prev.LastProbe.Time) >= interval*9/10
 }
 
 // Direction names a move from one tier to another for events and history.

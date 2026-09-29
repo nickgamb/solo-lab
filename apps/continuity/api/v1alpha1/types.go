@@ -85,7 +85,8 @@ type Tier struct {
 	DisplayName string `json:"displayName,omitempty"`
 	// +kubebuilder:validation:Enum=oidc;local
 	Type string `json:"type"`
-	// Disabled tiers are never active and their Keycloak IdP is disabled.
+	// Disabled tiers are never active (a local one included) and their
+	// Keycloak IdP is disabled.
 	// +kubebuilder:default=true
 	Enabled *bool `json:"enabled,omitempty"`
 	// Drained tiers are taken out of rotation but keep working for sessions
@@ -117,6 +118,9 @@ type FailoverRules struct {
 	ServerError *bool `json:"serverError,omitempty"`
 	// +kubebuilder:default=true
 	InvalidDiscovery *bool `json:"invalidDiscovery,omitempty"`
+	// Must be below health.timeoutSeconds: a slower answer times out
+	// (Unreachable) before its latency is known. Condition RulesEffective
+	// is False while one isn't.
 	// +kubebuilder:validation:Minimum=1
 	// +optional
 	LatencyAboveMs *int32 `json:"latencyAboveMs,omitempty"`
@@ -150,8 +154,13 @@ type SecretKeyRef struct {
 type IdentityContinuityStatus struct {
 	ObservedGeneration int64         `json:"observedGeneration,omitempty"`
 	Broker             *BrokerStatus `json:"broker,omitempty"`
-	Active             string        `json:"active,omitempty"`
-	ActiveSince        *metav1.Time  `json:"activeSince,omitempty"`
+	// The tier logins go to now (the one Keycloak's redirector points at, or
+	// the local tier when it points nowhere).
+	Active      string       `json:"active,omitempty"`
+	ActiveSince *metav1.Time `json:"activeSince,omitempty"`
+	// Where this instance's ServiceEntries are, so they are removed when
+	// spec.egress changes or goes away.
+	EgressNamespace string `json:"egressNamespace,omitempty"`
 	// +listType=map
 	// +listMapKey=name
 	Tiers []TierStatus `json:"tiers,omitempty"`
@@ -177,7 +186,8 @@ type TierStatus struct {
 	Configured bool `json:"configured"`
 	Healthy    bool `json:"healthy"`
 	// A DENY AuthorizationPolicy labelled continuity.lab.solo.io/tier=<name>
-	// exists. Informational: selection only ever follows the probes.
+	// targets the tier's ServiceEntry in the egress namespace. Informational:
+	// selection only ever follows the probes.
 	Partitioned          bool         `json:"partitioned"`
 	LatencyMs            int64        `json:"latencyMs,omitempty"`
 	LastProbe            *metav1.Time `json:"lastProbe,omitempty"`

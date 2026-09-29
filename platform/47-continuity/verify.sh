@@ -52,7 +52,12 @@ redirector() {
 }
 idp_gone() { ! kcadm /identity-provider/instances | jq -e --arg t "$1" 'map(.alias) | index($t)' >/dev/null; }
 
-partition() {  # partition <tier> <namespace> [serviceentry]: the kill switch
+has_auth0() { idc | jq -e '.spec.tiers | map(.name) | index("auth0")' >/dev/null; }
+# partition <tier> <namespace> [serviceentry]: the kill switch. With a
+# ServiceEntry it cuts only that upstream at S&V's egress. Without one (the
+# in-lab scratch tier) it denies everything into <namespace> while the check
+# runs, Ledgerline's own sign-ins included: there is no S&V-only path to cut.
+partition() {
   local target=""; [ -n "${3:-}" ] && target="targetRefs: [{group: networking.istio.io, kind: ServiceEntry, name: $3}]"
   K apply -f - >/dev/null <<YAML
 apiVersion: security.istio.io/v1
@@ -89,12 +94,15 @@ expect 'continuity-controller-' "leader holds Lease continuity.lab.solo.io" \
   "$(K get lease continuity.lab.solo.io -n "$NS" -o jsonpath='{.spec.holderIdentity}' 2>&1)"
 expect '^True$' "IdentityContinuity $IC Ready" \
   "$(K get idc "$IC" -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')"
-if [ "$(tier auth0 configured)" = true ]; then
+if ! has_auth0; then
+  expect '^keycloak$' "no auth0 tier (AUTH0_ISSUER unset): active is local" "$(active)"
+  skipped "auth0 upstream checks: set AUTH0_ISSUER in .env and re-run make layer-47"
+elif [ "$(tier auth0 configured)" = true ]; then
   expect '^auth0 \(Healthy\)$' "auth0 configured and healthy: it is active" "$(active) ($(tier auth0 reason))"
 else
   expect '^keycloak ' "auth0 NotConfigured (no upstream-auth0 secret): active is local" "$(active) (auth0: $(tier auth0 reason))"
 fi
-expect '(Healthy|NotConfigured.*probe: Healthy)' "auth0 upstream answers discovery + JWKS from S&V" "$(tier auth0 reason): $(tier auth0 message)"
+has_auth0 && expect '(Healthy|NotConfigured.*probe: Healthy)' "auth0 upstream answers discovery + JWKS from S&V" "$(tier auth0 reason): $(tier auth0 message)"
 tok=$(curl -s "$KC/realms/sterling-vance/protocol/openid-connect/token" -d grant_type=password -d client_id=kagent \
   -d client_secret="$(lab_secret SV_KAGENT_CLIENT_SECRET)" -d username=bob -d password=bob-demo -d scope=openid | jq -r .access_token)
 expect "^$BOB_ID\$" "password grant unchanged: Bob's S&V user id" "$(echo "$tok" | jq -rR 'split(".")[1] | gsub("-";"+") | gsub("_";"/") | @base64d | fromjson | .sub' 2>/dev/null)"
@@ -150,19 +158,23 @@ expect "^[0-9]+s\$" "active returns to $BASE" "$(within 15 is_active "$BASE")"
 expect '^[0-9]+s$' "Keycloak IdP $T deleted" "$(within 15 idp_gone "$T")"
 
 step "External upstream: auth0 through S&V's egress waypoint"
-if K get gateway egress-waypoint -n sv-egress >/dev/null 2>&1; then
+# a NotConfigured tier (no credentials) is still probed: its outcome is in the
+# message ("...; probe: <result>")
+if ! has_auth0; then
+  skipped "no auth0 tier: external upstream checks skipped"
+elif K get gateway egress-waypoint -n sv-egress >/dev/null 2>&1; then
   expect '^egress-waypoint$' "ServiceEntry continuity-auth0 bound to the egress waypoint" \
     "$(K get serviceentry continuity-auth0 -n sv-egress -o jsonpath='{.metadata.labels.istio\.io/use-waypoint}' 2>&1)"
   partition auth0 sv-egress continuity-auth0
   expect '^[0-9]+s$' "partition on the ServiceEntry: auth0 probes fail" \
-    "$(within 25 sh -c "kubectl --context $KCTX get idc $IC -n $NS -o json | jq -e '.status.tiers[]|select(.name==\"auth0\")|(.partitioned and (.reason|test(\"Unreachable|ServerError\")))'")"
+    "$(within 25 sh -c "kubectl --context $KCTX get idc $IC -n $NS -o json | jq -e '.status.tiers[]|select(.name==\"auth0\")|(.partitioned and ((.reason|test(\"Unreachable|ServerError\")) or (.message|test(\"probe: (Unreachable|ServerError)\"))))'")"
   heal auth0 sv-egress
   expect '^[0-9]+s$' "healed: auth0 probes pass again" \
-    "$(within 35 sh -c "kubectl --context $KCTX get idc $IC -n $NS -o json | jq -e '.status.tiers[]|select(.name==\"auth0\")|(.message|test(\"discovery and jwks ok\"))'")"
+    "$(within 35 sh -c "kubectl --context $KCTX get idc $IC -n $NS -o json | jq -e '.status.tiers[]|select(.name==\"auth0\")|(.message|test(\"discovery and jwks ok|probe: Healthy\"))'")"
 else
   skipped "no sv-egress/egress-waypoint: external upstream checks skipped"
 fi
-if [ "$(tier auth0 configured)" = true ] && [ "$(active)" = auth0 ]; then
+if has_auth0 && [ "$(tier auth0 configured)" = true ] && [ "$(active)" = auth0 ]; then
   expect "^${AUTH0_ISSUER}authorize\?.*broker%2Fauth0%2Fendpoint" "browser sign-in goes to Auth0, back to /broker/auth0/endpoint" "$(login_lands)"
   skipped "Bob's Auth0 sign-in itself is interactive: https://kagent.$SV_DOMAIN (lands on user $BOB_ID)"
 else

@@ -74,6 +74,13 @@ func (p *Prober) OIDC(ctx context.Context, issuer string, timeout time.Duration)
 	case d.AuthorizationEndpoint == "" || d.TokenEndpoint == "" || d.JWKSURI == "":
 		return fail(tiers.InvalidDiscovery, "discovery lacks authorization, token or jwks endpoint")
 	}
+	// These are written into Keycloak and used with the client secret and
+	// users' codes: never over plain HTTP.
+	for _, e := range []string{d.AuthorizationEndpoint, d.TokenEndpoint, d.JWKSURI, d.UserinfoEndpoint, d.EndSessionEndpoint} {
+		if e != "" && !strings.HasPrefix(e, "https://") {
+			return fail(tiers.InvalidDiscovery, "discovery endpoint %q is not https", e)
+		}
+	}
 	var jwks struct {
 		Keys []json.RawMessage `json:"keys"`
 	}

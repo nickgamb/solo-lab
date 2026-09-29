@@ -46,7 +46,26 @@ apply_tmpl "$D/controller.yaml"
 # still has the cluster-wide grant
 K delete clusterrolebinding,clusterrole continuity-controller-partitions --ignore-not-found >/dev/null
 rollout sv-identity deploy/continuity-controller
-K get identitycontinuity sterling-vance -n sv-identity >/dev/null 2>&1 || apply_tmpl "$D/identitycontinuity.yaml"
+if ! K get identitycontinuity sterling-vance -n sv-identity >/dev/null 2>&1; then
+  # without an issuer there is no upstream tier, only S&V's own accounts
+  if [ -n "$AUTH0_ISSUER" ]; then render "$D/identitycontinuity.yaml"
+  else render "$D/identitycontinuity.yaml" | yq 'del(.spec.tiers[] | select(.name == "auth0"))'; fi | K apply -f - >/dev/null
+elif [ -n "$AUTH0_ISSUER" ]; then
+  # the spec is the operators' now; only follow a changed AUTH0_ISSUER
+  i=$(K get idc sterling-vance -n sv-identity -o json | jq '[.spec.tiers[].name] | index("auth0") // empty')
+  cur=$([ -n "$i" ] && K get idc sterling-vance -n sv-identity -o jsonpath="{.spec.tiers[$i].oidc.issuer}")
+  if [ -z "$i" ]; then warn "the auth0 tier was removed from the IdentityContinuity; AUTH0_ISSUER is not applied"
+  elif [ "$cur" != "$AUTH0_ISSUER" ]; then
+    K patch idc sterling-vance -n sv-identity --type json -p "[{\"op\":\"replace\",\"path\":\"/spec/tiers/$i/oidc/issuer\",\"value\":\"$AUTH0_ISSUER\"}]" >/dev/null
+    ok "auth0 tier issuer: $cur -> $AUTH0_ISSUER"
+  fi
+fi
+# a latency rule at or above the probe timeout can never fire (the probe times
+# out first): earlier versions installed one, so bring it under the timeout
+fix=$(K get idc sterling-vance -n sv-identity -o json | jq -c '((.spec.health.timeoutSeconds // 2) * 1000) as $t
+  | [.spec.tiers | to_entries[] | select((.value.failoverWhen.latencyAboveMs // 0) >= $t)
+     | {op: "replace", path: "/spec/tiers/\(.key)/failoverWhen/latencyAboveMs", value: ($t * 3 / 4 | floor)}]')
+if [ "$fix" != "[]" ]; then K patch idc sterling-vance -n sv-identity --type json -p "$fix" >/dev/null; ok "latencyAboveMs brought under the probe timeout"; fi
 wait_for "sterling-vance continuity Ready" 30 2 \
   sh -c "kubectl --context $KCTX get idc sterling-vance -n sv-identity -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}' | grep -q True"
 ok "active tier: $(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}')  (kubectl get idc -n sv-identity)"
