@@ -315,6 +315,9 @@ func flatten(in []kv) map[string]string {
 // Istio waypoint) into a Traffic event, resolving endpoints to graph nodes.
 func normalize(a map[string]string, ts string, ix *Index) (Traffic, bool) {
 	t := Traffic{Kind: "http", Attrs: a, Outcome: "ok"}
+	// first: decode and scrub credentials, so no field copied out below (the
+	// path, the summary) can carry a raw token, e.g. ?id_token_hint=
+	t.Tokens = tokens(a)
 	if ns, err := strconv.ParseInt(ts, 10, 64); err == nil && ns > 0 {
 		t.Time = time.Unix(0, ns).UTC().Format(time.RFC3339Nano)
 	}
@@ -332,7 +335,6 @@ func normalize(a map[string]string, ts string, ix *Index) (Traffic, bool) {
 	t.Duration, _ = strconv.ParseFloat(strings.TrimSuffix(get("duration", "duration_ms"), "ms"), 64)
 	t.Identity = get("src.identity", "source.principal", "downstream_peer_uri_san", "source.identity")
 	t.User = get("jwt.preferred_username", "user", "jwt.sub")
-	t.Tokens = tokens(a)
 	if t.User == "" {
 		for _, tk := range t.Tokens {
 			if u, _ := tk.Claims["preferred_username"].(string); u != "" {

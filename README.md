@@ -103,7 +103,9 @@ runtime, so a different lab renders the same way.
 - **Identity Continuity:** the sign-in chain, the outage button, and the rule
   builder.
 
-![Observatory, Identity view](docs/images/observatory-topology-identity-view.jpg)
+[![Observatory walkthrough at 4x speed: topology views, hover, details and live YAML, traffic with token claims, and an IdP outage with failover and failback](docs/videos/observatory.gif)](https://youtu.be/Y3P4a7HRvVs)
+
+The full walkthrough at normal speed, on YouTube: [Solo.io Observatory](https://youtu.be/Y3P4a7HRvVs) (3 min).
 
 See [docs/OBSERVATORY.md](docs/OBSERVATORY.md).
 

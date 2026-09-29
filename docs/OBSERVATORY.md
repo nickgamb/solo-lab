@@ -10,6 +10,10 @@ Install: `platform/90-observatory` (`make layer-90`).
 
 ## Seeing it work
 
+[![Solo.io Observatory walkthrough on YouTube](https://img.youtube.com/vi/Y3P4a7HRvVs/maxresdefault.jpg)](https://youtu.be/Y3P4a7HRvVs)
+
+A three-minute walkthrough of all three tabs, [on YouTube](https://youtu.be/Y3P4a7HRvVs).
+
 `make tour` drives every story end to end with real traffic, one scene at a
 time, and prints where to look. The script for presenting it is the
 [Observatory demo card](cards/observatory.html).

@@ -30,3 +30,21 @@ func TestTokensScrubsAndDecodes(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeScrubsTokenInPath(t *testing.T) {
+	raw := "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.eyJzdWIiOiJib2IiLCJhdWQiOiJtY3Atd2F5cG9pbnQiLCJncm91cHMiOlsiYWR2aXNvcnMiXX0.c2ln"
+	a := map[string]string{"http.method": "GET", "http.status": "302", "http.host": "idp.sterling.lab",
+		"http.path": "/realms/sterling-vance/protocol/openid-connect/logout?id_token_hint=" + raw}
+	tr, ok := normalize(a, "", &Index{})
+	if !ok {
+		t.Fatal("record dropped")
+	}
+	for _, v := range []string{tr.Path, tr.Summary} {
+		if strings.Contains(v, "eyJ") {
+			t.Errorf("raw token survived: %s", v)
+		}
+	}
+	if len(tr.Tokens) != 1 || tr.Tokens[0].Claims["sub"] != "bob" {
+		t.Errorf("token not decoded: %+v", tr.Tokens)
+	}
+}
