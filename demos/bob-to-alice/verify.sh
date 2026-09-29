@@ -14,12 +14,12 @@ TOK=$(curl -s "http://127.0.0.1:$lp/realms/sterling-vance/protocol/openid-connec
 BOB=$(echo "$TOK" | jq -r .access_token); BOB_ID=$(echo "$TOK" | jq -r .id_token); unset TOK
 ALICE=$(user_token alice-identity alice alice-portal "" alice alice-demo)
 [ -n "$BOB" ] && [ -n "$ALICE" ] || die "sign-in failed"
-probe_pod kagent; probe_pod sv-agents
+probe_pod kagent kagent-ui; probe_pod sv-agents
 AS="https://as.$ALICE_DOMAIN"; CA=(--cacert "$LAB_CA_DIR/ca.crt")
 
 ask_bob() {  # ask_bob <question> -> the agent's last reply (what the UI shows), in a new session
   local body; body=$(jq -nc --arg q "$1" --arg c "$(new_uuid)" '{jsonrpc:"2.0",id:"1",method:"message/send",params:{message:{role:"user",kind:"message",messageId:(now|tostring),contextId:$c,parts:[{kind:"text",text:$q}]}}}')
-  K exec -n kagent probe -- curl -s -m 300 http://kagent-controller.kagent:8083/api/a2a-sandboxes/sv-agents/bob-assistant/ \
+  K exec -n kagent probe-kagent-ui -- curl -s -m 300 http://kagent-controller.kagent:8083/api/a2a-sandboxes/sv-agents/bob-assistant/ \
     -H "authorization: Bearer $BOB" -H "cookie: IdToken=$BOB_ID" -H 'content-type: application/json' -d "$body" \
     | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"'
 }

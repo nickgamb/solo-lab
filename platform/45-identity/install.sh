@@ -12,12 +12,9 @@ K create secret generic kc-secrets -n sv-identity \
   --from-literal=KC_BOOTSTRAP_ADMIN_USERNAME=admin \
   --from-literal=KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret SV_KC_ADMIN_PASSWORD)" \
   --from-literal=SV_KAGENT_CLIENT_SECRET="$(lab_secret SV_KAGENT_CLIENT_SECRET)" \
-  --from-literal=SV_AIGW_CLIENT_SECRET="$(lab_secret SV_AIGW_CLIENT_SECRET)" \
   --from-literal=SV_MCP_WAYPOINT_CLIENT_SECRET="$(lab_secret SV_MCP_WAYPOINT_CLIENT_SECRET)" \
-  --from-literal=SV_GRAFANA_CLIENT_SECRET="$(lab_secret SV_GRAFANA_CLIENT_SECRET)" \
   --from-literal=SV_AGENTREGISTRY_CLIENT_SECRET="$(lab_secret SV_AGENTREGISTRY_CLIENT_SECRET)" \
   --from-literal=SV_CONTINUITY_CLIENT_SECRET="$(lab_secret SV_CONTINUITY_CLIENT_SECRET)" \
-  --from-literal=SV_UNUSED_CLIENT_SECRET="$(lab_secret SV_UNUSED_CLIENT_SECRET)" \
   --dry-run=client -o yaml | K apply -f - >/dev/null
 # S&V's IdP is the enterprise IdP for Cross App Access, so it must ISSUE
 # ID-JAGs: Keycloak 26.7.4 + keycloak/keycloak PR #49998 (tools/keycloak-idjag).
@@ -35,10 +32,6 @@ step "Client secrets, in the namespace that uses each"
 K create secret generic kagent-oidc -n kagent \
   --from-literal=client-secret="$(lab_secret SV_KAGENT_CLIENT_SECRET)" \
   --dry-run=client -o yaml | K apply -f - >/dev/null
-# agentgateway's token-exchange client identity
-K create secret generic ai-gateway-oidc -n agentgateway-system \
-  --from-literal=clientSecret="$(lab_secret SV_AIGW_CLIENT_SECRET)" \
-  --dry-run=client -o yaml | K apply -f - >/dev/null
 # agentgateway runs Cross App Access as kagent's back-channel: the requesting
 # app in XAA is the app Bob signed into (kagent), so it authenticates as kagent.
 K create secret generic kagent-client -n agentgateway-system \
@@ -48,8 +41,4 @@ K create secret generic kagent-client -n agentgateway-system \
 K create secret generic mcp-waypoint-oidc -n sv-mcp \
   --from-literal=clientSecret="$(lab_secret SV_MCP_WAYPOINT_CLIENT_SECRET)" \
   --dry-run=client -o yaml | K apply -f - >/dev/null
-# Grafana SSO (platform UI, S&V workforce identities)
-K create secret generic grafana-oidc -n observability \
-  --from-literal=client-secret="$(lab_secret SV_GRAFANA_CLIENT_SECRET)" \
-  --dry-run=client -o yaml | K apply -f - >/dev/null
-ok "kagent/kagent-oidc  agentgateway-system/ai-gateway-oidc  sv-mcp/mcp-waypoint-oidc  observability/grafana-oidc"
+ok "kagent/kagent-oidc  agentgateway-system/kagent-client  sv-mcp/mcp-waypoint-oidc"

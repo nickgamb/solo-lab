@@ -35,7 +35,7 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | `sv-identity` | Keycloak `sterling-vance` | `keycloak` | S&V | edge (the realm only); S&V gateways/apps and `bob-workspace` (JWKS, token exchange); continuity-controller (admin API) |
 | `sv-identity` | `continuity-controller` (2 replicas, leader-elected) | `continuity-controller` | S&V | nobody (calls out only) |
 | `sv-egress` | `egress-waypoint` (Istio waypoint for external upstream IdPs) | `egress-waypoint` | S&V | Keycloak and continuity-controller only |
-| `kagent` | controller, UI, oauth2-proxy, tools | `kagent-*` | S&V | edge → oauth2-proxy → UI → controller |
+| `kagent` | controller, UI, tools | `kagent-*` | S&V | UI: edge (after sign-in); controller: the UI and the agents' worker pools; tools: the ops agents. The controller's RBAC covers only `kagent`, `sv-agents` and `sv-mcp` |
 | `kagent` | ops agents (k8s, istio, helm, promql, kgateway): SandboxAgents on pool `kagent-ops` | `kagent-ops` | S&V | atenet-router only |
 | `ate-system` | Agent Substrate: ate-api, atenet-router, atelet, ate-controller, valkey, rustfs | one SA per component | platform | ate-api and router: kagent controller only (ate-api also the Observatory); the rest: `ate-system` only |
 | `agentgateway-system` | ai-gateway (LLM + MCP) | `ai-gateway` | S&V | the agents' worker pools, by ServiceAccount (models, Cross App Access); the kagent controller (Ledgerline's public catalog) |
@@ -88,11 +88,14 @@ as kagent controller → atenet-router → worker, each hop mTLS.
    - meridian gateway (agentgateway, Meridian): ext-auth to uma-pep, which
      enforces Alice's terms (UMA tickets, PoP RPTs, single-use grants).
 
-**Egress.** Every party namespace has NetworkPolicy `no-internet`: its pods
-reach the cluster and nothing else. The ways out are the gateways built for
-it: ai-gateway (models, Cross App Access) and `sv-egress/egress-waypoint`
-(upstream IdPs). Istio ambient doesn't enforce `outboundTrafficPolicy`, so the
-CNI (kindnet) does.
+**Egress.** Every party namespace, and the platform's (`observability`,
+`kiali`, `kgateway-system`, `cnpg-system`, `observatory`, `ops-identity`), has
+NetworkPolicy `no-internet`: its pods reach the cluster and nothing else
+(Prometheus also reaches the nodes' metrics ports). The ways out are the
+gateways built for it: ai-gateway (models, Cross App Access) and
+`sv-egress/egress-waypoint` (upstream IdPs). Istio ambient doesn't enforce
+`outboundTrafficPolicy`, so the CNI (kindnet) does. `ate-system` keeps its
+egress: atelet pulls the actors' images itself.
 
 ## Identity flows
 
@@ -148,6 +151,23 @@ Known gaps, kept on purpose or pending upstream work:
 - **Any namespace can get a lab CA certificate.** The `lab-ca` ClusterIssuer
   signs any `.lab` name for any cert-manager Certificate. In production,
   bind names to namespaces with cert-manager's approver-policy.
+- **kagent's controller doesn't verify token signatures.** kagent 0.10 has
+  only `trusted-proxy` mode, which reads the user from the forwarded token.
+  Its mesh policy admits two callers: the UI, which forwards the access token
+  the edge verified, and the agents' worker pools, calling back with the
+  token the controller gave their turn. Verifying at a waypoint instead would
+  refuse those callbacks once the token's 5 minutes are up mid-turn.
+- **The continuity controller's Keycloak account can manage the realm.**
+  Pointing the login flow's redirector at a tier is authentication-flow
+  config, which Keycloak grants only with `manage-realm`. It is scoped to
+  realm `sterling-vance`; the controller reads only its two Secrets.
+- **kagent doesn't verify ate-api's TLS certificate** (`ateApiInsecure`). The
+  hop runs inside the mesh's mTLS, which authenticates both ends by SPIFFE
+  ID; ate-api's own certificate is Substrate's self-issued one.
+- **The IdPs are single Keycloaks in dev mode.** `start-dev`, one replica,
+  an in-memory store re-imported from the realm file on every start. Fine
+  for a lab that rebuilds in minutes; production runs Keycloak with a
+  database and several replicas.
 - **The password grant is on** for `kagent` (S&V) and `alice-portal`
   (Alice), so the scripted checks can sign in as Bob and Alice. People sign in
   through the browser either way. `LAB_PASSWORD_GRANT=false` in

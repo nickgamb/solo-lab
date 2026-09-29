@@ -9,6 +9,6 @@ openssl req -x509 -new -key "$LAB_CA_DIR/ca.key" -sha256 -days 3650 \
   -subj "/O=solo-lab/CN=solo-lab local CA ($(whoami)@$(hostname -s 2>/dev/null || uname -n))" \
   -addext "basicConstraints=critical,CA:TRUE,pathlen:1" \
   -addext "keyUsage=critical,keyCertSign,cRLSign" \
-  -addext "nameConstraints=critical,permitted;DNS:.${LAB_TLD},permitted;DNS:.svc,permitted;DNS:.cluster.local" \
+  -addext "nameConstraints=critical,permitted;DNS:.${LAB_TLD},permitted;DNS:.svc,permitted;DNS:.cluster.local,excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:::/::" \
   -out "$LAB_CA_DIR/ca.crt"
 ok "lab CA created: $LAB_CA_DIR/ca.crt (name-constrained to .${LAB_TLD}, .svc, .cluster.local)"

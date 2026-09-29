@@ -147,31 +147,13 @@
     },
     {
       "clientId": "ai-gateway",
-      "name": "agentgateway (token exchange requester)",
+      "name": "ai-gateway (audience only: the tokens agents present to it)",
       "enabled": true,
+      "bearerOnly": true,
       "publicClient": false,
-      "secret": "${SV_AIGW_CLIENT_SECRET}",
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": true,
-      "attributes": {
-        "standard.token.exchange.enabled": "true",
-        "access.token.lifespan": "120"
-      },
-      "protocolMappers": [
-        {
-          "name": "groups",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-group-membership-mapper",
-          "config": {
-            "claim.name": "groups",
-            "full.path": "false",
-            "access.token.claim": "true",
-            "id.token.claim": "false",
-            "userinfo.token.claim": "false"
-          }
-        }
-      ]
+      "serviceAccountsEnabled": false
     },
     {
       "clientId": "mcp-waypoint",
@@ -216,43 +198,10 @@
       "name": "Bob's workspace MCP (audience only)",
       "enabled": true,
       "publicClient": false,
-      "secret": "${SV_UNUSED_CLIENT_SECRET}",
+      "bearerOnly": true,
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false
-    },
-    {
-      "clientId": "grafana",
-      "name": "Grafana",
-      "enabled": true,
-      "publicClient": false,
-      "secret": "${SV_GRAFANA_CLIENT_SECRET}",
-      "standardFlowEnabled": true,
-      "directAccessGrantsEnabled": false,
-      "redirectUris": [
-        "https://grafana.${OPS_DOMAIN}/login/generic_oauth"
-      ],
-      "webOrigins": [
-        "https://grafana.${OPS_DOMAIN}"
-      ],
-      "attributes": {
-        "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "https://grafana.${OPS_DOMAIN}/*"
-      },
-      "protocolMappers": [
-        {
-          "name": "groups",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-group-membership-mapper",
-          "config": {
-            "claim.name": "groups",
-            "full.path": "false",
-            "access.token.claim": "true",
-            "id.token.claim": "true",
-            "userinfo.token.claim": "true"
-          }
-        }
-      ]
     },
     {
       "clientId": "https://idp.${LEDGERLINE_DOMAIN}/realms/ledgerline",
@@ -260,7 +209,7 @@
       "description": "Target of Cross App Access. Its clientId is the resource AS issuer, which becomes the ID-JAG audience.",
       "enabled": true,
       "publicClient": false,
-      "secret": "${SV_UNUSED_CLIENT_SECRET}",
+      "bearerOnly": true,
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,

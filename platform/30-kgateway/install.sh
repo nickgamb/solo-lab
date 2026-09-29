@@ -25,4 +25,6 @@ step "Edge gateway (kgateway-system/edge)"
 apply_tmpl "$D/edge-gateway.yaml" "$D/redirect.yaml"
 wait_for "edge gateway Programmed" 60 3 \
   K wait -n kgateway-system gateway/edge --for=condition=Programmed --timeout=2s
+# The edge takes traffic in; everything it forwards to is in the cluster.
+deny_internet kgateway-system
 ok "edge programmed: https://*.${OPS_DOMAIN} *.${SV_DOMAIN} *.${ALICE_DOMAIN} *.${MERIDIAN_DOMAIN} *.${LEDGERLINE_DOMAIN}"

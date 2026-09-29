@@ -41,6 +41,26 @@ step "Mesh policy"
 K apply -f "$D/mesh-policy.yaml" >/dev/null
 ok "collector, Prometheus, Tempo, kube-state-metrics and Kiali take only their named callers"
 
+step "Egress: the cluster only"
+# Like every party namespace (scripts/lib.sh deny_internet). Prometheus also
+# scrapes node-exporter and the kubelets on the node addresses.
+deny_internet observability kiali
+{ cat <<YAML
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: prometheus-scrapes-nodes, namespace: observability}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: prometheus}}
+  policyTypes: [Egress]
+  egress:
+  - ports: [{port: 9100, protocol: TCP}, {port: 10250, protocol: TCP}]
+    to:
+YAML
+  K get nodes -o jsonpath='{range .items[*]}{.status.addresses[?(@.type=="InternalIP")].address}{"\n"}{end}' \
+    | sed 's|.*|    - ipBlock: {cidr: &/32}|'
+} | K apply -f - >/dev/null
+ok "observability, kiali: no internet (Prometheus: the nodes' metrics ports too)"
+
 step "Mesh scrape targets"
 K apply -f "$D/monitors.yaml" >/dev/null
 ok "istiod, ztunnel, waypoint/gateway proxies"

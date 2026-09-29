@@ -42,6 +42,9 @@ step "IdentityContinuity CRD + controller (sv-identity)"
 K apply --server-side -f "$APP/config/crd" >/dev/null
 K wait crd/identitycontinuities.continuity.lab.solo.io --for=condition=Established --timeout=60s >/dev/null
 apply_tmpl "$D/controller.yaml"
+# partitions are read in the egress namespace only; a lab from before that
+# still has the cluster-wide grant
+K delete clusterrolebinding,clusterrole continuity-controller-partitions --ignore-not-found >/dev/null
 rollout sv-identity deploy/continuity-controller
 K get identitycontinuity sterling-vance -n sv-identity >/dev/null 2>&1 || apply_tmpl "$D/identitycontinuity.yaml"
 wait_for "sterling-vance continuity Ready" 30 2 \
