@@ -146,6 +146,6 @@ Grafana and Kiali are at https://grafana.ops.lab and https://kiali.ops.lab
 | `kubectl --context kind-solo-lab logs <pod> -n <ns> --previous` | the logs of a container that crashed |
 | `kubectl --context kind-solo-lab rollout restart deploy/<name> -n <ns>` | restart a workload |
 | `make layer-NN` | re-apply one layer (idempotent); e.g. `make layer-80` restores the S&V mesh policy |
-| `make preflight` | tools, Docker memory and inotify limits (reset when Docker Desktop restarts) |
+| `make preflight` | tools, Docker memory and inotify limits (Docker Desktop: reset when it restarts) |
 | `make reset` | rewind the demos without a rebuild |
 | `make down && make up` | rebuild the cluster; caches and the CA survive |

@@ -56,6 +56,15 @@ ok()   { printf '%s  ✓ %s%s\n' "$_LG" "$*" "$_LN"; }
 warn() { printf '%s  ! %s%s\n' "$_LY" "$*" "$_LN" >&2; }
 die()  { printf '%s  ✗ %s%s\n' "$_LR" "$*" "$_LN" >&2; exit 1; }
 
+# --- host portability (macOS, Linux, WSL) ----------------------------------
+# sha256 / sha1: coreutils where present, else shasum (macOS). Same output.
+sha256() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
+sha1()   { if command -v sha1sum >/dev/null; then sha1sum "$@"; else shasum "$@"; fi; }
+new_uuid() { python3 -c 'import uuid; print(uuid.uuid4())'; }
+# docker_desktop: Docker Desktop (macOS, Windows/WSL, or Linux), whose engine
+# runs in a VM, as opposed to Docker Engine on this host.
+docker_desktop() { docker info --format '{{.OperatingSystem}}' 2>/dev/null | grep -q 'Docker Desktop'; }
+
 # --- kube / helm ------------------------------------------------------------
 K() { kubectl --context "$KCTX" "$@"; }
 H() {
@@ -197,8 +206,8 @@ deploy_keycloak() {
   export PARTY_NS=$ns PARTY_DOMAIN=$domain PARTY_LISTENER=$listener KC_FEATURES=$features
   export KC_REALM_CM="realm-$(basename "$realm" .json | sed 's/^realm-//')"
   export KC_REALM; KC_REALM=$(jq -r .realm "$realm")
-  export KC_REALM_SHA; KC_REALM_SHA=$(shasum -a 256 "$realm" | cut -c1-16)
-  export KC_KEY_SHA; KC_KEY_SHA=$(shasum -a 256 "$LAB_STATE/keys/$rname.crt" | cut -c1-16)
+  export KC_REALM_SHA; KC_REALM_SHA=$(sha256 "$realm" | cut -c1-16)
+  export KC_KEY_SHA; KC_KEY_SHA=$(sha256 "$LAB_STATE/keys/$rname.crt" | cut -c1-16)
   K create configmap "$KC_REALM_CM" -n "$ns" --from-file="$(basename "$realm")=$realm" \
     --dry-run=client -o yaml | K apply -f - >/dev/null
   apply_tmpl "$LAB_ROOT/platform/45-identity/keycloak.yaml"

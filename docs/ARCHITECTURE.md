@@ -160,9 +160,11 @@ Every party hostname is `<name>.<party>.lab`, and it resolves the same way
 everywhere, so an issuer URL means the same thing to a browser, a CLI and a
 pod:
 
-- **Mac:** `/etc/resolver/lab` sends `*.lab` to the lab DNS container on
-  `127.0.0.1:15353`, which answers `127.0.0.1`. `make machine-setup` writes
-  it (one-time sudo).
+- **Host:** the lab DNS container on `127.0.0.1:15353` answers every
+  `*.lab` name with `127.0.0.1`. `make machine-setup` (one-time sudo) points
+  the host at it: `/etc/resolver/lab` on macOS, a systemd-resolved drop-in
+  routing `~lab` on Linux, or, without systemd-resolved (or on WSL2), a
+  marked block in `/etc/hosts` with every hostname the lab publishes.
 - **Cluster:** CoreDNS rewrites `*.lab` to the edge Service.
 - **Waypoints:** `sv-mcp` uses an agentgateway waypoint (MCP-aware). `alice`,
   `meridian` and `ledgerline` use Istio waypoints, opted into per workload

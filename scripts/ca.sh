@@ -6,7 +6,7 @@ if [ -s "$LAB_CA_DIR/ca.crt" ]; then ok "lab CA exists ($LAB_CA_DIR)"; exit 0; f
 openssl ecparam -name prime256v1 -genkey -noout -out "$LAB_CA_DIR/ca.key"
 chmod 600 "$LAB_CA_DIR/ca.key"
 openssl req -x509 -new -key "$LAB_CA_DIR/ca.key" -sha256 -days 3650 \
-  -subj "/O=solo-lab/CN=solo-lab local CA ($(whoami)@$(hostname -s))" \
+  -subj "/O=solo-lab/CN=solo-lab local CA ($(whoami)@$(hostname -s 2>/dev/null || uname -n))" \
   -addext "basicConstraints=critical,CA:TRUE,pathlen:1" \
   -addext "keyUsage=critical,keyCertSign,cRLSign" \
   -addext "nameConstraints=critical,permitted;DNS:.${LAB_TLD},permitted;DNS:.svc,permitted;DNS:.cluster.local" \

@@ -100,7 +100,7 @@ ok "caches up; push your own images to localhost:$LAB_REGISTRY_PORT"
 step "cloud-provider-kind (LoadBalancer IPs on the kind network)"
 if [ -z "$(docker ps -aq -f name='^lab-cloud-provider-kind$')" ]; then
   docker run -d --restart=always --name lab-cloud-provider-kind --network kind \
-    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v "${LAB_DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock" \
     "registry.k8s.io/cloud-provider-kind/cloud-controller-manager:$CLOUD_PROVIDER_KIND_VERSION" >/dev/null
 else
   docker start lab-cloud-provider-kind >/dev/null
