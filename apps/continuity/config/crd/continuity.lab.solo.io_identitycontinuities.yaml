@@ -161,8 +161,9 @@ spec:
                       type: boolean
                     enabled:
                       default: true
-                      description: Disabled tiers are never active and their Keycloak
-                        IdP is disabled.
+                      description: |-
+                        Disabled tiers are never active (a local one included) and their
+                        Keycloak IdP is disabled.
                       type: boolean
                     failoverWhen:
                       default: {}
@@ -173,6 +174,10 @@ spec:
                           default: true
                           type: boolean
                         latencyAboveMs:
+                          description: |-
+                            Must be below health.timeoutSeconds: a slower answer times out
+                            (Unreachable) before its latency is known. Condition RulesEffective
+                            is False while one isn't.
                           format: int32
                           minimum: 1
                           type: integer
@@ -248,6 +253,9 @@ spec:
           status:
             properties:
               active:
+                description: |-
+                  The tier logins go to now (the one Keycloak's redirector points at, or
+                  the local tier when it points nowhere).
                 type: string
               activeSince:
                 format: date-time
@@ -317,6 +325,11 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              egressNamespace:
+                description: |-
+                  Where this instance's ServiceEntries are, so they are removed when
+                  spec.egress changes or goes away.
+                type: string
               observedGeneration:
                 format: int64
                 type: integer
@@ -347,7 +360,8 @@ spec:
                     partitioned:
                       description: |-
                         A DENY AuthorizationPolicy labelled continuity.lab.solo.io/tier=<name>
-                        exists. Informational: selection only ever follows the probes.
+                        targets the tier's ServiceEntry in the egress namespace. Informational:
+                        selection only ever follows the probes.
                       type: boolean
                     reason:
                       type: string

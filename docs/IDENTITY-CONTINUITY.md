@@ -21,9 +21,27 @@ kubectl --context kind-solo-lab get idc -n sv-identity
 ## The resource
 
 The installed rule is `platform/47-continuity/identitycontinuity.yaml`: Auth0
-first, S&V's local accounts second, automatic failback. It is applied once;
-after that the spec belongs to its operators (the Observatory rule builder
-edits it), and re-running the layer leaves it alone.
+first, S&V's local accounts second, automatic failback. Without `AUTH0_ISSUER`
+it is installed with the local tier only. It is applied once; after that the
+spec belongs to its operators (the Observatory rule builder edits it), and
+re-running the layer changes only the auth0 tier's issuer, when
+`AUTH0_ISSUER` has changed.
+
+### What the broker realm must already have
+
+The controller manages identity providers and one redirector setting. It
+doesn't create flows or roles, so the realm needs them first
+(`platform/45-identity/realm-sterling-vance.json` has all of them):
+
+- a browser flow (`continuity-browser`) with an **Identity Provider
+  Redirector** execution, bound as the realm's browser flow;
+- a first-broker-login flow (`continuity-first-broker-login`) that detects
+  the existing user and links automatically (`idp-detect-existing-broker-user`,
+  `idp-auto-link`);
+- a service-account client whose roles include realm-management
+  `manage-identity-providers` and `manage-realm` (editing the redirector's
+  config is realm config), with its credentials in the Secret
+  `broker.keycloak.credentialsRef` names.
 
 ### spec
 
@@ -46,13 +64,14 @@ edits it), and re-running the layer leaves it alone.
 | `tiers[].oidc.clientID` | optional; falls back to the Secret's `client-id` key |
 | `tiers[].oidc.clientSecretRef` | Secret and key (default `client-secret`); missing means `NotConfigured` |
 | `tiers[].oidc.scopes` | default `openid email profile` |
-| `tiers[].failoverWhen` | which probe results count against the tier: `unreachable`, `serverError`, `invalidDiscovery` (each default true), `latencyAboveMs` |
+| `tiers[].failoverWhen` | which probe results count against the tier: `unreachable`, `serverError`, `invalidDiscovery` (each default true), `latencyAboveMs` (must be below `health.timeoutSeconds`: a slower answer times out first) |
 | `health` | `intervalSeconds`, `timeoutSeconds`, `unhealthyThreshold` (failures in a row to go down), `healthyThreshold` (successes in a row to come back) |
 | `failback` | `Automatic` (move back up as soon as a higher tier is healthy) or `Manual` |
 
 ### status
 
-`active`, `activeSince`, `broker.issuer`, per tier (`configured`, `healthy`,
+`active` (where logins go now: the tier Keycloak's redirector points at, or
+the local tier), `activeSince`, `broker.issuer`, `egressNamespace`, per tier (`configured`, `healthy`,
 `partitioned`, `latencyMs`, `reason`, `message`, consecutive failures and
 successes, and `redirectURI`: the callback the upstream app must allow), the
 last 20 `transitions`, and conditions `Ready` and `Degraded` (not on the first
@@ -65,22 +84,37 @@ Every `health.intervalSeconds`, two replicas, one leader (Lease
 `continuity.lab.solo.io` in `sv-identity`):
 
 1. **Probe each tier.** `oidc`: fetch discovery and JWKS within
-   `timeoutSeconds`. Results: `Healthy`, `Unreachable`, `ServerError`,
-   `InvalidDiscovery`, `SlowResponse`. `local`: healthy while Keycloak is
-   reachable. A tier without credentials is probed but `NotConfigured`.
+   `timeoutSeconds`; every endpoint in the discovery document must be https.
+   Results: `Healthy`, `Unreachable`, `ServerError`, `InvalidDiscovery`,
+   `SlowResponse`. `local`: healthy while Keycloak is reachable. A tier
+   without credentials is probed but `NotConfigured`. A probe counts toward
+   the thresholds at most once per interval, so editing the spec doesn't
+   speed up a failover.
 2. **Pick the active tier:** the first that is enabled, not drained,
    configured and healthy. With `failback: Manual` it stays put until the
-   current tier fails.
+   current tier fails. With nothing eligible, the first local tier that is
+   enabled and not drained. While Keycloak itself is unreachable nothing can
+   change, so the active tier holds.
 3. **Make Keycloak match**, through its admin API:
    - one OIDC identity provider per configured `oidc` tier (hidden from the
      login page when not eligible), with PKCE S256, `client_secret_post`, and
-     a claim filter that only accepts `email_verified: true`;
+     a claim filter that only accepts `email_verified: true`. A setting
+     changed by hand in Keycloak is put back. If a tier's Secret goes
+     missing its IdP stays (hidden), so users' links to it survive; only
+     removing the tier from the spec deletes it;
    - the `continuity-browser` flow's IdP redirector set to the active tier,
      or cleared when the active tier is `local`, so S&V's own form shows.
 4. **Keep the egress path:** a ServiceEntry `sv-egress/continuity-<tier>` for
    each external upstream, bound to `sv-egress/egress-waypoint`, so the
    back-channel (probes, token, JWKS, userinfo) leaves the lab under S&V
-   policy.
+   policy. A ServiceEntry of that name owned by another instance is left
+   alone (and reported); when `spec.egress` changes or goes away, the old
+   ones are removed.
+
+Deleting an IdentityContinuity removes its IdPs and ServiceEntries and
+clears the redirector. If Keycloak stays unreachable for 5 minutes, the
+controller gives up on Keycloak (event `CleanupAbandoned`) rather than hold
+up the deletion.
 
 Users signing in through an upstream are linked to their existing S&V user
 by verified email (`idp-detect-existing-broker-user`, `idp-auto-link`), so
@@ -156,8 +190,8 @@ failover takes about 10 s after the cut and failback about 15 s after the heal.
 
 ## Auth0 setup
 
-Tenant: `AUTH0_ISSUER` in `config/lab.env` (default `https://gamb.us.auth0.com/`;
-override it in `.env` for your own tenant).
+Tenant: `AUTH0_ISSUER` in `.env`, your tenant's issuer with its trailing
+slash (`https://<tenant>.us.auth0.com/`). Unset, the lab has no auth0 tier.
 
 1. **Applications → Create Application → Regular Web Application.** Settings:
 
@@ -180,9 +214,11 @@ override it in `.env` for your own tenant).
    `PATCH /api/v2/users/{id}` with `{"email_verified": true}` from the
    Management API Explorer). Unverified emails are refused at Keycloak.
 
-4. **Give the lab the credentials** in `.env`, then install the layer again:
+4. **Give the lab the tenant and credentials** in `.env`, then install the
+   layer again:
 
    ```
+   AUTH0_ISSUER=https://<tenant>.us.auth0.com/
    AUTH0_CLIENT_ID=<Client ID>
    AUTH0_CLIENT_SECRET=<Client Secret>
    ```
