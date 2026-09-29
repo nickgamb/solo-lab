@@ -16,6 +16,14 @@ metadata:
   name: observability
   labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient}
 ---
+# Kiali, in the mesh (istio-system is not: istio-cni excludes it), so its
+# callers are named by identity like everything else's.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kiali
+  labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient}
+---
 apiVersion: v1
 kind: Namespace
 metadata:

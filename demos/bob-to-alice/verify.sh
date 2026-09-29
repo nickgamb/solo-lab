@@ -3,7 +3,7 @@
 # -> edge -> Meridian -> Alice's AS) and plays Alice's decisions through her
 # owner API; in the demo she clicks them in her portal. Run after `make reset`.
 . "$(dirname "$0")/../../scripts/lib.sh"
-need_cluster
+need_cluster; need_password_grant
 pass=0 fail=0
 res() { if [ "$1" = ok ]; then ok "$2"; pass=$((pass+1)); else warn "$2"; echo "      got: ${3:0:300}"; fail=$((fail+1)); fi; }
 expect() { echo "$3" | tr '\n' ' ' | grep -qiE "$1" && res ok "$2" || res no "$2" "$(echo "$3" | tr '\n' ' ')"; }

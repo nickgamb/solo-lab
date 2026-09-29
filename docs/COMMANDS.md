@@ -32,7 +32,7 @@ the repo root: `bash -c '. scripts/lib.sh; ...'`.
 | --- | --- |
 | `kubectl --context kind-solo-lab get peerauthentication,authorizationpolicy -A` | every mTLS mode and allow/deny policy |
 | `kubectl --context kind-solo-lab get authorizationpolicy <name> -n <ns> -o yaml` | who a policy admits, by SPIFFE principal |
-| `kubectl --context kind-solo-lab get networkpolicy -A` | the egress fences (`no-internet`) and Kiali's ingress fence |
+| `kubectl --context kind-solo-lab get networkpolicy -A` | the egress fences (`no-internet`) |
 | `istioctl --context kind-solo-lab ztunnel-config workloads` | every workload ztunnel knows, its address, node and waypoint |
 | `istioctl --context kind-solo-lab ztunnel-config workloads --workload-namespace sv-agents` | the same, for one namespace |
 | `istioctl --context kind-solo-lab ztunnel-config certificates --node solo-lab-worker` | the SPIFFE certificates ztunnel holds on a node |
@@ -40,18 +40,24 @@ the repo root: `bash -c '. scripts/lib.sh; ...'`.
 | `kubectl --context kind-solo-lab get serviceentry -A` | external hosts the mesh knows (the continuity controller's egress entries) |
 | `kubectl --context kind-solo-lab -n istio-system logs ds/ztunnel --since=5m \| grep -i -E "deny\|rbac"` | recent connections ztunnel refused |
 
-**Try a call as a real workload identity.** `make bob-verify` creates probe pods,
-each with its own ServiceAccount (and so its own SPIFFE ID), in `kagent`,
-`sv-agents` and `observability`:
+**Try a call as a real workload identity.** `make bob-verify` and `make tour`
+create probe pods. `probe` (in `sv-agents`, `observability`, and `kagent` for
+the tour) has its own ServiceAccount, so its own SPIFFE ID: some workload,
+nobody special. `probe-bob-assistant` in `sv-agents` runs as Bob's agent's
+ServiceAccount, to call as the agent.
 
 ```bash
-kubectl --context kind-solo-lab -n sv-agents exec probe -- curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://kiali.istio-system:20001/
+kubectl --context kind-solo-lab -n sv-agents exec probe -- curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://kps-prometheus.observability:9090/-/ready
 ```
+
+`000` is the mesh refusing it: Prometheus names its callers, and this probe
+isn't one.
 
 ```bash
-kubectl --context kind-solo-lab -n sv-agents exec probe -- python3 /tmp/p.py http://bob-workspace-mcp.sv-mcp:3000/mcp list
+kubectl --context kind-solo-lab -n sv-agents exec probe-bob-assistant -- python3 /tmp/p.py http://bob-workspace-mcp.sv-mcp:3000/mcp list --token "$(jq -r .access_token /tmp/bob.json)"
 ```
 
+Bob's tools, as his agent (the token is from [Get Bob's tokens](#identity)).
 `/tmp/p.py` is `tools/mcp-probe.py`: `list`, or `call <tool> '<json args>'`,
 with `--token <jwt>` and `--header name=value`.
 
@@ -76,7 +82,7 @@ with `--token <jwt>` and `--header name=value`.
 | --- | --- |
 | `curl -s https://idp.sterling.lab/realms/sterling-vance/.well-known/openid-configuration \| jq` | S&V's issuer and endpoints (same for `idp.alice.lab/realms/alice`, `idp.ledgerline.lab/realms/ledgerline`, `idp.ops.lab/realms/ops`) |
 | `grep -E 'KC_ADMIN_PASSWORD' .lab/secrets.env` | each Keycloak's admin password (user `admin`) |
-| `kubectl --context kind-solo-lab -n sv-identity port-forward svc/keycloak 18080:80` | S&V Keycloak's admin console at http://127.0.0.1:18080/admin |
+| `kubectl --context kind-solo-lab -n sv-identity port-forward svc/keycloak 18080:80` | S&V Keycloak's admin console at http://127.0.0.1:18080/admin (the edge publishes only the realm; same for `ops-identity`, `alice-identity`, `ledgerline-identity`) |
 | `kubectl --context kind-solo-lab -n sv-identity logs deploy/keycloak --since=10m \| grep -i -E "claim\|IDENTITY_PROVIDER\|error"` | sign-in and broker errors (it names the claim or step that failed) |
 
 **Get Bob's tokens** (the password grant the checks use; lab test accounts only):

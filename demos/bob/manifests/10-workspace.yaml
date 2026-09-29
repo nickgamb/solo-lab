@@ -8,7 +8,8 @@
 #   2. mcp-waypoint (L7) caller must be an S&V agent workload (SPIFFE) acting
 #                        for an advisor (JWT); per-tool CEL; then RFC 8693:
 #                        the tool gets a token delegated to it, not Bob's
-#   3. the server        answers only aud=bob-workspace, acts as the token's user
+#   3. the server        verifies the delegated token (S&V's keys, issuer,
+#                        aud=bob-workspace, expiry), acts as the token's user
 apiVersion: kagent.dev/v1alpha1
 kind: MCPServer
 metadata:
@@ -21,9 +22,11 @@ spec:
     targetPort: 3000
     path: /mcp
   deployment:
-    image: localhost:5001/sv/bob-workspace:dev
-    imagePullPolicy: Always
+    image: ${BOB_WORKSPACE_IMAGE}
     port: 3000
+    env:
+      WORKSPACE_ISSUER: https://idp.${SV_DOMAIN}/realms/sterling-vance
+      WORKSPACE_JWKS_URL: http://keycloak.sv-identity.svc/realms/sterling-vance/protocol/openid-connect/certs
     replicas: 2
     resources:
       requests: {cpu: 20m, memory: 64Mi}

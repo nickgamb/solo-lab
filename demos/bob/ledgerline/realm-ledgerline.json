@@ -1,5 +1,10 @@
 {
   "realm": "ledgerline",
+  "bruteForceProtected": true,
+  "failureFactor": 10,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "permanentLockout": false,
   "displayName": "Ledgerline Research",
   "enabled": true,
   "sslRequired": "external",

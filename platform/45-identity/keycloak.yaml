@@ -1,6 +1,6 @@
 # A Keycloak for one party. Rendered per party with PARTY_NS, PARTY_DOMAIN,
-# KC_REALM_CM. The realm is re-imported from its ConfigMap on every start, so
-# the realm lives as code; secrets in it are Keycloak's own ${ENV}
+# KC_REALM, KC_REALM_CM. The realm is re-imported from its ConfigMap on every
+# start, so the realm lives as code; secrets in it are Keycloak's own ${ENV}
 # placeholders, resolved from the kc-secrets Secret inside the container.
 #
 # Issuer is always https://idp.<party>.lab/realms/<realm>: the browser reaches
@@ -62,6 +62,7 @@ spec:
         - {name: ALICE_DOMAIN, value: "${ALICE_DOMAIN}"}
         - {name: MERIDIAN_DOMAIN, value: "${MERIDIAN_DOMAIN}"}
         - {name: LEDGERLINE_DOMAIN, value: "${LEDGERLINE_DOMAIN}"}
+        - {name: KC_PASSWORD_GRANT, value: "${LAB_PASSWORD_GRANT}"}   # the realm's user-facing client (config/lab.env)
         envFrom:
         - secretRef: {name: kc-secrets}     # KC_BOOTSTRAP_ADMIN_* + client secrets for the realm placeholders
         - secretRef: {name: kc-realm-key}   # stable realm signing key (survives restarts)
@@ -95,5 +96,11 @@ metadata:
 spec:
   parentRefs: [{name: edge, namespace: kgateway-system, sectionName: ${PARTY_LISTENER}}]
   hostnames: ["idp.${PARTY_DOMAIN}"]
+  # Only the party's realm (sign-in, tokens, keys, account) and the pages'
+  # static assets are public. The admin console, the admin API and the master
+  # realm answer 404 on the edge; admins use a port-forward (docs/COMMANDS.md).
   rules:
-  - backendRefs: [{name: keycloak, port: 80}]
+  - matches:
+    - path: {type: PathPrefix, value: /realms/${KC_REALM}}
+    - path: {type: PathPrefix, value: /resources}
+    backendRefs: [{name: keycloak, port: 80}]

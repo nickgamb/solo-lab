@@ -1,5 +1,10 @@
 {
   "realm": "alice",
+  "bruteForceProtected": true,
+  "failureFactor": 10,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "permanentLockout": false,
   "displayName": "Alice",
   "enabled": true,
   "sslRequired": "external",
@@ -24,7 +29,7 @@
       "enabled": true,
       "publicClient": true,
       "standardFlowEnabled": true,
-      "directAccessGrantsEnabled": true,
+      "directAccessGrantsEnabled": "${KC_PASSWORD_GRANT}",
       "redirectUris": ["https://portal.${ALICE_DOMAIN}/*"],
       "webOrigins": ["https://portal.${ALICE_DOMAIN}"],
       "attributes": {

@@ -48,6 +48,7 @@ spec:
         - cluster.local/ns/agentgateway-system/sa/ai-gateway
         - cluster.local/ns/agentgateway-system/sa/agentgateway   # controller: JWKS fetch
         - cluster.local/ns/sv-mcp/sa/mcp-waypoint
+        - cluster.local/ns/sv-mcp/sa/bob-workspace      # verifies its delegated tokens (JWKS)
         - cluster.local/ns/agentregistry/sa/agentregistry
         - cluster.local/ns/sv-identity/sa/continuity-controller
 ---

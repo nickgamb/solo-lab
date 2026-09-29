@@ -136,7 +136,8 @@ func main() {
 	}()
 	go sub.Run(ctx)
 
-	auth := NewAuth(ctx, env("OIDC_ISSUER", ""), env("OIDC_JWKS_URL", ""), env("OIDC_AUDIENCE", "observatory"), env("ADMIN_GROUP", "observatory-admins"))
+	auth := NewAuth(ctx, env("OIDC_ISSUER", ""), env("OIDC_JWKS_URL", ""), env("OIDC_AUDIENCE", "observatory"),
+		env("OIDC_CLIENT_ID", "observatory"), env("ADMIN_GROUP", "observatory-admins"))
 	res := &Resources{k: k, admin: env("ADMIN_GROUP", "observatory-admins")}
 
 	api := http.NewServeMux()
@@ -161,9 +162,9 @@ func main() {
 	if dev := os.Getenv("OBSERVATORY_DEV_USER"); dev != "" && local {
 		// Local development only (never in a cluster): act as this user.
 		slog.Warn("auth disabled for local development", "user", dev)
-		mux.Handle("/api/", devUser(dev, env("ADMIN_GROUP", "observatory-admins"), api))
+		mux.Handle("/api/", devUser(dev, env("ADMIN_GROUP", "observatory-admins"), writeGuard(api)))
 	} else {
-		mux.Handle("/api/", auth.Middleware(api))
+		mux.Handle("/api/", auth.Middleware(writeGuard(api)))
 	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	mux.Handle("/", spa(http.FS(web)))
@@ -171,7 +172,7 @@ func main() {
 	otlp := http.NewServeMux()
 	otlp.HandleFunc("/v1/logs", traffic.ServeOTLP)
 
-	srv := &http.Server{Addr: env("LISTEN", ":8080"), Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: env("LISTEN", ":8080"), Handler: securityHeaders(mux), ReadHeaderTimeout: 10 * time.Second}
 	osrv := &http.Server{Addr: env("OTLP_LISTEN", ":4318"), Handler: otlp, ReadHeaderTimeout: 10 * time.Second}
 	go func() { slog.Info("otlp", "addr", osrv.Addr); logFatal(osrv.ListenAndServe()) }()
 	go func() { slog.Info("http", "addr", srv.Addr); logFatal(srv.ListenAndServe()) }()
