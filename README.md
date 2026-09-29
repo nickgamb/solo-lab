@@ -1,5 +1,13 @@
 # solo-lab
 
+[![Kubernetes 1.37 on kind](https://img.shields.io/badge/runs%20on-kind%20%C2%B7%20k8s%201.37-326ce5?logo=kubernetes&logoColor=white)](docs/ARCHITECTURE.md#install-order)
+[![Mesh Istio ambient 1.31](https://img.shields.io/badge/mesh-Istio%20ambient%201.31-466bb0?logo=istio&logoColor=white)](docs/ARCHITECTURE.md#enforcement-layers)
+[![Gateways](https://img.shields.io/badge/gateways-kgateway%20%C2%B7%20agentgateway-5e8fa3)](docs/ARCHITECTURE.md#enforcement-layers)
+[![Agents](https://img.shields.io/badge/agents-kagent%20%C2%B7%20Agent%20Substrate-5e8fa3)](docs/ARCHITECTURE.md#workloads-and-identities)
+[![Identity](https://img.shields.io/badge/identity-RFC%208693%20%C2%B7%20ID--JAG%20%C2%B7%20UMA%202.0-8cc2d4)](docs/IDENTITY-FLOWS.md)
+[![Editions](https://img.shields.io/badge/editions-OSS%20%7C%20Solo%20Enterprise-8cc2d4)](docs/ENTERPRISE.md)
+[![Companion u4a.ai](https://img.shields.io/badge/companion-u4a.ai-bcdb2c)](https://u4a.ai)
+
 A local, production-shaped lab for the Solo.io AI platform on kind: Istio
 ambient, kgateway, agentgateway, kagent + kmcp, Agent Substrate,
 agentregistry and Keycloak, plus two lab apps: the **Observatory** (a live
@@ -75,6 +83,7 @@ Open it in a browser (`open docs/cards/<card>.html`).
 | --- | --- | --- |
 | [Bob](docs/cards/bob.html) | Bob's agent acts for Bob: RFC 8693 delegation at the MCP waypoint, per-tool policy, human approval for writes, Cross App Access (ID-JAG) to a SaaS | `make bob-verify` |
 | [Bob to Alice](docs/cards/bob-to-alice.html) | the same agent asks Alice for her data on her terms (UMA for agents) | `make alice-verify` |
+| [Observatory tour](docs/cards/observatory.html) | every story end to end from one command, watched live: the agent waking, verified tokens per hop, refusals, Alice's terms, an IdP outage | `make tour` |
 | [Identity continuity](docs/cards/identity-continuity.html) | a real network outage of the upstream IdP, automatic failover to local accounts, and failback, live in the Observatory | `make continuity-verify` |
 
 `make reset` rewinds every demo without a rebuild. The identity continuity
@@ -124,6 +133,7 @@ can be overridden in `.env` or the shell.
 | `platform` | every layer under `platform/` in order |
 | `layer-NN` | one layer, e.g. `make layer-90` (Observatory) |
 | `verify` | `bob-verify`, `alice-verify`, `continuity-verify` |
+| `tour` | drive every story end to end, paced, to watch in the Observatory |
 | `reset` | rewind the demos (grants, terms, agent key, follow-ups) |
 | `llm` | switch the model: `make llm LLM_PROVIDER=anthropic` |
 | `status` | pods, the active sign-in tier, URLs |

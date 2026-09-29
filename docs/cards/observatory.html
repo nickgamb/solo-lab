@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Observatory Demo Card</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="card.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="masthead">
+    <h1>Observatory Demo Card</h1>
+    <p class="standfirst">One command drives every story end to end. Watch it happen live: an agent waking, the tokens each hop verifies, refusals from each layer, another company's data on its owner's terms, and an IdP outage the business survives.</p>
+  </header>
+  <section class="screens">
+    <div class="screen left">
+      <span class="side">Left screen</span>
+      <span class="what">Terminal, running the tour</span>
+      <span class="detail">~/Documents/GitHub/solo-lab</span>
+    </div>
+    <div class="screen right">
+      <span class="side">Right screen</span>
+      <span class="what">Observatory, signed in as ops</span>
+      <span class="detail">https://observatory.ops.lab</span>
+    </div>
+  </section>
+
+  <section class="setup">
+    <h2>Pre-demo setup</h2>
+    <p class="setup-note">The lab is up (<code>make up</code>) with a model behind it (<code>make llm</code>): Bob's questions go to his real agent. The outage scene also needs the upstream IdP configured (<code>docs/IDENTITY-CONTINUITY.md</code>); without it, the tour skips that scene.</p>
+    <div class="table-scroll">
+      <table>
+        <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
+        <thead><tr><th>#</th><th>Run this</th><th>What it does</th></tr></thead>
+        <tbody>
+        <tr class="term">
+          <td class="num">1</td>
+          <td class="act">
+            <span class="where">A first run for everyone</span>
+            <div class="cmdwrap"><code class="cmd">make reset</code></div>
+          </td>
+          <td class="say">Alice forgets every agent, so Bob's agent is a stranger to her and its first request waits for her approval. Nothing is rebuilt.</td>
+        </tr>
+        <tr class="term">
+          <td class="num">2</td>
+          <td class="act">
+            <span class="where">Check</span>
+            <div class="cmdwrap"><code class="cmd">make status</code></div>
+          </td>
+          <td class="say">Every pod Running, and under Sign-in, <strong>active: auth0</strong>.</td>
+        </tr>
+        <tr class="port">
+          <td class="num">3</td>
+          <td class="act">
+            <span class="where">Right screen</span>
+            <span class="click">Sign in to the Observatory as <strong>ops / ops-demo</strong>. Open <strong>Topology</strong>, view <strong>All</strong></span>
+          </td>
+          <td class="say">You're looking at the whole lab, drawn from the cluster itself: the front door on the left, one lane per company, and the outside world on the right.</td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="afters">
+      <div class="after">
+        <span class="after-label">Pacing</span>
+        <p>The tour waits for Enter between scenes, so you talk at your own speed. <code>make tour TOUR_AUTO=1</code> runs it hands-free (<code>TOUR_PAUSE</code> seconds between scenes). <code>TOUR_FROM=4</code> starts at a scene.</p>
+      </div>
+      <div class="after">
+        <span class="after-label">Running it again</span>
+        <p><code>make reset</code>, then the tour. Each scene prints where to look, so the terminal doubles as your script.</p>
+      </div>
+    </div>
+  </section>
+  <hr class="rule">
+
+  <section class="runthrough">
+    <h2>The run-through</h2>
+    <p class="run-note">The terminal on the left drives, and the Observatory on the right shows it. Press Enter after each scene.</p>
+    <div class="table-scroll">
+      <table>
+        <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
+        <thead><tr><th>#</th><th>Do this</th><th>Say this</th></tr></thead>
+        <tbody>
+        <tr class="term">
+          <td class="num">1</td>
+          <td class="act">
+            <span class="where">Terminal</span>
+            <div class="cmdwrap"><code class="cmd">make tour</code></div>
+          </td>
+          <td class="say">
+            <span class="chip tier">Real traffic</span>
+            <span class="lede">Nothing here is mocked.</span>
+            The tour signs in as Bob, asks his actual agent questions, and runs refusals from pods with their own mesh identities. The Observatory only watches.
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">2</td>
+          <td class="act">
+            <span class="where">Scene 1 · Topology</span>
+            <span class="click">Watch the <strong>bob-assistant</strong> tray, then the wires out of it</span>
+          </td>
+          <td class="say">
+            <span class="chip through">Delegation</span>
+            <span class="lede">A worker bay lights as Bob's agent wakes in its sandbox.</span>
+            Its calls go to the model through ai-gateway, and to Bob's workspace through the MCP waypoint (the badge on the wire). The agent answers <em>acting for bob</em>.
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">3</td>
+          <td class="act">
+            <span class="where">Traffic</span>
+            <span class="click">Filter <strong>mcp</strong>, turn on <strong>Carries a token</strong>, expand <strong>tools/call whoami</strong></span>
+          </td>
+          <td class="say">
+            <span class="chip tier">Two identities</span>
+            <span class="lede">Bob's verified claims, on the exact call.</span>
+            The waypoint checked Bob's token (audience, advisor group, expiry) and the agent's workload identity, then handed the tool a different, two-minute token. The raw token never reaches this screen, only its claims.
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">4</td>
+          <td class="act">
+            <span class="where">Scene 2 · Topology</span>
+            <span class="click">Hover <strong>ai-gateway</strong></span>
+          </td>
+          <td class="say">
+            <span class="chip through">Cross App Access</span>
+            <span class="lede">Out to another company, and back with an answer.</span>
+            ai-gateway reaches Ledgerline Research through the edge. It traded Bob's ID token for an ID-JAG, and Ledgerline issued its own token. The agent held neither of them.
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">5</td>
+          <td class="act">
+            <span class="where">Scene 3 · Traffic</span>
+            <span class="click">Outcome filter: <strong>denied</strong> only</span>
+          </td>
+          <td class="say">
+            <span class="chip refused">Refused</span>
+            <span class="lede">Six bypasses, and none of them got through.</span>
+            They were refused by the tool filter, the waypoint's policy (once for no user token, once for the wrong workload), the mesh (a pod dialed directly), the egress gateway, and Ledgerline itself. The terminal prints which layer refused each one.
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">6</td>
+          <td class="act">
+            <span class="where">Topology</span>
+            <span class="click">View <strong>Cross-party</strong></span>
+          </td>
+          <td class="say">
+            <span class="chip tier">Boundaries</span>
+            <span class="lede">Only the calls between companies are left.</span>
+            Every one of them goes through the front door, the way separate companies meet on the internet.
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">7</td>
+          <td class="act">
+            <span class="where">Scene 4 · Topology</span>
+            <span class="click">Watch Meridian's and Alice's lanes</span>
+          </td>
+          <td class="say">
+            <span class="chip held">Her terms</span>
+            <span class="lede">Bob's agent asks for Alice's portfolio, which Meridian holds.</span>
+            Meridian's gateway sends it to Alice's authorization server. She has never met this agent, so it waits until she approves (the tour approves as her), and the holdings come back. Her portal's Activity ledger records all of it.
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">8</td>
+          <td class="act">
+            <span class="where">Scene 5 · Identity Continuity</span>
+            <span class="click">Switch tabs before pressing Enter</span>
+          </td>
+          <td class="say">
+            <span class="chip refused">Outage</span>
+            <span class="lede">A real network cut to the upstream IdP, at the firm's egress.</span>
+            Amber while the health checks fail, then red: <strong>FAILOVER ACTIVE</strong>, about ten seconds later. New sign-ins now get the firm's own login, and every app keeps trusting the same issuer.
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">9</td>
+          <td class="act">
+            <span class="where">Identity Continuity</span>
+            <span class="click">Press Enter once more</span>
+          </td>
+          <td class="say">
+            <span class="chip held">Failback</span>
+            <span class="lede">Network restored, and after three healthy checks it's green again.</span>
+            Transitions at the bottom records the cut, the failover, the restore and the failback.
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">10</td>
+          <td class="act">
+            <span class="where">Topology</span>
+            <span class="click">Export (bottom left, under the zoom controls)</span>
+          </td>
+          <td class="say">
+            <span class="chip tier">Take it with you</span>
+            <span class="lede">The whole map as a PNG, in whichever view you're on.</span>
+            It's drawn from the running cluster, so another lab renders the same way.
+          </td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+<script src="card.js"></script>
+</body>
+</html>

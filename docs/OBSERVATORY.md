@@ -8,6 +8,12 @@ renders the same way.
 Source: `apps/observatory` (Go server in `server/`, React UI in `web/`).
 Install: `platform/90-observatory` (`make layer-90`).
 
+## Seeing it work
+
+`make tour` drives every story end to end with real traffic, one scene at a
+time, and prints where to look. The script for presenting it is the
+[Observatory demo card](cards/observatory.html).
+
 ## Access
 
 `https://observatory.ops.lab`, user `ops` / `ops-demo`.
