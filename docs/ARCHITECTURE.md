@@ -176,6 +176,10 @@ Known gaps, kept on purpose or pending upstream work:
   when it calls admission webhooks in platform namespaces (the Prometheus
   operator's, for one). Platform components are fenced by ALLOW policies
   that name their callers instead.
+- **The agentgateway controller's xDS port (9978) takes plaintext.** Its
+  proxies (`ai-gateway`, `mcp-waypoint`) run outside the mesh and terminate
+  HBONE themselves, so they can't reach it over mesh mTLS. The controller's
+  other ports stay STRICT.
 - **The IdPs are single Keycloaks in dev mode.** `start-dev`, one replica,
   an in-memory store re-imported from the realm file on every start. Fine
   for a lab that rebuilds in minutes; production runs Keycloak with a
