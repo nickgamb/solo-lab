@@ -17,7 +17,7 @@ CF
 if [ -z "$(docker ps -aq -f name='^lab-dns$')" ]; then
   docker run -d --restart=always --name lab-dns \
     -p "127.0.0.1:$LAB_DNS_PORT:53/udp" -p "127.0.0.1:$LAB_DNS_PORT:53/tcp" \
-    -v "$f:/Corefile:ro" coredns/coredns:1.13.1 -conf /Corefile >/dev/null
+    -v "$f:/Corefile:ro" coredns/coredns:1.13.1@sha256:9b9128672209474da07c91439bf15ed704ae05ad918dd6454e5b6ae14e35fee6 -conf /Corefile >/dev/null
 else
   docker start lab-dns >/dev/null
 fi

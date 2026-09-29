@@ -15,12 +15,15 @@ kind version | grep -qE 'v0\.(3[2-9]|[4-9][0-9])' || die "kind >= v0.32 required
 yq --version 2>&1 | grep -q mikefarah || die "yq must be mikefarah/yq v4 (https://github.com/mikefarah/yq), not the Python yq wrapper"
 docker info >/dev/null 2>&1 || die "Docker is not running (Docker Desktop: start it; Docker Engine: sudo systemctl start docker)"
 docker buildx version >/dev/null 2>&1 || die "docker buildx is missing (Docker Engine: $pkg docker-buildx-plugin)"
+# ed25519 keys (story 2) need OpenSSL 3; macOS's /usr/bin/openssl is LibreSSL
+openssl version | grep -q '^OpenSSL [3-9]' || die "OpenSSL 3 or newer is needed, found: $(openssl version) (brew install openssl, and put it first on PATH)"
 
-mem=$(docker info --format '{{.MemTotal}}'); mem_gb=$((mem / 1024 / 1024 / 1024))
+mem=$(docker info --format '{{.MemTotal}}'); mem_mb=$((mem / 1024 / 1024)); mem_gb=$(((mem_mb + 512) / 1024))
 cpus=$(docker info --format '{{.NCPU}}')
 if docker_desktop; then where="Docker Desktop > Settings > Resources; on WSL2, memory= in %UserProfile%\\.wslconfig"
 else where="the memory of this host"; fi
-if [ "$mem_gb" -lt 16 ]; then die "Docker has ${mem_gb} GB; the full platform needs >= 16 GB ($where)"; fi
+# a VM set to 16 GB reports a little less than 16 GiB; 15 GiB is the floor
+if [ "$mem_mb" -lt 15360 ]; then die "Docker has ${mem_gb} GB; the full platform needs >= 16 GB ($where)"; fi
 ok "docker: ${mem_gb} GB, ${cpus} CPUs"
 
 # kind + many DaemonSets (ztunnel, istio-cni, node-exporter, atelet) blow
@@ -30,9 +33,9 @@ ok "docker: ${mem_gb} GB, ${cpus} CPUs"
 # are this host's own kernel settings, so say what to run instead of
 # changing them quietly.
 if docker_desktop; then
-  cur=$(docker run --rm --privileged --pid=host alpine:3.22 nsenter -t 1 -m -u -n -i sysctl -n fs.inotify.max_user_instances 2>/dev/null || echo 0)
+  cur=$(docker run --rm --privileged --pid=host alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8 nsenter -t 1 -m -u -n -i sysctl -n fs.inotify.max_user_instances 2>/dev/null || echo 0)
   if [ "$cur" -lt 1024 ]; then
-    docker run --rm --privileged --pid=host alpine:3.22 nsenter -t 1 -m -u -n -i sh -c \
+    docker run --rm --privileged --pid=host alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8 nsenter -t 1 -m -u -n -i sh -c \
       'sysctl -qw fs.inotify.max_user_instances=1024 fs.inotify.max_user_watches=1048576' \
       && ok "docker VM inotify limits raised" || warn "could not raise inotify limits"
   else

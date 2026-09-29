@@ -7,17 +7,26 @@ LAB_STATE="$LAB_ROOT/.lab"          # gitignored: generated files, caches
 mkdir -p "$LAB_STATE/cache"
 
 # --- config layering ---------------------------------------------------------
-# 1. .env          secrets + personal overrides (gitignored)
-# 2. config/lab.env    lab shape
-# 3. config/oss.env    OSS pins
-# 4. config/enterprise.env  ENT_* pins, promoted per product whose
-#                      <PRODUCT>_EDITION=enterprise
+# Highest first:
+# 1. the caller's environment (the shell, `make llm LLM_PROVIDER=anthropic`)
+# 2. .env               secrets + personal overrides (gitignored)
+# 3. config/lab.env     lab shape
+# 4. config/oss.env     OSS pins
+# 5. config/enterprise.env  ENT_* pins, promoted per product whose
+#                       <PRODUCT>_EDITION=enterprise
+# .env and the caller are applied before the config files (lab.env derives
+# names from them) and again after (so they override the pins too).
+_lab_caller=$(export -p | grep -v -E '^declare -x (SHELLOPTS|BASHOPTS)=' || true)
 set -a
 [ -f "$LAB_ROOT/.env" ] && . "$LAB_ROOT/.env"
+eval "$_lab_caller"
 . "$LAB_ROOT/config/lab.env"
 . "$LAB_ROOT/config/oss.env"
 . "$LAB_ROOT/config/enterprise.env"
+[ -f "$LAB_ROOT/.env" ] && . "$LAB_ROOT/.env"
+eval "$_lab_caller"
 set +a
+unset _lab_caller
 
 # Promote ENT_<P>_<X> over <P>_<X> for each product running enterprise.
 for _p in ISTIO KGATEWAY AGW KAGENT; do
@@ -101,6 +110,9 @@ render() {
   envsubst "$vars" < "$1"
 }
 apply_tmpl() { local f; for f in "$@"; do render "$f" | K apply -f - >/dev/null; done; }
+# apply_kustomize <dir>: a kustomization, with the lab registry port and image
+# tags filled in (kustomize itself doesn't substitute variables)
+apply_kustomize() { K kustomize "$1" | envsubst '${LAB_REGISTRY_PORT} ${SUBSTRATE_LAB_TAG} ${KAGENT_LAB_TAG}' | K apply -f - >/dev/null; }
 
 rollout() {  # rollout <ns> <kind/name>...
   local ns=$1; shift; local r
@@ -127,13 +139,29 @@ values_for() {  # values_for <dir> <name> <edition>
   done
 }
 
+# in_registry <repo:tag>: is the image in the lab registry?
+in_registry() {
+  curl -sfI -o /dev/null "http://localhost:$LAB_REGISTRY_PORT/v2/${1%:*}/manifests/${1##*:}" \
+    -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'
+}
+
+# lab_build <repo> <context> [dockerfile]: an image tagged by a hash of its
+# build context (and Dockerfile), built and pushed to the lab registry unless
+# it's already there. Prints the image. A changed source is a new tag, so a
+# rollout; an unchanged one is never rebuilt.
+lab_build() {
+  local df=${3:-$2/Dockerfile} tag img
+  tag=$( { (cd "$2" && find . -type f -not -name .DS_Store | LC_ALL=C sort | xargs cat); cat "$df"; } | sha1 | cut -c1-12)
+  img="localhost:$LAB_REGISTRY_PORT/$1:$tag"
+  if ! in_registry "$1:$tag"; then
+    docker build -q -t "$img" -f "$df" "$2" >/dev/null && docker push -q "$img" >/dev/null || die "building $img failed"
+  fi
+  echo "$img"
+}
+
 # lab_image <repo:tag> <build.sh>: build a patched image (tools/*) into the lab
 # registry unless it's already there. The registry outlives clusters.
-lab_image() {
-  curl -sfI -o /dev/null "http://localhost:$LAB_REGISTRY_PORT/v2/${1%:*}/manifests/${1##*:}" \
-    -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
-    || { step "Building $1 ($2)"; bash "$LAB_ROOT/$2"; }
-}
+lab_image() { in_registry "$1" || { step "Building $1 ($2)"; bash "$LAB_ROOT/$2"; }; }
 
 # deny_internet <ns>...: the namespace's pods reach the cluster and nothing
 # else. Open: pods, Services, the addresses Istio gives external ServiceEntries
@@ -247,16 +275,54 @@ need_password_grant() {
   [ "$LAB_PASSWORD_GRANT" = true ] || die "these checks sign in with the password grant, which is off (LAB_PASSWORD_GRANT=$LAB_PASSWORD_GRANT in config/lab.env)"
 }
 
-# user_token <ns> <realm> <client> <secret> <user> <pass>: a password-grant
-# access token for scripted checks, fetched over a localhost port-forward to
-# the party's Keycloak (the issuer claim is still https://idp.<party>.lab).
-user_token() {
+# kc_token <ns> <realm> <client> <secret> <user> <pass>: a password grant for
+# the scripted checks, over a localhost port-forward to the party's Keycloak
+# (the issuer claim is still https://idp.<party>.lab). Prints the token
+# response (access_token, id_token). The request body goes on stdin, so the
+# client secret and password never sit on a command line.
+kc_token() {
   need_password_grant
   local lp; lp=$(free_port)
   port_forward "$1" keycloak "$lp" 80
-  curl -s "http://127.0.0.1:$lp/realms/$2/protocol/openid-connect/token" \
-    -d grant_type=password -d client_id="$3" ${4:+-d client_secret="$4"} \
-    -d username="$5" -d password="$6" -d scope=openid | jq -r .access_token
+  _C=$3 _S=$4 _U=$5 _P=$6 jq -rn \
+    '{grant_type: "password", client_id: $ENV._C, username: $ENV._U, password: $ENV._P, scope: "openid"}
+     + (if $ENV._S == "" then {} else {client_secret: $ENV._S} end) | to_entries | map("\(.key)=\(.value | @uri)") | join("&")' \
+    | curl -s "http://127.0.0.1:$lp/realms/$2/protocol/openid-connect/token" --data @-
+}
+# user_token: kc_token's access token alone
+user_token() { kc_token "$@" | jq -r .access_token; }
+
+# a2a_send <access token> <id token> <json-rpc body>: one A2A turn with Bob's
+# agent, sent as kagent's UI would (from probe-kagent-ui, with the edge's
+# Authorization and IdToken cookie). The tokens reach the pod on stdin.
+a2a_send() {
+  printf '%s\n%s\n%s\n' "$1" "$2" "$3" | K exec -i -n kagent probe-kagent-ui -- sh -c \
+    'read -r t; read -r i; read -r b; curl -s -m 300 http://kagent-controller.kagent:8083/api/a2a-sandboxes/sv-agents/bob-assistant/ \
+       -H "authorization: Bearer $t" -H "cookie: IdToken=$i" -H "content-type: application/json" -d "$b"'
+}
+# with_bearer <token> curl <args...>: curl with "Authorization: Bearer <token>"
+# read from stdin (-H @-), so the token isn't on curl's command line
+with_bearer() { local t=$1; shift; "$@" -H @- <<<"authorization: Bearer $t"; }
+
+# probe_exec <ns>/<pod> <mcp-probe args...>: run tools/mcp-probe.py in a probe
+# pod. A --token value, and --header values for authorization and
+# x-id-token, travel on stdin instead of the command line.
+probe_exec() {
+  local ns=${1%%/*} pod=probe out=() in=() h
+  [[ $1 == */* ]] && pod=${1#*/}; shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --token) out+=(--token -); in+=("$2"); shift 2 ;;
+      --header)
+        h=${2%%=*}
+        case "$(echo "$h" | tr A-Z a-z)" in
+          authorization|x-id-token) out+=(--header "$h=-"); in+=("${2#*=}") ;;
+          *) out+=(--header "$2") ;;
+        esac; shift 2 ;;
+      *) out+=("$1"); shift ;;
+    esac
+  done
+  { [ ${#in[@]} -eq 0 ] || printf '%s\n' "${in[@]}"; } | K exec -i -n "$ns" "$pod" -- python3 /tmp/p.py ${out[@]+"${out[@]}"}
 }
 
 # probe_pod <ns> [sa]: a toolbox pod with tools/mcp-probe.py, in <ns>. With no
@@ -268,9 +334,14 @@ user_token() {
 probe_pod() {
   local ns=$1 sa=${2:-probe} pod=probe
   [ "$sa" = probe ] || { pod=probe-$sa; on_exit "K delete pod $pod -n $ns --wait=false >/dev/null 2>&1"; }
-  # pod specs are immutable: replace a probe that predates the current spec
-  K get pod "$pod" -n "$ns" -o jsonpath='{.spec.volumes[*].name}' 2>/dev/null | grep -q lab-ca \
-    || K delete pod "$pod" -n "$ns" --now --ignore-not-found >/dev/null 2>&1
+  # pod specs are immutable: replace a probe that predates the current spec,
+  # and never reuse one that is already going away (an earlier run's cleanup)
+  local img cur; img=$(lab_build lab/toolbox "$LAB_ROOT/tools/toolbox")
+  cur=$(K get pod "$pod" -n "$ns" -o jsonpath='{.spec.containers[0].image}|{.metadata.deletionTimestamp}' 2>/dev/null || true)
+  if [ -n "$cur" ] && [ "$cur" != "$img|" ]; then
+    K delete pod "$pod" -n "$ns" --now --ignore-not-found >/dev/null 2>&1 || true
+    K wait --for=delete "pod/$pod" -n "$ns" --timeout=60s >/dev/null 2>&1 || true
+  fi
   [ "$sa" = probe ] && K create serviceaccount probe -n "$ns" --dry-run=client -o yaml | K apply -f - >/dev/null
   K apply -f - >/dev/null <<YAML
 apiVersion: v1
@@ -280,7 +351,7 @@ spec:
   serviceAccountName: $sa
   containers:
   - name: probe
-    image: localhost:${LAB_REGISTRY_PORT}/lab/toolbox:1
+    image: $img
     env: [{name: SSL_CERT_FILE, value: /etc/lab-ca/ca.crt}]     # trust-manager bundle, like real workloads
     volumeMounts: [{name: lab-ca, mountPath: /etc/lab-ca, readOnly: true}]
   volumes: [{name: lab-ca, configMap: {name: lab-ca-bundle}}]

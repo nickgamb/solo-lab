@@ -39,12 +39,12 @@ login_lands() {
 lands_on_form() { [ "$(login_lands)" = "S&V login form" ]; }
 
 # Keycloak as the controller sees it (its own service-account client)
-lp=$((18000 + RANDOM % 1000)); port_forward "$NS" keycloak "$lp" 80
+lp=$(free_port); port_forward "$NS" keycloak "$lp" 80
 KC="http://127.0.0.1:$lp"
 kcadm() {
-  local t; t=$(curl -s "$KC/realms/sterling-vance/protocol/openid-connect/token" -d grant_type=client_credentials \
-    -d client_id=continuity-controller -d client_secret="$(lab_secret SV_CONTINUITY_CLIENT_SECRET)" | jq -r .access_token)
-  curl -s -H "authorization: Bearer $t" "$KC/admin/realms/sterling-vance$1"
+  local t; t=$(printf 'grant_type=client_credentials&client_id=continuity-controller&client_secret=%s' "$(lab_secret SV_CONTINUITY_CLIENT_SECRET)" \
+    | curl -s "$KC/realms/sterling-vance/protocol/openid-connect/token" --data @- | jq -r .access_token)
+  with_bearer "$t" curl -s "$KC/admin/realms/sterling-vance$1"
 }
 redirector() {
   local id; id=$(kcadm /authentication/flows/continuity-browser/executions | jq -r '.[] | select(.providerId=="identity-provider-redirector") | .authenticationConfig')
@@ -103,8 +103,7 @@ else
   expect '^keycloak ' "auth0 NotConfigured (no upstream-auth0 secret): active is local" "$(active) (auth0: $(tier auth0 reason))"
 fi
 has_auth0 && expect '(Healthy|NotConfigured.*probe: Healthy)' "auth0 upstream answers discovery + JWKS from S&V" "$(tier auth0 reason): $(tier auth0 message)"
-tok=$(curl -s "$KC/realms/sterling-vance/protocol/openid-connect/token" -d grant_type=password -d client_id=kagent \
-  -d client_secret="$(lab_secret SV_KAGENT_CLIENT_SECRET)" -d username=bob -d password=bob-demo -d scope=openid | jq -r .access_token)
+tok=$(user_token "$NS" sterling-vance kagent "$(lab_secret SV_KAGENT_CLIENT_SECRET)" bob bob-demo)
 expect "^$BOB_ID\$" "password grant unchanged: Bob's S&V user id" "$(echo "$tok" | jq -rR 'split(".")[1] | gsub("-";"+") | gsub("_";"/") | @base64d | fromjson | .sub' 2>/dev/null)"
 unset tok
 

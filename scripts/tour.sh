@@ -29,9 +29,7 @@ next() {
 }
 
 step "Signing in (Bob at S&V, Alice at her own IdP)"
-lp=$((18000 + RANDOM % 1000)); port_forward sv-identity keycloak "$lp" 80
-TOK=$(curl -s "http://127.0.0.1:$lp/realms/sterling-vance/protocol/openid-connect/token" -d grant_type=password \
-  -d client_id=kagent -d client_secret="$(lab_secret SV_KAGENT_CLIENT_SECRET)" -d username=bob -d password=bob-demo -d scope=openid)
+TOK=$(kc_token sv-identity sterling-vance kagent "$(lab_secret SV_KAGENT_CLIENT_SECRET)" bob bob-demo)
 BOB=$(echo "$TOK" | jq -r .access_token); BOB_ID=$(echo "$TOK" | jq -r .id_token); unset TOK
 [ -n "$BOB" ] && [ "$BOB" != null ] || die "could not get Bob's token"
 probe_pod kagent kagent-ui; probe_pod sv-agents bob-assistant; probe_pod sv-agents; probe_pod observability
@@ -44,14 +42,12 @@ ask() {  # ask <question>: Bob asks his agent through kagent, prints its reply
   local body reply
   say "Bob: ${_B}$1${_N}"
   body=$(jq -nc --arg q "$1" --arg c "$CTX" '{jsonrpc:"2.0",id:"1",method:"message/send",params:{message:{role:"user",kind:"message",messageId:(now|tostring),contextId:$c,parts:[{kind:"text",text:$q}]}}}')
-  reply=$(K exec -n kagent probe-kagent-ui -- curl -s -m 300 http://kagent-controller.kagent:8083/api/a2a-sandboxes/sv-agents/bob-assistant/ \
-    -H "authorization: Bearer $BOB" -H "cookie: IdToken=$BOB_ID" -H 'content-type: application/json' -d "$body" \
-    | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"')
+  reply=$(a2a_send "$BOB" "$BOB_ID" "$body" | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"')
   say "Agent: $(echo "$reply" | tr '\n' ' ' | cut -c1-240)"
 }
 probe() {  # probe <ns>[/<pod>] <label> <url> <args...>: one call from a probe pod's identity
   local ns=${1%%/*} pod=probe label=$2; [[ $1 == */* ]] && pod=${1#*/}; shift 2
-  local out; out=$(K exec -n "$ns" "$pod" -- python3 /tmp/p.py "$@" 2>&1 | tail -1 || true)
+  local out; out=$(probe_exec "$ns/$pod" "$@" 2>&1 | tail -1 || true)
   local code what; code=$(echo "$out" | jq -r '.http // empty' 2>/dev/null)
   case "$code" in
     0|"") what="refused: the mesh closed the connection" ;;
@@ -111,10 +107,10 @@ if scene 4 "Bob to Alice (UMA for agents)"; then
     ALICE=$(user_token alice-identity alice alice-portal "" alice alice-demo)
     AS="https://as.$ALICE_DOMAIN"
     ( for _ in $(seq 1 45); do   # approve her next pending ask, if one comes
-        fam=$(curl -s "${CA[@]}" "$AS/owner/pending" -H "authorization: Bearer $ALICE" \
+        fam=$(with_bearer "$ALICE" curl -s "${CA[@]}" "$AS/owner/pending" \
           | jq -r '(if type=="array" then . else .pending end)[0].family // empty' 2>/dev/null)
         if [ -n "$fam" ]; then
-          curl -s "${CA[@]}" -X POST "$AS/owner/pending/$fam/decision" -H "authorization: Bearer $ALICE" \
+          with_bearer "$ALICE" curl -s "${CA[@]}" -X POST "$AS/owner/pending/$fam/decision" \
             -H 'content-type: application/json' -d '{"decision":"approved"}' >/dev/null
           printf '   %s(Alice approved in her portal)%s\n' "$_D" "$_N"; exit
         fi; sleep 2; done ) &
