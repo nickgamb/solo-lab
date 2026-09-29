@@ -78,9 +78,12 @@ export function RuleBuilder({ ic, broker }: { ic: IdentityContinuity; broker: st
                 <label className="tog"><input type="checkbox" checked={t.failoverWhen?.unreachable ?? true} onChange={e => setWhen(i, { unreachable: e.target.checked })} />unreachable</label>
                 <label className="tog"><input type="checkbox" checked={t.failoverWhen?.serverError ?? true} onChange={e => setWhen(i, { serverError: e.target.checked })} />5xx</label>
                 <label className="tog"><input type="checkbox" checked={t.failoverWhen?.invalidDiscovery ?? true} onChange={e => setWhen(i, { invalidDiscovery: e.target.checked })} />bad discovery / JWKS</label>
-                <label className="tog">latency &gt;
-                  <input className="field num" type="number" min={0} step={100} value={t.failoverWhen?.latencyAboveMs ?? ''} placeholder="off"
+                <label className="tog" title={`must be below the ${(health.timeoutSeconds ?? 2) * 1000}ms probe timeout: a slower answer times out first`}>latency &gt;
+                  <input className={`field num${(t.failoverWhen?.latencyAboveMs ?? 0) >= (health.timeoutSeconds ?? 2) * 1000 ? ' invalid' : ''}`} type="number" min={1}
+                    max={(health.timeoutSeconds ?? 2) * 1000 - 1} step={100} value={t.failoverWhen?.latencyAboveMs ?? ''} placeholder="off"
                     onChange={e => setWhen(i, { latencyAboveMs: e.target.value === '' ? undefined : Number(e.target.value) })} />ms</label>
+                {(t.failoverWhen?.latencyAboveMs ?? 0) >= (health.timeoutSeconds ?? 2) * 1000 &&
+                  <span className="small danger-text">below {(health.timeoutSeconds ?? 2) * 1000}ms (the probe timeout), or it never fires</span>}
                 <SecretField ns={ic.metadata.namespace} tier={t} />
               </div>
             )}

@@ -11,7 +11,7 @@ import type { MapEdge, Tray } from './mapview'
 //     spans only the stages its party takes part in
 //   - every wire runs between neighbouring columns; a longer call passes
 //     through the columns in between on its own track (a Sugiyama layout,
-//     like ELK's layered one), so wires never cross tiles
+//     like a layered graph layout's), so wires never cross tiles
 //   - nodes sit on a row grid, lined up with what they talk to, so most
 //     wires are straight
 //   - a worker pool is a tray around the agents it runs
@@ -26,7 +26,6 @@ export type Placed = {
   nodes: Record<string, Box> // the tile box, absolute
   groups: Record<string, Box>
   trays: Record<string, Box>
-  ports: Record<string, Pt>
   columns: Column[]
   door?: string // the front door's node id, drawn as a pillar
   top: number // where the column headings sit
@@ -271,7 +270,7 @@ export async function layout(g: Graph, nodes: LabNode[], edges: MapEdge[], trays
   }
 
   // 7. coordinates
-  const placed: Placed = { nodes: {}, groups: {}, trays: {}, ports: {}, columns: [], top: 0, wires: [] }
+  const placed: Placed = { nodes: {}, groups: {}, trays: {}, columns: [], top: 0, wires: [] }
   const cx = (c: number) => (c + (door ? 1 : 0)) * COL_W + LABEL_W / 2
   // rows are ROW_H apart, with room above a row where a tray opens and
   // below one where a tray closes

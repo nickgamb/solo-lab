@@ -91,6 +91,13 @@ func (k *Kube) Start(ctx context.Context) {
 				continue
 			}
 			inf := f.ForResource(gvr).Informer()
+			// managedFields are most of an object's size and nothing here reads them
+			_ = inf.SetTransform(func(o any) (any, error) {
+				if u, ok := o.(*unstructured.Unstructured); ok {
+					u.SetManagedFields(nil)
+				}
+				return o, nil
+			})
 			g := gvr
 			inf.AddEventHandler(cache.ResourceEventHandlerFuncs{
 				AddFunc:    func(o any) { k.touch(g, nil, o) },

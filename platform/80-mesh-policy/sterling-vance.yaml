@@ -51,6 +51,7 @@ spec:
         - cluster.local/ns/sv-mcp/sa/bob-workspace      # verifies its delegated tokens (JWKS)
         - cluster.local/ns/agentregistry/sa/agentregistry
         - cluster.local/ns/sv-identity/sa/continuity-controller
+        - cluster.local/ns/observatory/sa/observatory    # its service-account token for kagent
 ---
 # The continuity controller only calls out (Keycloak, upstreams, kube API).
 apiVersion: security.istio.io/v1
@@ -75,6 +76,7 @@ spec:
         principals:
         - cluster.local/ns/sv-identity/sa/keycloak
         - cluster.local/ns/sv-identity/sa/continuity-controller
+        - cluster.local/ns/observatory/sa/observatory    # its service-account token for kagent
 ---
 # kagent: nothing in the namespace takes a connection unless a policy below
 # names the caller. kagent-tools can act on the cluster, the controller trusts
@@ -105,6 +107,7 @@ spec:
         - cluster.local/ns/kagent/sa/kagent-ops         # ops agents' workers
         - cluster.local/ns/sv-agents/sa/bob-assistant   # Bob's agent's workers
         - cluster.local/ns/sv-agents/sa/advisor-desk    # the advisor desk's workers
+        - cluster.local/ns/observatory/sa/observatory   # Agent Substrate status, as its own service account
         - cluster.local/ns/observability/sa/kps-prometheus
 ---
 # kagent-tools can act on the cluster: only the agents that use it (the ops

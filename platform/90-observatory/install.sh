@@ -29,6 +29,10 @@ deploy_keycloak ops-identity "$OPS_DOMAIN" https-ops "$D/realm-ops.json"
 K create secret generic observatory-oidc -n observatory \
   --from-literal=client-secret="$(lab_secret OBSERVATORY_CLIENT_SECRET)" \
   --dry-run=client -o yaml | K apply -f - >/dev/null
+# its S&V service account, for Agent Substrate's status from kagent
+K create secret generic kagent-client -n observatory \
+  --from-literal=client-secret="$(lab_secret SV_OBSERVATORY_CLIENT_SECRET)" \
+  --dry-run=client -o yaml | K apply -f - >/dev/null
 ok "issuer https://idp.$OPS_DOMAIN/realms/ops  (admin: ops / ops-demo)"
 
 step "Platform UIs on the edge, behind the admins' sign-in"

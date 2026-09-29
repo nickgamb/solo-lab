@@ -68,6 +68,7 @@ func (ix *Index) host(h string) string {
 type TrafficStore struct {
 	mu     sync.RWMutex
 	ring   []Traffic
+	at     []time.Time // when each ring entry arrived: the clock rates use
 	next   int
 	full   bool
 	seq    atomic.Uint64
@@ -81,7 +82,7 @@ type counter struct{ ok, err []time.Time }
 const window = 30 * time.Second
 
 func NewTrafficStore(size int, hub *Hub, index func() *Index) *TrafficStore {
-	return &TrafficStore{ring: make([]Traffic, size), counts: map[string]*counter{}, hub: hub, index: index}
+	return &TrafficStore{ring: make([]Traffic, size), at: make([]time.Time, size), counts: map[string]*counter{}, hub: hub, index: index}
 }
 
 func (s *TrafficStore) Add(t Traffic) {
@@ -92,12 +93,12 @@ func (s *TrafficStore) Add(t Traffic) {
 		t.Time = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 	s.mu.Lock()
-	s.ring[s.next] = t
+	now := time.Now()
+	s.ring[s.next], s.at[s.next] = t, now
 	s.next = (s.next + 1) % len(s.ring)
 	if s.next == 0 {
 		s.full = true
 	}
-	now := time.Now()
 	for _, e := range t.edges() {
 		c := s.counts[e]
 		if c == nil {
@@ -120,6 +121,8 @@ func (t Traffic) edges() []string {
 	switch {
 	case t.Via != "" && t.Source != "" && t.Target != "":
 		out = append(out, t.Source+">"+t.Via, t.Via+">"+t.Target)
+	case t.Via != "" && t.Target != "": // the caller didn't resolve; the gateway's hop still happened
+		out = append(out, t.Via+">"+t.Target)
 	case t.Source != "" && t.Target != "":
 		out = append(out, t.Source+">"+t.Target)
 	}
@@ -157,15 +160,16 @@ func (s *TrafficStore) Rates() (map[string]EdgeStats, float64, float64) {
 		}
 		out[id] = EdgeStats{RPS: float64(len(c.ok)+len(c.err)) / window.Seconds(), Errors: float64(len(c.err)) / window.Seconds()}
 	}
-	// totals count requests once, not once per hop
+	// totals count requests once, not once per hop, by arrival (the ring's
+	// order, and the clock the edge rates use), not the record's own time
 	n := s.next
 	if s.full {
 		n = len(s.ring)
 	}
 	for i := 0; i < n; i++ {
-		t := s.ring[(s.next-1-i+len(s.ring))%len(s.ring)]
-		ts, _ := time.Parse(time.RFC3339Nano, t.Time)
-		if ts.Before(cut) {
+		k := (s.next - 1 - i + len(s.ring)) % len(s.ring)
+		t := s.ring[k]
+		if s.at[k].Before(cut) {
 			break
 		}
 		if t.Kind == "lifecycle" || t.Kind == "substrate" || t.Kind == "continuity" {
@@ -225,8 +229,8 @@ func (s *TrafficStore) ServeOTLP(w http.ResponseWriter, r *http.Request) {
 			for _, lr := range sl.LogRecords {
 				a := flatten(lr.Attributes)
 				for k, v := range res {
-					if _, ok := a[k]; !ok {
-						a["resource."+k] = v
+					if _, ok := a["resource."+k]; !ok {
+						a["resource."+k] = v // always, even when the record has the same key
 					}
 				}
 				if lr.Body.StringValue != "" {

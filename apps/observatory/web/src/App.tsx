@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api, useLab, type Me } from './api'
 import wordmark from './assets/solo-wordmark.svg?raw'
 import { Topology } from './topology/Topology'
@@ -35,7 +35,8 @@ export default function App() {
   }, [theme])
 
   const s = lab.stats
-  const open = (id: string) => { setFocus(id); setTab('topology') }
+  // stable, so the traffic rows it's passed to stay memoized
+  const open = useCallback((id: string) => { setFocus(id); setTab('topology') }, [])
 
   return (
     <div className="app">

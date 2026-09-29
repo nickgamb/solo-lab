@@ -18,7 +18,7 @@ export type Graph = { version: number; groups: Group[]; nodes: LabNode[]; edges:
 export type Traffic = {
   id: string; time: string; kind: string; reporter: string; source?: string; target?: string; via?: string
   identity?: string; user?: string; method?: string; path?: string; status?: number; durationMs?: number
-  summary: string; outcome: 'ok' | 'denied' | 'error' | 'info'; attrs?: Record<string, string>; tokens?: Token[]; raw?: unknown
+  summary: string; outcome: 'ok' | 'denied' | 'error' | 'info'; attrs?: Record<string, string>; tokens?: Token[]
 }
 // a credential a request carried, as its claims (the token itself stays on the server)
 export type Token = { source: string; verified: boolean; fingerprint?: string; header?: Record<string, unknown>; claims: Record<string, unknown> }
@@ -42,7 +42,7 @@ export type Tier = {
 }
 export type TierStatus = {
   name: string; type?: string; healthy?: boolean; configured?: boolean; partitioned?: boolean; latencyMs?: number
-  lastProbe?: string; reason?: string; redirectURI?: string; consecutiveFailures?: number; consecutiveSuccesses?: number
+  lastProbe?: string; reason?: string; message?: string; redirectURI?: string; consecutiveFailures?: number; consecutiveSuccesses?: number
 }
 export type ContinuitySpec = {
   broker?: { keycloak?: { url?: string; realm?: string; credentialsRef?: { name: string } } }
@@ -122,6 +122,12 @@ function dedupe(ts: Traffic[]) {
   return ts.filter(t => (seen.has(t.id) ? false : (seen.add(t.id), true))).sort((a, b) => b.time.localeCompare(a.time)).slice(0, TRAFFIC_KEEP)
 }
 
+// An API call that failed, with its HTTP status (409: a conflict to resolve).
+export class ApiError extends Error {
+  readonly status: number
+  constructor(message: string, status: number) { super(message); this.status = status }
+}
+
 // Writes carry a JSON body unless the caller says otherwise (the server
 // refuses writes without a JSON or YAML content type).
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -129,7 +135,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (init?.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   const r = await fetch(path, { ...init, headers })
   const text = await r.text()
-  if (!r.ok) throw new Error(text.trim() || r.statusText)
+  if (!r.ok) throw new ApiError(text.trim() || r.statusText, r.status)
   const ct = r.headers.get('content-type') ?? ''
   return (ct.includes('json') ? JSON.parse(text) : text) as T
 }

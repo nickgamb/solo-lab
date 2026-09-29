@@ -56,7 +56,9 @@ Interactions:
 - Click a node: details (summary, tools, pods, mesh identity, connections,
   configuration, and only that node's traffic). **Advanced** opens the object's
   live YAML in an editor; Apply does a server-side dry run, shows the diff,
-  then applies it as you.
+  then applies it as you. If the object changed since you loaded it, or a
+  field you changed is owned by another manager (a controller, Helm), Apply
+  says so instead of overwriting; **Apply anyway** takes the fields over.
 
   ![Details for ai-gateway: its configuration objects and its traffic](images/observatory-details-ai-gateway.jpg)
 
@@ -155,8 +157,11 @@ The browser gets everything over one Server-Sent Events stream (`/api/stream`:
   With API server audit logging on, each write records the person in
   `impersonatedUser.extra`.
 - Client secrets entered in the rule builder are write-only.
-- The namespace is STRICT mTLS; only the edge (8080), the collector (4318)
-  and its Keycloak may call in.
+- The namespace is STRICT mTLS; only the edge (8080) and the collector
+  (4318) may call in.
+- For Agent Substrate's runtime it calls kagent's `/api/substrate/status` with
+  a token of its own S&V service account (client `observatory`); kagent wants
+  a caller token even for status.
 
 ## Telemetry wiring
 
@@ -183,13 +188,19 @@ The browser gets everything over one Server-Sent Events stream (`/api/stream`:
 | `ADMIN_GROUP` | `observatory-admins` | required group |
 | `PROMETHEUS_URL` | | Prometheus for mesh edges and L4 rates (optional) |
 | `KAGENT_URL` | | kagent controller for Substrate status (optional) |
+| `KAGENT_TOKEN_URL`, `KAGENT_CLIENT_ID`, `KAGENT_CLIENT_SECRET` | | client-credentials token for kagent (needed when kagent requires a caller token) |
+| `TRUST_DOMAIN` | `cluster.local` | the mesh's SPIFFE trust domain, for matching identities to workloads |
+| `TELEMETRY_NAMESPACE` | `observability` | where the telemetry backends run: calls into it are drawn as plumbing |
 | `PARTY_LABEL` | `lab.solo.io/party` | namespace label that defines zones |
 | `LISTEN`, `OTLP_LISTEN` | `:8080`, `:4318` | UI/API and OTLP listeners |
 | `OBSERVATORY_DEV_USER` | | local development only: skip sign-in as this user (ignored in a cluster) |
 
 ## Using it on another cluster
 
-Zones come from a namespace label; nothing else is lab-specific.
+Zones come from a namespace label. A workload's role (the tile's shape) is
+guessed from its images and name; label it `observatory.solo.io/kind` (`idp`,
+`db`, `ui`, `controller`, `tool`, `workload`) to say it outright. Set
+`TRUST_DOMAIN` and `TELEMETRY_NAMESPACE` if yours differ.
 
 ```yaml
 metadata:

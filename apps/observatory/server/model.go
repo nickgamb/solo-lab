@@ -43,6 +43,8 @@ type Node struct {
 	Status    string         `json:"status"`             // ok warn down idle
 	Identity  []string       `json:"identity,omitempty"`
 	Summary   map[string]any `json:"summary,omitempty"`
+
+	kindLabel string // observatory.solo.io/kind on the workload, if any
 }
 
 type Edge struct {
@@ -82,7 +84,6 @@ type Traffic struct {
 	Outcome  string            `json:"outcome"` // ok denied error info
 	Attrs    map[string]string `json:"attrs,omitempty"`
 	Tokens   []Token           `json:"tokens,omitempty"` // credentials the request carried, decoded
-	Raw      any               `json:"raw,omitempty"`
 }
 
 // Token is a credential seen on a request, as its claims. The token itself
@@ -95,11 +96,10 @@ type Token struct {
 	Claims      map[string]any `json:"claims"`
 }
 
-// Stats are rates over the last window, keyed by edge and node id.
+// Stats are rates over the last window, keyed by edge id.
 type Stats struct {
 	Window  int                  `json:"windowSeconds"`
 	Edges   map[string]EdgeStats `json:"edges"`
-	Nodes   map[string]NodeStats `json:"nodes"`
 	RPS     float64              `json:"rps"`
 	ErrRate float64              `json:"errRate"`
 }
@@ -108,9 +108,4 @@ type EdgeStats struct {
 	RPS    float64 `json:"rps"`
 	Errors float64 `json:"errors"`
 	L4     float64 `json:"l4"` // mesh connections/s from ztunnel
-}
-
-type NodeStats struct {
-	In  float64 `json:"in"`
-	Out float64 `json:"out"`
 }
