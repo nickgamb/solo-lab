@@ -27,6 +27,10 @@ pilot:
     requests: {cpu: 100m, memory: 256Mi}
   env:
     PILOT_ENABLE_IP_AUTOALLOCATE: "true"
+    # RequestAuthentication JWKS on in-cluster IdPs is fetched by the proxy
+    # enforcing it (a mesh identity the IdP can admit), not by istiod, which
+    # runs outside the mesh; external issuers are still fetched by istiod
+    PILOT_JWT_ENABLE_REMOTE_JWKS: hybrid
   topologySpreadConstraints:
   - maxSkew: 1
     topologyKey: topology.kubernetes.io/zone
