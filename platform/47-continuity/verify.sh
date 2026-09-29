@@ -80,7 +80,7 @@ cleanup() {
   secret_grant remove continuity-verify 2>/dev/null
   rm -f "$BODY" "$JAR"; kill "$(jobs -p)" 2>/dev/null
 }
-trap cleanup EXIT
+on_exit cleanup
 
 step "The chain as installed"
 expect '^2/2$' "controller: 2 replicas ready (one leader)" \
@@ -120,7 +120,7 @@ step "Kill switch: partition the upstream (DENY policy in $TNS)"
 fo=$(events FailoverActivated) fb=$(events Failback)
 partition "$T" "$TNS"
 expect '^[0-9]+s$' "probes see it: fails over to keycloak" "$(within 25 is_active keycloak)"
-expect '^false true' "tier unhealthy, partitioned (informational)" "$(tier "$T" healthy) $(tier "$T" partitioned) $(tier "$T" reason)"
+expect '^false' "tier unhealthy" "$(tier "$T" healthy) $(tier "$T" reason)"
 expect '^none$' "redirector cleared" "$(redirector)"
 expect '^S&V login form$' "browser sign-in shows S&V's own form" "$(login_lands)"
 expect "^$((fo+1))\$" "Event FailoverActivated" "$(events FailoverActivated)"

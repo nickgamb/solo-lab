@@ -9,6 +9,12 @@ providers:
     config:
       baseUrl: http://ai-gateway.agentgateway-system/v1
 
+# The controller reads and writes (Secrets included) only where agents and
+# their tools live, instead of cluster-wide: Roles in these namespaces, and
+# WATCH_NAMESPACES to match. A namespace with its own agents is added here.
+rbac:
+  namespaces: [kagent, sv-agents, sv-mcp]
+
 controller:
   # kagent v0.10.2 + tools/kagent (upstream PR candidates): ID token forwarding
   # and two SandboxAgent fixes (callback auth in the Go ADK, suspend race). The
@@ -106,6 +112,10 @@ cilium-debug-agent: {enabled: false}
 
 # The ops agents' tool server. The chart default binds it to cluster-admin and
 # lets it write anything; here it reads (no Secrets), and refuses writes itself.
+# The chart's Grafana MCP server: no agent here uses it, and it would need a
+# Grafana service-account token (observability-agent is off for that reason).
+grafana-mcp: {enabled: false}
+
 kagent-tools:
   tools:
     args: [--read-only]

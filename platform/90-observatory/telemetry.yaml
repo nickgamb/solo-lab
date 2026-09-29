@@ -1,4 +1,5 @@
-# Access logs from every gateway, over OTLP to the platform collector, which
+# Access logs from every gateway, over OTLP to the platform collector's
+# access-log port (14317/14318, which only these gateways may reach), which
 # fans them out to the observatory. Each record carries who called (SPIFFE
 # id, user, and the verified token's claims), what (MCP method and tool,
 # model), and where it went. Raw tokens are never logged.
@@ -22,7 +23,7 @@ spec:
       otlp:
         # a Service backend, not a URL: the export then leaves over the mesh
         # with the gateway's own identity, which the collector's policy names
-        backendRef: {kind: Service, name: otel-collector, namespace: observability, port: 4318}
+        backendRef: {kind: Service, name: otel-collector, namespace: observability, port: 14318}
         protocol: HTTP
 ---
 apiVersion: agentgateway.dev/v1alpha1
@@ -43,7 +44,7 @@ spec:
       otlp:
         # a Service backend, not a URL: the export then leaves over the mesh
         # with the gateway's own identity, which the collector's policy names
-        backendRef: {kind: Service, name: otel-collector, namespace: observability, port: 4318}
+        backendRef: {kind: Service, name: otel-collector, namespace: observability, port: 14318}
         protocol: HTTP
 ---
 apiVersion: agentgateway.dev/v1alpha1
@@ -64,7 +65,7 @@ spec:
       otlp:
         # a Service backend, not a URL: the export then leaves over the mesh
         # with the gateway's own identity, which the collector's policy names
-        backendRef: {kind: Service, name: otel-collector, namespace: observability, port: 4318}
+        backendRef: {kind: Service, name: otel-collector, namespace: observability, port: 14318}
         protocol: HTTP
 ---
 # kgateway: the edge.
@@ -79,7 +80,7 @@ spec:
       - openTelemetry:
           grpcService:
             logName: edge
-            backendRef: {name: otel-collector, namespace: observability, port: 4317}
+            backendRef: {name: otel-collector, namespace: observability, port: 14317}
           body: '%REQ(:METHOD)% %REQ(:AUTHORITY)%%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)% %RESPONSE_CODE%'
           attributes:
             values:
