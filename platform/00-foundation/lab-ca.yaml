@@ -1,4 +1,4 @@
-# The lab CA (generated once on the Mac by scripts/ca.sh, name-constrained to
+# The lab CA (generated once on the host by scripts/ca.sh, name-constrained to
 # .lab/.svc/.cluster.local) signs every lab certificate. Istio's mesh identity
 # is separate (istiod CA).
 apiVersion: cert-manager.io/v1

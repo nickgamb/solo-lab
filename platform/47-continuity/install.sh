@@ -11,7 +11,7 @@ need_cluster
 
 step "continuity-controller image (local registry)"
 # tagged by source content, so a code change is a new image and a rollout
-tag=$(cd "$APP" && find . -type f | LC_ALL=C sort | xargs cat | shasum | cut -c1-12)
+tag=$(cd "$APP" && find . -type f -not -name .DS_Store | LC_ALL=C sort | xargs cat | sha1 | cut -c1-12)
 export CONTINUITY_IMAGE="localhost:$LAB_REGISTRY_PORT/lab/continuity-controller:$tag"
 docker image inspect "$CONTINUITY_IMAGE" >/dev/null 2>&1 || docker build -q -t "$CONTINUITY_IMAGE" "$APP" >/dev/null
 docker push -q "$CONTINUITY_IMAGE" >/dev/null
