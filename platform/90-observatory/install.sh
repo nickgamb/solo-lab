@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The Observatory: a live, single pane of glass over the whole lab, for
-# platform admins. Its own Keycloak (realm ops, ops-identity) signs admins in
+# The Observatory: a live view of the whole lab (topology, traffic, identity
+# continuity), for platform admins. Its own Keycloak (realm ops, ops-identity) signs admins in
 # at the edge; it reads the cluster as itself and changes it only as the
 # signed-in admin. Every gateway exports its access log to it through the
 # collector. Idempotent.
@@ -50,7 +50,7 @@ step "Observatory"
 deny_internet observatory ops-identity
 K apply -f "$D/rbac.yaml" >/dev/null
 apply_tmpl "$D/observatory.yaml"
-K apply -f "$D/telemetry.yaml" >/dev/null
+apply_tmpl "$D/telemetry.yaml"
 rollout observatory deploy/observatory
 wait_for "https://observatory.$OPS_DOMAIN" 30 3 \
   sh -c "curl -s --cacert '$LAB_CA_DIR/ca.crt' -o /dev/null -w '%{http_code}' https://observatory.$OPS_DOMAIN/ | grep -q 302"
