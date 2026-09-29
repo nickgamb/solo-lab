@@ -21,6 +21,17 @@ kind: PeerAuthentication
 metadata: {name: strict, namespace: agentgateway-system}
 spec: {mtls: {mode: STRICT}}
 ---
+# The agentgateway proxies (ai-gateway, mcp-waypoint) run outside the mesh and
+# terminate HBONE themselves, so they dial the controller's xDS port without
+# mesh mTLS. That one port stays PERMISSIVE; the rest of the controller is STRICT.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: controller-xds, namespace: agentgateway-system}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: agentgateway}}
+  mtls: {mode: STRICT}
+  portLevelMtls: {"9978": {mode: PERMISSIVE}}
+---
 apiVersion: security.istio.io/v1
 kind: PeerAuthentication
 metadata: {name: strict, namespace: sv-agents}
