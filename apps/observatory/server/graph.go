@@ -176,7 +176,9 @@ func (b *builder) workloads() {
 		}
 		n := b.nodes[owner]
 		n.Pods = append(n.Pods, podOf(p))
-		if ip := str(p.Object, "status", "podIP"); ip != "" {
+		// a host-network pod shares its node's address, which is also where
+		// NodePort traffic (a browser at the edge) comes from: it names nobody
+		if ip := str(p.Object, "status", "podIP"); ip != "" && !boolAt(p.Object, "spec", "hostNetwork") {
 			b.byPod[ip] = owner
 		}
 		sa := str(p.Object, "spec", "serviceAccountName")
@@ -1256,4 +1258,9 @@ func filterEmpty(s []string) []string {
 		}
 	}
 	return out
+}
+
+func boolAt(o map[string]any, path ...string) bool {
+	v, _, _ := unstructured.NestedBool(o, path...)
+	return v
 }

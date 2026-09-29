@@ -26,6 +26,12 @@ nuke: ## delete the cluster AND the image caches
 ## ---- demos (all installed by `make up`; cards in docs/cards) ---------------
 verify: ## every story's enforcement checks, then identity continuity
 	@./demos/bob/verify.sh && ./demos/bob-to-alice/verify.sh && ./platform/47-continuity/verify.sh
+bob-verify: ## story 1 checks only (delegation, per-tool policy, Cross App Access)
+	@./demos/bob/verify.sh
+alice-verify: ## story 2 checks only (Bob to Alice, UMA for agents)
+	@./demos/bob-to-alice/verify.sh
+continuity-verify: ## identity continuity checks only (failover, kill switch, live rules)
+	@./platform/47-continuity/verify.sh
 reset: ## rewind every demo to a first run (grants, terms, agent key, follow-ups)
 	@./scripts/reset.sh
 
@@ -40,4 +46,4 @@ preflight: ## check tools and Docker resources
 help:
 	@awk 'BEGIN{FS=":.*## "} /^## ----/{printf "\n\033[1m%s\033[0m\n", substr($$0,9)} /^[a-zA-Z%_-]+:.*## /{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-.PHONY: machine-setup up cluster platform down nuke verify reset llm status preflight help
+.PHONY: machine-setup up cluster platform down nuke verify bob-verify alice-verify continuity-verify reset llm status preflight help

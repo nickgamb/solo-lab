@@ -16,6 +16,7 @@ export type CardData = {
   actor?: SubActor // a sandboxed agent's current session
   compact?: boolean
   lit?: boolean // highlighted by the product rail
+  outage?: boolean // an IdP whose network path is cut (Identity Continuity)
   ins?: number // wires arriving (one handle each)
   outs?: number
   [key: string]: unknown
@@ -196,6 +197,7 @@ export const Tile = memo(({ data }: NodeProps) => {
         {d.actor && <span className={`corner ${d.actor.status === 'Running' ? 'ok' : ''}`} title={`sandbox ${d.actor.status}`}><ProductIcon id="substrate" size={11} /></span>}
         {n.kind === 'substrate' && d.workers && <span className="bays-mini">{d.workers.map(w => <i key={w.workerPod} className={w.actorId ? 'on' : ''} />)}</span>}
         {rps > 0 && <span className="trps">{fmt(rps)}/s</span>}
+        {d.outage && <span className="stamp">OUTAGE</span>}
       </div>
       <div className="tlabel" title={n.label}>{n.label}</div>
       <div className="tsub">

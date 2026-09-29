@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Identity Continuity Demo Card</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="card.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="masthead">
+    <h1>Identity Continuity Demo Card</h1>
+    <p class="standfirst">Take the firm's identity provider off the network, for real. New sign-ins move to the firm's own accounts in seconds, and nothing that trusts the firm's IdP notices.</p>
+  </header>
+  <section class="screens">
+    <div class="screen left">
+      <span class="side">Left screen</span>
+      <span class="what">Observatory, Identity Continuity tab</span>
+      <span class="detail">https://observatory.ops.lab</span>
+    </div>
+    <div class="screen right">
+      <span class="side">Right screen</span>
+      <span class="what">A private browser window, for Bob's sign-ins</span>
+      <span class="detail">https://kagent.sterling.lab</span>
+    </div>
+  </section>
+
+  <section class="setup">
+    <h2>Pre-demo setup</h2>
+    <p class="setup-note">The lab is already up (<code>make up</code>). This card needs one upstream IdP: an Auth0 tenant, free tier. Setting up the app takes about ten minutes, once. The steps are in <code>docs/IDENTITY-CONTINUITY.md</code>, under Auth0 setup.</p>
+    <div class="table-scroll">
+      <table>
+        <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
+        <thead><tr><th>#</th><th>Run this</th><th>What it does</th></tr></thead>
+        <tbody>
+        <tr class="term">
+          <td class="num">1</td>
+          <td class="act">
+            <span class="where">Once: the Auth0 app's credentials in .env</span>
+            <div class="cmdwrap"><code class="cmd">make layer-47</code></div>
+          </td>
+          <td class="say">With <strong>AUTH0_CLIENT_ID</strong> and <strong>AUTH0_CLIENT_SECRET</strong> in <code>.env</code>, this stores them as a Secret. The continuity controller then adds Auth0 to the firm's Keycloak and moves sign-in to it once it's healthy.</td>
+        </tr>
+        <tr class="term">
+          <td class="num">2</td>
+          <td class="act">
+            <span class="where">Check</span>
+            <div class="cmdwrap"><code class="cmd">make status</code></div>
+          </td>
+          <td class="say">Under Sign-in it must read <strong>active: auth0</strong>, with both tiers healthy.</td>
+        </tr>
+        <tr class="port">
+          <td class="num">3</td>
+          <td class="act">
+            <span class="where">Left screen</span>
+            <span class="click">Sign in to the Observatory as <strong>ops / ops-demo</strong>, then open <strong>Identity Continuity</strong></span>
+          </td>
+          <td class="say">The banner is green: <strong>CONNECTED · AUTH0 SIGNING PEOPLE IN</strong>. The Observatory has its own admin IdP, so the outage never locks you out of it.</td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="afters">
+      <div class="after">
+        <span class="after-label">Running it again</span>
+        <p>Nothing to reset. <strong>Restore IdP network</strong> ends the outage, and sign-in moves back to Auth0 by itself. If a run was left cut: <code>kubectl --context kind-solo-lab -n sv-egress delete authorizationpolicy continuity-partition-auth0</code>.</p>
+      </div>
+      <div class="after">
+        <span class="after-label">Unattended</span>
+        <p><code>make continuity-verify</code> runs the same loop (cut, failover, heal, failback, live rule changes) and checks every step.</p>
+      </div>
+    </div>
+  </section>
+  <hr class="rule">
+
+  <section class="runthrough">
+    <h2>The run-through</h2>
+    <p class="run-note">The Observatory on the left, Bob's browser on the right. Cut the network, then watch sign-in keep working.</p>
+    <div class="table-scroll">
+      <table>
+        <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
+        <thead><tr><th>#</th><th>Do this</th><th>Say this</th></tr></thead>
+        <tbody>
+        <tr class="port">
+          <td class="num">1</td>
+          <td class="act">
+            <span class="where">Observatory</span>
+            <span class="click">Point at the map, left to right</span>
+          </td>
+          <td class="say">
+            <span class="chip tier">One issuer</span>
+            <span class="lede">Every app trusts one issuer: the firm's Keycloak.</span>
+            Auth0 only authenticates people. The green path shows who is signing people in right now: Auth0, reached through the firm's egress gateway. Below it sits the fallback, the firm's own accounts.
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">2</td>
+          <td class="act">
+            <span class="where">Right screen</span>
+            <span class="click">Open kagent in a private window. On Auth0's page, sign in as <strong>bob@sterling.lab</strong></span>
+          </td>
+          <td class="say">
+            <span class="chip through">Brokered</span>
+            <span class="lede">Auth0's login page, then kagent, as Bob.</span>
+            He's the same Bob as always, with the same subject and the same advisor groups. Keycloak linked the Auth0 login to his account by his verified email, and kagent never learned that Auth0 exists.
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">3</td>
+          <td class="act">
+            <span class="where">Observatory</span>
+            <span class="click">Click <span class="btn deny">Simulate IdP outage</span></span>
+          </td>
+          <td class="say">
+            <span class="chip refused">Network cut</span>
+            <span class="lede">This isn't a flag: it's a real network cut.</span>
+            An Istio DENY on the path to <code>gamb.us.auth0.com</code>, at the firm's egress. The wire reads <strong>NETWORK CUT</strong> and Auth0 is stamped <strong>OUTAGE</strong>. The controller isn't told anything; its health checks just start failing.
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">4</td>
+          <td class="act">
+            <span class="where">Observatory</span>
+            <span class="click">Watch the banner for about ten seconds</span>
+          </td>
+          <td class="say">
+            <span class="chip held">Failover</span>
+            <span class="lede">Amber, counting failed checks. Then red: FAILOVER ACTIVE.</span>
+            After two failed checks, the controller points Keycloak's login at the firm's own accounts. The live path moves on the map, and the banner says what was cut, by whom and when.
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">5</td>
+          <td class="act">
+            <span class="where">Right screen</span>
+            <span class="click">Open a new private window, open kagent, and sign in as <strong>bob / bob-demo</strong></span>
+          </td>
+          <td class="say">
+            <span class="chip through">Still Bob</span>
+            <span class="lede">The firm's own login form, and the same Bob.</span>
+            Nobody reconfigured kagent, the gateways or the agents, because they all trust the same issuer. The session from step 2 never noticed. <strong>The outage cost a login page, not the business.</strong>
+          </td>
+        </tr>
+        <tr class="term">
+          <td class="num">6</td>
+          <td class="act">
+            <span class="where">Terminal</span>
+            <div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab -n sv-egress get authorizationpolicy -L continuity.lab.solo.io/tier</code></div>
+          </td>
+          <td class="say">
+            <span class="chip tier">Auditable</span>
+            <span class="lede">The whole outage is one policy: <code>continuity-partition-auth0</code>, DENY.</span>
+            It's labelled with the tier it cuts and annotated with who created it. Delete it, and the network is back.
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">7</td>
+          <td class="act">
+            <span class="where">Observatory</span>
+            <span class="click">Click <span class="btn approve">Restore IdP network</span></span>
+          </td>
+          <td class="say">
+            <span class="chip held">Failback</span>
+            <span class="lede">Amber, counting healthy checks, then green again.</span>
+            The controller waits for steady health, three checks in a row, before moving people back. A flapping upstream doesn't bounce users. Failback can also be set to manual.
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">8</td>
+          <td class="act">
+            <span class="where">Observatory</span>
+            <span class="click">Point at <strong>Transitions</strong> and the rule builder on the right</span>
+          </td>
+          <td class="say">
+            <span class="chip tier">Any IdP</span>
+            <span class="lede">The sequence was cut, failover, restore, failback, and every step is recorded.</span>
+            The chain is data. Add Okta, Entra or Ping as another tier, reorder the tiers, drain one, or change what counts as down. Every change is live and made as the signed-in admin.
+          </td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+<script src="card.js"></script>
+</body>
+</html>

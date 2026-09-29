@@ -9,7 +9,7 @@ not by convention.
 
 | Party | Role in the stories | Domain | Namespaces |
 | --- | --- | --- | --- |
-| **Platform** | the "cloud": mesh, edge, telemetry, substrate | `ops.lab` | `istio-system` `kgateway-system` `observability` `ate-system` `cert-manager` |
+| **Platform** | the "cloud": mesh, edge, telemetry, substrate, and the Observatory | `ops.lab` | `istio-system` `kgateway-system` `observability` `ate-system` `cert-manager` `observatory` `ops-identity` |
 | **Sterling & Vance** | Bob's firm. Runs the Solo AI platform (kagent, agentgateway, agentregistry) for its advisors | `sterling.lab` | `sv-identity` `sv-egress` `kagent` `agentgateway-system` `agentregistry` `sv-agents` `sv-mcp` `sv-u4a` |
 | **Alice** | resource owner. Her authorization server, her portal, her IdP | `alice.lab` | `alice` `alice-identity` |
 | **Meridian Wealth** | Alice's brokerage. Holds her account, enforces her terms, can never read them | `meridian.lab` | `meridian` |
@@ -28,6 +28,8 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | Namespace | Workload | SA | Owner | Reached by |
 | --- | --- | --- | --- | --- |
 | `kgateway-system` | edge (kgateway/Envoy) | `edge` | platform | laptop (NodePort 30080/30443) |
+| `observatory` | Observatory (reads the cluster; writes only by impersonating the signed-in admin) | `observatory` | platform | edge (UI/API); otel-collector (OTLP logs); `ops-identity` Keycloak |
+| `ops-identity` | Keycloak `ops` (platform admins, for the Observatory) | `keycloak` | platform | edge; the Observatory (JWKS) |
 | `sv-identity` | Keycloak `sterling-vance` | `keycloak` | S&V | edge; S&V gateways/apps (JWKS, token exchange); continuity-controller (admin API) |
 | `sv-identity` | `continuity-controller` (2 replicas, leader-elected) | `continuity-controller` | S&V | nobody (calls out only) |
 | `sv-egress` | `egress-waypoint` (Istio waypoint for external upstream IdPs) | `egress-waypoint` | S&V | Keycloak and continuity-controller only |
@@ -77,30 +79,24 @@ as kagent controller → atenet-router → worker, each hop mTLS.
 
 ## Identity continuity
 
-`IdentityContinuity` (`continuity.lab.solo.io/v1alpha1`, `kubectl get idc -n
-sv-identity`) is an ordered chain of tiers: `oidc` upstreams and `local` (S&V
-Keycloak's own accounts). The continuity controller (`apps/continuity`) probes
-every tier (discovery + JWKS; a local tier is as healthy as Keycloak), picks
-the first enabled, undrained, configured, healthy one, and makes Keycloak match
-through its admin API: one OIDC identity provider per configured tier (hidden
-when not eligible), and the `continuity-browser` flow's IdP redirector pointed
-at the active tier, or cleared so S&V's own form shows. Brokered users are
-linked by verified email to their existing S&V user (`continuity-first-broker-login`),
-so `sub` never changes. With no controller, the realm is plain local login.
+`IdentityContinuity` (`kubectl get idc -n sv-identity`) is an ordered chain
+of upstream IdPs for S&V's Keycloak, ending in its own accounts. The
+continuity controller probes every tier and points Keycloak's login at the
+first healthy one; Keycloak stays the issuer everything trusts, and brokered
+users are linked to their S&V user by verified email, so `sub` never changes.
+External upstreams are reached through `sv-egress/egress-waypoint` (one
+ServiceEntry per tier), which is also where an outage is simulated: a DENY
+policy on that ServiceEntry. Details, the API and Auth0 setup:
+[IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md).
 
-A tier missing its client Secret is `NotConfigured` (probed, never active).
-External upstreams get a ServiceEntry (`sv-egress/continuity-<tier>`) bound to
-the egress waypoint, so the back-channel leaves through S&V policy.
+## Observability and the Observatory
 
-**Kill switch** (a real partition; the controller only ever sees its probes):
-an `AuthorizationPolicy` named `continuity-partition-<tier>`, labelled
-`continuity.lab.solo.io/tier: <tier>`, `action: DENY`, `rules: [{}]`,
-
-- in the upstream's namespace, for an upstream inside the lab;
-- in `sv-egress` with `targetRefs: [{group: networking.istio.io, kind:
-  ServiceEntry, name: continuity-<tier>}]`, for an external one.
-
-Delete it to heal. Status shows `partitioned` for information only.
+Every component sends OTLP to one collector (`observability/otel-collector`):
+traces to Tempo, metrics to Prometheus, gateway access logs to the
+Observatory. Prometheus also scrapes ztunnel, waypoints and gateways, which is
+where the Observatory's observed edges come from. Kiali and Grafana read the
+same data. The Observatory derives its map from the cluster's own objects;
+see [OBSERVATORY.md](OBSERVATORY.md).
 
 ## Naming and DNS
 
@@ -109,14 +105,15 @@ everywhere, so an issuer URL means the same thing to a browser, a CLI and a
 pod:
 
 - **Mac:** `/etc/resolver/lab` sends `*.lab` to the lab DNS container on
-  `127.0.0.1:15353`, which answers `127.0.0.1`. `make dns-setup` is a
-  one-time sudo step.
+  `127.0.0.1:15353`, which answers `127.0.0.1`. `make machine-setup` writes
+  it (one-time sudo).
 - **Cluster:** CoreDNS rewrites `*.lab` to the edge Service.
 - **Waypoints:** `sv-mcp` uses an agentgateway waypoint (MCP-aware). `alice`,
   `meridian` and `ledgerline` use Istio waypoints, opted into per workload
   only where a path-level rule needs one.
 - **TLS:** the lab CA is generated once into `~/.solo-lab/ca` and outlives
-  clusters, so you trust it once (`make trust-ca`, one-time sudo). In-cluster
+  clusters, so you trust it once (`make machine-setup`). It is name-constrained to
+  `.lab`, `.svc` and `.cluster.local`. In-cluster
   consumers get it through trust-manager (`lab-ca-bundle` ConfigMap).
 
 Why not `*.localhost`: agentgateway's resolver (hickory, RFC 6761) and newer
@@ -157,5 +154,6 @@ installs every story, so any card runs in any order on the same lab.
 60-kagent       kagent + kmcp, model via ai-gateway, ops agents on Substrate
 70-agentregistry agentregistry behind S&V SSO at the edge
 80-mesh-policy  S&V mesh baseline (other parties own theirs, in their story)
+90-observatory  Observatory, its Keycloak (realm ops), gateway access logs to it
 95-demos        every story: bob, then bob-to-alice
 ```

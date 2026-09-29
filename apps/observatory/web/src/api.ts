@@ -46,6 +46,7 @@ export type TierStatus = {
 }
 export type ContinuitySpec = {
   broker?: { keycloak?: { url?: string; realm?: string; credentialsRef?: { name: string } } }
+  egress?: { namespace: string; waypoint: string }
   tiers: Tier[]
   health?: { intervalSeconds?: number; timeoutSeconds?: number; unhealthyThreshold?: number; healthyThreshold?: number }
   failback?: 'Automatic' | 'Manual'
@@ -56,7 +57,7 @@ export type IdentityContinuity = {
   status?: { active?: string; activeSince?: string; broker?: { issuer?: string }; tiers?: TierStatus[]; transitions?: { time: string; from: string; to: string; reason: string }[] }
 }
 export type SignInPath = { instance: string; name: string; hosts: string[]; entry?: string; broker: string; app: string; after: string[][] }
-export type ContinuityView = { items: IdentityContinuity[]; partitions: { tier: string; namespace: string; name: string }[]; paths: SignInPath[] }
+export type ContinuityView = { items: IdentityContinuity[]; partitions: { tier: string; namespace: string; name: string; since?: string; by?: string; path?: string }[]; paths: SignInPath[] }
 export type Me = { name: string; email?: string; groups: string[] }
 
 const TRAFFIC_KEEP = 3000

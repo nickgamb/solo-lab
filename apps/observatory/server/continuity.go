@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -21,9 +22,10 @@ import (
 // the declared rules and cuts or restores the network; failover itself is
 // the controller reacting to what its probes see.
 type Continuity struct {
-	k    *Kube
-	res  *Resources
-	seen map[string]string // instance -> last transition time reported
+	k       *Kube
+	res     *Resources
+	traffic *TrafficStore     // outages cut and restored show in the feed
+	seen    map[string]string // instance -> last transition time reported
 }
 
 // Report turns new failover transitions into events in the traffic feed.
@@ -88,6 +90,9 @@ type Partition struct {
 	Tier      string `json:"tier"`
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
+	Since     string `json:"since,omitempty"`
+	By        string `json:"by,omitempty"`   // the admin who cut it
+	Path      string `json:"path,omitempty"` // what was cut, in words
 }
 
 func (c *Continuity) View(ix *Index) ContinuityView {
@@ -111,7 +116,9 @@ func (c *Continuity) View(ix *Index) ContinuityView {
 	}
 	for _, p := range c.k.List("authorizationpolicies") {
 		if t := p.GetLabels()[tierLabel]; t != "" {
-			v.Partitions = append(v.Partitions, Partition{Tier: t, Namespace: p.GetNamespace(), Name: p.GetName()})
+			a := p.GetAnnotations()
+			v.Partitions = append(v.Partitions, Partition{Tier: t, Namespace: p.GetNamespace(), Name: p.GetName(),
+				Since: p.GetCreationTimestamp().UTC().Format(time.RFC3339), By: a[byAnno], Path: a[pathAnno]})
 		}
 	}
 	return v
@@ -189,7 +196,7 @@ func (c *Continuity) Partition(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, err)
 		return
 	}
-	ns, target, err := c.pathOf(in.Tier)
+	ns, target, what, err := c.pathOf(in.Tier)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -201,6 +208,9 @@ func (c *Continuity) Partition(w http.ResponseWriter, r *http.Request) {
 			httpErr(w, err)
 			return
 		}
+		if err == nil {
+			c.note(in.Tier, "ok", "network restored to "+what, userFrom(r.Context()).Name)
+		}
 		writeJSON(w, map[string]any{"tier": in.Tier, "down": false})
 		return
 	}
@@ -209,30 +219,52 @@ func (c *Continuity) Partition(w http.ResponseWriter, r *http.Request) {
 		spec["targetRefs"] = []any{target}
 	}
 	patch, _ := json.Marshal(map[string]any{"apiVersion": "security.istio.io/v1", "kind": "AuthorizationPolicy",
-		"metadata": map[string]any{"name": name, "namespace": ns, "labels": map[string]string{tierLabel: in.Tier}},
-		"spec":     spec})
+		"metadata": map[string]any{"name": name, "namespace": ns, "labels": map[string]string{tierLabel: in.Tier},
+			"annotations": map[string]string{byAnno: userFrom(r.Context()).Name, pathAnno: what}},
+		"spec": spec})
 	if _, err := cl.Resource(gvrAP).Namespace(ns).Patch(r.Context(), name, types.ApplyPatchType, patch,
 		metav1.PatchOptions{FieldManager: fieldManager, Force: ptr(true)}); err != nil {
 		httpErr(w, err)
 		return
 	}
+	c.note(in.Tier, "error", "simulated outage: network to "+what+" cut (DENY "+ns+"/"+name+")", userFrom(r.Context()).Name)
 	writeJSON(w, map[string]any{"tier": in.Tier, "down": true, "policy": ns + "/" + name})
+}
+
+const (
+	byAnno   = "continuity.lab.solo.io/cut-by"
+	pathAnno = "continuity.lab.solo.io/path"
+)
+
+// note puts an outage being cut or restored in the traffic feed, next to
+// the failover it causes.
+func (c *Continuity) note(tier, outcome, what, by string) {
+	if c.traffic == nil {
+		return
+	}
+	c.traffic.Add(Traffic{Kind: "continuity", Reporter: "observatory", Outcome: outcome, User: by,
+		Summary: what, Attrs: map[string]string{"tier": tier, "by": by}})
 }
 
 // pathOf finds where a tier's traffic can be cut: the ServiceEntry the
 // controller keeps for an external tier, else a namespace labelled for it.
-func (c *Continuity) pathOf(tier string) (string, map[string]any, error) {
+func (c *Continuity) pathOf(tier string) (string, map[string]any, string, error) {
 	for _, se := range c.list(gvrSE) {
 		if se.GetLabels()[tierLabel] == tier {
-			return se.GetNamespace(), map[string]any{"group": "networking.istio.io", "kind": "ServiceEntry", "name": se.GetName()}, nil
+			var hosts []string
+			for _, h := range slice(se.Object, "spec", "hosts") {
+				hosts = append(hosts, fmt.Sprint(h))
+			}
+			what := strings.Join(hosts, ", ") + " at the " + se.GetNamespace() + " egress"
+			return se.GetNamespace(), map[string]any{"group": "networking.istio.io", "kind": "ServiceEntry", "name": se.GetName()}, what, nil
 		}
 	}
 	for _, ns := range c.k.List("namespaces") {
 		if ns.GetLabels()[tierLabel] == tier {
-			return ns.GetName(), nil, nil
+			return ns.GetName(), nil, "namespace " + ns.GetName(), nil
 		}
 	}
-	return "", nil, errors.New("no network path is known for tier " + tier + " (local tiers can't be partitioned)")
+	return "", nil, "", errors.New("no network path is known for tier " + tier + " (local tiers can't be partitioned)")
 }
 
 func (c *Continuity) list(gvr schema.GroupVersionResource) []*unstructured.Unstructured {

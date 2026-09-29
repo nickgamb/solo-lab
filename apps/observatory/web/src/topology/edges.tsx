@@ -17,6 +17,7 @@ export type FlowData = {
   via?: string[] // waypoints the call passes, shown as a badge
   badgeAt?: 'src' | 'dst' // which end carries the badge (one per group of wires)
   focused?: boolean // part of the hovered node's neighbourhood
+  cut?: boolean // the network on this path is cut (a simulated outage)
   [key: string]: unknown
 }
 
@@ -51,7 +52,14 @@ export const FlowEdge = memo((p: EdgeProps) => {
           <animateMotion dur="1.1s" repeatCount="1" path={path} fill="freeze" />
         </circle>
       ))}
-      {((d.via?.length && d.badgeAt) || (d.showLabel && d.label)) && !d.fog ? (
+      {d.cut && (
+        <EdgeLabelRenderer>
+          <div className="ecut" style={{ transform: `translate(-50%,-50%) translate(${(pts[0].x + pts[pts.length - 1].x) / 2}px,${(pts[0].y + pts[pts.length - 1].y) / 2}px)` }}>
+            <span>✕</span>{d.label ?? 'cut'}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+      {((d.via?.length && d.badgeAt) || (d.showLabel && d.label)) && !d.fog && !d.cut ? (
         <EdgeLabelRenderer>
           <div className={d.via?.length ? 'ebadge' : 'elabel'} style={{ transform: `translate(${d.badgeAt === 'dst' ? '-100%' : d.badgeAt === 'src' ? '0' : '-50%'},-50%) translate(${mid.x}px,${mid.y}px)` }}
             title={d.via?.length ? `through the waypoint ${d.via.join(', ')}` : undefined}>

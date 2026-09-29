@@ -1,8 +1,9 @@
 import {
-  Background, BackgroundVariant, Controls, MarkerType, MiniMap, ReactFlow, ReactFlowProvider, useReactFlow,
+  Background, BackgroundVariant, ControlButton, Controls, MarkerType, MiniMap, ReactFlow, ReactFlowProvider, getNodesBounds, getViewportForBounds, useReactFlow,
   type Edge, type Node,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import { toPng } from 'html-to-image'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { EdgeKind, Lab, LabNode, Pod, Substrate, Traffic } from '../api'
 import { DetailsPanel } from './DetailsPanel'
@@ -232,7 +233,11 @@ function Canvas({ lab, focus, onFocused }: { lab: Lab; focus?: string; onFocused
       >
         <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="var(--border)" />
         <MiniMap pannable zoomable className="minimap" nodeColor={n => (n.type === 'tile' || n.type === 'door' ? 'var(--accent)' : 'transparent')} maskColor="var(--fog)" />
-        <Controls showInteractive={false} />
+        <Controls showInteractive={false}>
+          <ControlButton onClick={() => exportMap(rf.getNodes(), lens)} title="Export the whole map as a PNG" aria-label="Export map">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 3h2v9.2l3.3-3.3 1.4 1.4L12 16l-5.7-5.7 1.4-1.4 3.3 3.3V3zM4 18h16v2H4z" /></svg>
+          </ControlButton>
+        </Controls>
       </ReactFlow>
 
       <div className="toolbar">
@@ -375,3 +380,25 @@ export function actorFor(sub: Substrate, n: LabNode) {
 
 const RANK: Record<string, number> = { down: 3, warn: 2, idle: 1, ok: 0 }
 const worstOf = (list: LabNode[]): LabNode['status'] => list.map(n => n.status).sort((a, b) => RANK[b] - RANK[a])[0] ?? 'ok'
+
+// exportMap renders the whole map (every lane, tile, wire and badge, not
+// just what's in view) to a PNG, on the page's own background.
+async function exportMap(nodes: Node[], lens: string) {
+  const el = document.querySelector<HTMLElement>('.topo .react-flow__viewport')
+  if (!el || !nodes.length) return
+  const PAD = 60
+  const b = getNodesBounds(nodes)
+  const w = Math.ceil(b.width + 2 * PAD), h = Math.ceil(b.height + 2 * PAD)
+  const vp = getViewportForBounds(b, w, h, 1, 1, `${PAD}px`)
+  // crisp, but inside every browser's canvas limit (Safari's is ~16M pixels)
+  const ratio = Math.max(0.5, Math.min(2, Math.sqrt(16e6 / (w * h))))
+  const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#12012a'
+  const url = await toPng(el, {
+    backgroundColor: bg, width: w, height: h, pixelRatio: ratio,
+    style: { width: `${w}px`, height: `${h}px`, transform: `translate(${vp.x}px, ${vp.y}px) scale(${vp.zoom})` },
+  })
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `observatory-topology-${lens}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.png`
+  a.click()
+}

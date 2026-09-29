@@ -73,7 +73,7 @@ func main() {
 		json.NewEncoder(os.Stdout).Encode(g)
 		return
 	}
-	cont := &Continuity{k: k, res: &Resources{k: k}}
+	cont := &Continuity{k: k, res: &Resources{k: k}, traffic: traffic}
 	sub := &Substrate{url: env("KAGENT_URL", ""), hc: &http.Client{Timeout: 5 * time.Second}, hub: hub, traffic: traffic,
 		index: func() *Index { return index.Load() }}
 

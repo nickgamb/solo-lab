@@ -29,19 +29,34 @@ function Continuity({ lab, ic, items, pick, setPick }: {
 }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string>()
+  const [choice, setChoice] = useState<string>() // which upstream the outage button cuts
   const tiers = ic.spec.tiers ?? []
   const status = new Map((ic.status?.tiers ?? []).map(t => [t.name, t]))
   const active = ic.status?.active
   const primary = tiers.find(t => t.enabled !== false && !t.drain && status.get(t.name)?.configured !== false)
-  const partitioned = new Set((lab.continuity?.partitions ?? []).map(p => p.tier))
-  const target = tiers.find(t => t.type === 'oidc' && t.name === active) ?? tiers.find(t => t.type === 'oidc' && partitioned.has(t.name))
-    ?? tiers.find(t => t.type === 'oidc' && status.get(t.name)?.configured !== false)
-  const cut = target ? partitioned.has(target.name) : false
+  const cuts = new Map((lab.continuity?.partitions ?? []).map(p => [p.tier, p]))
+  const upstreams = tiers.filter(t => t.type === 'oidc')
+  const target = upstreams.find(t => cuts.has(t.name)) ?? upstreams.find(t => t.name === choice) ?? tiers.find(t => t.type === 'oidc' && t.name === active)
+    ?? tiers.find(t => t.type === 'oidc' && status.get(t.name)?.configured !== false) ?? tiers.find(t => t.type === 'oidc')
+  const cut = target ? cuts.get(target.name) : undefined
   const failover = !!active && !!primary && active !== primary.name
+  const health = ic.spec.health ?? {}
+  const pst = primary ? status.get(primary.name) : undefined
+  // where the story is: a cut the controller hasn't reacted to yet, a
+  // failover, or a restored path it is still verifying before failing back
+  const phase: 'ok' | 'detecting' | 'failover' | 'recovering' | 'down' =
+    !active ? 'down'
+      : cut && active === target?.name ? 'detecting'
+        : failover && !cut && !!pst?.healthy === false && primary?.name === target?.name ? 'recovering'
+          : failover ? 'failover' : 'ok'
   const nodes = useMemo(() => new Map(lab.graph?.nodes.map(n => [n.id, n]) ?? []), [lab.graph])
   const key = `${ic.metadata.namespace}/${ic.metadata.name}`
   const paths = (lab.continuity?.paths ?? []).filter(p => p.instance === key)
   const brokerNode = paths[0] ? nodes.get(paths[0].broker) : undefined
+  const egress = ic.spec.egress
+    ? lab.graph?.nodes.find(n => n.namespace === ic.spec.egress!.namespace && n.label === ic.spec.egress!.waypoint) : undefined
+  const targetName = target?.displayName ?? target?.name ?? ''
+  const host = (u?: string) => { try { return u ? new URL(u).host : '' } catch { return u ?? '' } }
 
   const kill = async () => {
     if (!target) return
@@ -50,14 +65,14 @@ function Continuity({ lab, ic, items, pick, setPick }: {
     catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
   }
 
-  // Centred on the identity provider, left to right: every app that signs
-  // people in through this broker, the broker (the issuer everything
-  // trusts), and the upstream tiers it authenticates against, in failover
-  // order. When no tier is healthy, every app on the left goes dark.
+  // Left to right: every app that signs people in through this broker, the
+  // broker (the issuer everything trusts), the firm's egress (where an
+  // external IdP's back-channel leaves the lab, and where an outage is cut),
+  // and the upstream tiers in failover order.
   const { rfNodes, rfEdges } = useMemo(() => {
     const rfNodes: Node[] = []
     const rfEdges: Edge[] = []
-    const COL = 320, ROW = 160
+    const COL = 330, ROW = 170
     const signInOK = !!active
     const tile = (id: string, n: LabNode | undefined, col: number, row: number, extra: Partial<CardData> = {}) => {
       if (!n) return
@@ -76,17 +91,30 @@ function Continuity({ lab, ic, items, pick, setPick }: {
       if (broker) wire(id, broker, { state: signInOK ? 'active' : 'down' })
     })
     if (broker) tile(broker, nodes.get(broker), 1, mid, { highlight: signInOK ? 'ok' : 'bad' })
+    const tierRow = (i: number) => mid - (tiers.length - 1) / 2 + i
+    const external = tiers.map((t, i) => ({ t, i })).filter(x => x.t.type === 'oidc')
+    const egressRow = external.length ? external.reduce((a, x) => a + tierRow(x.i), 0) / external.length : mid
+    const egressCut = external.some(x => cuts.has(x.t.name))
+    const egressLive = external.some(x => x.t.name === active)
+    if (egress && broker && external.length) {
+      tile(egress.id, egress, 2, egressRow, { highlight: egressCut ? 'bad' : egressLive ? 'ok' : undefined })
+      wire(broker, egress.id, { state: egressLive ? 'active' : 'standby', rps: egressLive ? 1 : 0 })
+    }
     tiers.forEach((t, i) => {
       const st = status.get(t.name)
       const isActive = t.name === active
-      const down = partitioned.has(t.name) || (!!st && st.configured !== false && !st.healthy)
+      const isCut = cuts.has(t.name)
+      const down = isCut || (!!st && st.configured !== false && !st.healthy)
       const n: LabNode = { id: `tier:${t.name}`, kind: t.type === 'local' ? 'idp' : 'external', label: `${i + 1}. ${t.displayName ?? t.name}`, group: '',
-        status: isActive ? 'ok' : down ? 'down' : 'idle', sub: t.type === 'local' ? 'local accounts' : t.oidc?.issuer, summary: {}, products: [] }
-      tile(n.id, n, 2, mid - (tiers.length - 1) / 2 + i, { fog: !isActive && (down || st?.configured === false || t.enabled === false || !!t.drain), highlight: isActive ? 'ok' : down ? 'bad' : undefined })
-      if (broker) wire(broker, n.id, { state: isActive ? 'active' : down ? 'down' : 'standby', rps: isActive ? 1 : 0 })
+        status: isActive ? 'ok' : down ? 'down' : 'idle', sub: t.type === 'local' ? 'local accounts' : host(t.oidc?.issuer), summary: {}, products: [] }
+      const off = st?.configured === false || t.enabled === false || !!t.drain
+      tile(n.id, n, 3, tierRow(i), { fog: !isActive && !down && off, highlight: isActive ? 'ok' : down ? 'bad' : undefined, outage: isCut })
+      const from = t.type === 'oidc' && egress ? egress.id : broker
+      if (from) wire(from, n.id, { state: isActive ? 'active' : down ? 'down' : 'standby', rps: isActive ? 1 : 0,
+        cut: isCut, label: isCut ? 'network cut' : undefined })
     })
     return { rfNodes, rfEdges }
-  }, [tiers, status, active, partitioned, nodes, paths])
+  }, [tiers, status, active, cuts, nodes, paths, egress])
 
   const names = useMemo(() => new Map(lab.graph?.nodes.map(n => [n.id, n.label]) ?? []), [lab.graph])
   const feed = useMemo(() => lab.traffic.filter(t => t.kind === 'continuity' || t.kind === 'oidc').slice(0, 120), [lab.traffic])
@@ -94,13 +122,9 @@ function Continuity({ lab, ic, items, pick, setPick }: {
 
   return (
     <div className="cont">
-      <div className={`banner ${!active ? 'bad' : failover ? 'bad' : 'ok'}`}>
-        <span className={`dot ${!active ? 'bad' : failover ? 'bad' : 'ok'}`} />
-        {!active ? 'SIGN-IN UNAVAILABLE · NO HEALTHY TIER'
-          : failover ? `FAILOVER ACTIVE · ${String(activeName).toUpperCase()} → REPLACING ${String(primary?.displayName ?? primary?.name).toUpperCase()}`
-            : `CONNECTED · ${String(activeName).toUpperCase()} PRIMARY`}
-        {ic.status?.activeSince && <span className="since">since {new Date(ic.status.activeSince).toLocaleTimeString()}</span>}
-      </div>
+      <Banner phase={phase} active={activeName} primary={primary?.displayName ?? primary?.name} since={ic.status?.activeSince}
+        cut={cut} checks={phase === 'recovering' ? `${pst?.consecutiveSuccesses ?? 0}/${health.healthyThreshold ?? 3} healthy checks`
+          : phase === 'detecting' ? `${status.get(target?.name ?? '')?.consecutiveFailures ?? 0}/${health.unhealthyThreshold ?? 2} failed checks` : undefined} />
       <div className="cont-main">
         <div className="cont-canvas">
           <div className="cont-bar">
@@ -111,10 +135,21 @@ function Continuity({ lab, ic, items, pick, setPick }: {
             )}
             <span className="grow" />
             {target && (
-              <button className={cut ? 'btn ok' : 'btn danger'} disabled={busy} onClick={kill}
-                title={cut ? `Remove the partition on ${target.name}` : `Cut the network path from the lab to ${target.displayName ?? target.name}`}>
-                {cut ? `Restore network to ${target.displayName ?? target.name}` : `Simulate network outage · ${target.displayName ?? target.name}`}
-              </button>
+              <div className="outage">
+                <div className="row">
+                  {upstreams.length > 1 && !cut && (
+                    <select className="field" value={target.name} onChange={e => setChoice(e.target.value)} title="the upstream IdP to cut off">
+                      {upstreams.map(t => <option key={t.name} value={t.name}>{t.displayName ?? t.name}</option>)}
+                    </select>
+                  )}
+                  <button className={cut ? 'btn big ok' : 'btn big danger'} disabled={busy} onClick={kill}
+                    title={cut ? `Remove the DENY on the path to ${targetName}` : `A real Istio DENY on the path from the lab to ${targetName}`}>
+                    {cut ? 'Restore IdP network' : 'Simulate IdP outage'}
+                  </button>
+                </div>
+                <span className="subtle small">{cut ? `${targetName} cut ${cut.since ? new Date(cut.since).toLocaleTimeString() : ''}${cut.by ? ` by ${cut.by}` : ''} · ${cut.path ?? ''}`
+                  : `cuts ${targetName} (${host(target.oidc?.issuer)}) at the ${ic.spec.egress?.namespace ?? 'firm'} egress`}</span>
+              </div>
             )}
           </div>
           {err && <div className="note bad cont-err">{err}</div>}
@@ -148,6 +183,36 @@ function Continuity({ lab, ic, items, pick, setPick }: {
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+type Phase = 'ok' | 'detecting' | 'failover' | 'recovering' | 'down'
+
+// Banner: the one line a room reads from the back: which IdP is signing
+// people in, and, during an outage, what happened and what the lab did.
+function Banner({ phase, active, primary, since, cut, checks }: {
+  phase: Phase; active?: string; primary?: string; since?: string; cut?: { path?: string; since?: string; by?: string }; checks?: string
+}) {
+  const up = (x?: string) => String(x ?? '').toUpperCase()
+  const cls = phase === 'ok' ? 'ok' : phase === 'detecting' || phase === 'recovering' ? 'warn' : 'bad'
+  const head = {
+    ok: `CONNECTED · ${up(active)} SIGNING PEOPLE IN`,
+    detecting: `OUTAGE · ${up(primary)} UNREACHABLE · FAILING OVER`,
+    failover: `FAILOVER ACTIVE · ${up(active)} → REPLACING ${up(primary)}`,
+    recovering: `NETWORK RESTORED · VERIFYING ${up(primary)} BEFORE FAILING BACK`,
+    down: 'SIGN-IN UNAVAILABLE · NO HEALTHY TIER',
+  }[phase]
+  const why = phase === 'ok' ? undefined
+    : cut ? `network to ${cut.path ?? primary} cut${cut.by ? ` by ${cut.by}` : ''}${cut.since ? ` at ${new Date(cut.since).toLocaleTimeString()}` : ''}`
+      : phase === 'recovering' ? 'the network is back; the controller waits for steady health checks' : undefined
+  return (
+    <div className={`banner ${cls} p-${phase}`}>
+      <span className={`dot ${cls}`} />
+      <span className="bhead">{head}</span>
+      {checks && <span className="chip">{checks}</span>}
+      {why && <span className="why">{why}</span>}
+      {since && phase !== 'detecting' && <span className="since">active since {new Date(since).toLocaleTimeString()}</span>}
     </div>
   )
 }
