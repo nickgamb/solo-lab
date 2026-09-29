@@ -10,6 +10,8 @@ need_cluster
 NS=observability
 
 step "kube-prometheus-stack $KPS_VERSION"
+K create secret generic grafana-admin -n "$NS" --from-literal=admin-user=admin \
+  --from-literal=admin-password="$(lab_secret GRAFANA_ADMIN_PASSWORD)" --dry-run=client -o yaml | K apply -f - >/dev/null
 values_for "$D" kps oss
 HELM_TIMEOUT=15m helm_up kps kube-prometheus-stack "$KPS_VERSION" $NS \
   --repo https://prometheus-community.github.io/helm-charts ${VALS[@]+"${VALS[@]}"}
@@ -31,7 +33,6 @@ step "Mesh scrape targets"
 K apply -f "$D/monitors.yaml" >/dev/null
 ok "istiod, ztunnel, waypoint/gateway proxies"
 
-step "Platform UIs on the edge"
+# Grafana and Kiali are published on the edge with their sign-in, by
+# platform/90-observatory (platform-uis.yaml), once the admins' IdP exists.
 K label namespace istio-system lab.solo.io/party=platform --overwrite >/dev/null
-apply_tmpl "$D/routes.yaml"
-ok "https://grafana.${OPS_DOMAIN}  https://kiali.${OPS_DOMAIN}"

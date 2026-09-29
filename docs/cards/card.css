@@ -343,3 +343,8 @@
   a { color: var(--teal); }
   a:focus-visible, td:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+  /* ---- footer ---- */
+  .foot { padding-top: 8px; border-top: 1px solid var(--line-soft); font-size: 14px; color: var(--ink-dim); }
+  .foot a { color: var(--teal); text-decoration: none; }
+  .foot a:hover { text-decoration: underline; }

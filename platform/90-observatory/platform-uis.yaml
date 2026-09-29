@@ -1,0 +1,135 @@
+# The platform UIs (Grafana, Kiali) on the edge, signed in the same way as the
+# Observatory: the edge runs OAuth2 against the platform admins' Keycloak
+# (ops-identity, realm ops), and each UI takes only connections from the edge,
+# so there is no way around the sign-in. Published here, after ops-identity
+# exists, so neither is ever on the edge without it.
+#
+#   Grafana  trusts the signed-in user the edge forwards (auth proxy); its own
+#            login form is off.
+#   Kiali    view-only (platform/20-observability/kiali.yaml): it can show
+#            the mesh's policy but not change it.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: grafana, namespace: observability}
+spec:
+  parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-ops}]
+  hostnames: ["grafana.${OPS_DOMAIN}"]
+  rules:
+  - backendRefs: [{name: kps-grafana, port: 80}]
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: GatewayExtension
+metadata: {name: grafana-sso, namespace: observability}
+spec:
+  type: OAuth2
+  oauth2:
+    backendRef: {kind: Service, name: keycloak, namespace: ops-identity, port: 80}
+    issuerURI: https://idp.${OPS_DOMAIN}/realms/ops
+    authorizationEndpoint: https://idp.${OPS_DOMAIN}/realms/ops/protocol/openid-connect/auth
+    tokenEndpoint: https://idp.${OPS_DOMAIN}/realms/ops/protocol/openid-connect/token
+    endSessionEndpoint: https://idp.${OPS_DOMAIN}/realms/ops/protocol/openid-connect/logout
+    redirectURI: https://grafana.${OPS_DOMAIN}/oauth2/redirect
+    logoutPath: /logout
+    credentials:
+      clientID: grafana
+      clientSecretRef: {name: grafana-sso}
+    scopes: [openid, profile, email]
+    cookies: {sameSite: Lax}
+    jwt:
+      jwksURI: https://idp.${OPS_DOMAIN}/realms/ops/protocol/openid-connect/certs
+      jwksBackendRef: {kind: Service, name: keycloak, namespace: ops-identity, port: 80}
+      accessToken:
+        audiences: [grafana]
+        claimsToHeaders:
+        - {name: preferred_username, header: x-webauth-user}   # Grafana's auth proxy header
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata: {name: grafana-sso, namespace: observability}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: grafana}]
+  oauth2: {extensionRef: {name: grafana-sso}}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: kiali, namespace: istio-system}
+spec:
+  parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-ops}]
+  hostnames: ["kiali.${OPS_DOMAIN}"]
+  rules:
+  - backendRefs: [{name: kiali, port: 20001}]
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: GatewayExtension
+metadata: {name: kiali-sso, namespace: istio-system}
+spec:
+  type: OAuth2
+  oauth2:
+    backendRef: {kind: Service, name: keycloak, namespace: ops-identity, port: 80}
+    issuerURI: https://idp.${OPS_DOMAIN}/realms/ops
+    authorizationEndpoint: https://idp.${OPS_DOMAIN}/realms/ops/protocol/openid-connect/auth
+    tokenEndpoint: https://idp.${OPS_DOMAIN}/realms/ops/protocol/openid-connect/token
+    endSessionEndpoint: https://idp.${OPS_DOMAIN}/realms/ops/protocol/openid-connect/logout
+    redirectURI: https://kiali.${OPS_DOMAIN}/oauth2/redirect
+    logoutPath: /logout
+    credentials:
+      clientID: kiali
+      clientSecretRef: {name: kiali-sso}
+    scopes: [openid, profile, email]
+    cookies: {sameSite: Lax}
+    jwt:
+      jwksURI: https://idp.${OPS_DOMAIN}/realms/ops/protocol/openid-connect/certs
+      jwksBackendRef: {kind: Service, name: keycloak, namespace: ops-identity, port: 80}
+      accessToken:
+        audiences: [kiali]
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata: {name: kiali-sso, namespace: istio-system}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: kiali}]
+  oauth2: {extensionRef: {name: kiali-sso}}
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata: {name: platform-uis-sso-to-keycloak, namespace: ops-identity}
+spec:
+  from:
+  - {group: gateway.kgateway.dev, kind: GatewayExtension, namespace: observability}
+  - {group: gateway.kgateway.dev, kind: GatewayExtension, namespace: istio-system}
+  to: [{group: "", kind: Service, name: keycloak}]
+---
+# No way around the edge's sign-in: each UI's pods take connections only from
+# the edge (and what the other UI or Prometheus needs). A caller with no mesh
+# identity matches no principal and is refused.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: grafana-callers, namespace: observability}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: grafana}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/kgateway-system/sa/edge
+        - cluster.local/ns/istio-system/sa/kiali           # Kiali's links to dashboards
+        - cluster.local/ns/observability/sa/kps-prometheus
+---
+# istio-system is not in the ambient mesh, so Kiali is fenced by a
+# NetworkPolicy (by pod) instead: the edge on the UI port, Prometheus on metrics.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: kiali-callers, namespace: istio-system}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: kiali}}
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kgateway-system}}
+      podSelector: {matchLabels: {gateway.networking.k8s.io/gateway-name: edge}}
+    ports: [{port: 20001, protocol: TCP}]
+  - from:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: observability}}
+      podSelector: {matchLabels: {app.kubernetes.io/name: prometheus}}
+    ports: [{port: 9090, protocol: TCP}]

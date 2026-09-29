@@ -22,6 +22,8 @@ K create secret generic kc-secrets -n ops-identity \
   --from-literal=KC_BOOTSTRAP_ADMIN_USERNAME=admin \
   --from-literal=KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret OPS_KC_ADMIN_PASSWORD)" \
   --from-literal=OBSERVATORY_CLIENT_SECRET="$(lab_secret OBSERVATORY_CLIENT_SECRET)" \
+  --from-literal=GRAFANA_CLIENT_SECRET="$(lab_secret OPS_GRAFANA_CLIENT_SECRET)" \
+  --from-literal=KIALI_CLIENT_SECRET="$(lab_secret OPS_KIALI_CLIENT_SECRET)" \
   --dry-run=client -o yaml | K apply -f - >/dev/null
 deploy_keycloak ops-identity "$OPS_DOMAIN" https-ops "$D/realm-ops.json"
 K create secret generic observatory-oidc -n observatory \
@@ -29,7 +31,16 @@ K create secret generic observatory-oidc -n observatory \
   --dry-run=client -o yaml | K apply -f - >/dev/null
 ok "issuer https://idp.$OPS_DOMAIN/realms/ops  (admin: ops / ops-demo)"
 
+step "Platform UIs on the edge, behind the admins' sign-in"
+K create secret generic grafana-sso -n observability --from-literal=client-secret="$(lab_secret OPS_GRAFANA_CLIENT_SECRET)" \
+  --dry-run=client -o yaml | K apply -f - >/dev/null
+K create secret generic kiali-sso -n istio-system --from-literal=client-secret="$(lab_secret OPS_KIALI_CLIENT_SECRET)" \
+  --dry-run=client -o yaml | K apply -f - >/dev/null
+apply_tmpl "$D/platform-uis.yaml"
+ok "https://grafana.$OPS_DOMAIN  https://kiali.$OPS_DOMAIN  (ops / ops-demo)"
+
 step "Observatory"
+deny_internet observatory ops-identity
 K apply -f "$D/rbac.yaml" >/dev/null
 apply_tmpl "$D/observatory.yaml"
 K apply -f "$D/telemetry.yaml" >/dev/null

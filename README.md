@@ -7,8 +7,10 @@
 [![Identity](https://img.shields.io/badge/identity-RFC%208693%20%C2%B7%20ID--JAG%20%C2%B7%20UMA%202.0-8cc2d4)](docs/IDENTITY-FLOWS.md)
 [![Editions](https://img.shields.io/badge/editions-OSS%20%7C%20Solo%20Enterprise-8cc2d4)](docs/ENTERPRISE.md)
 [![Companion u4a.ai](https://img.shields.io/badge/companion-u4a.ai-bcdb2c)](https://u4a.ai)
+[![Solo.io](https://img.shields.io/badge/Solo.io-AI%20platform-7b33ea)](https://www.solo.io)
+[![Docs](https://img.shields.io/badge/docs-docs.solo.io-7b33ea)](https://docs.solo.io)
 
-A local, production-shaped lab for the Solo.io AI platform on kind: Istio
+A local, production-shaped lab for the [Solo.io](https://www.solo.io) AI platform on kind: Istio
 ambient, kgateway, agentgateway, kagent + kmcp, Agent Substrate,
 agentregistry and Keycloak, plus two lab apps: the **Observatory** (a live
 control-plane UI) and an **identity continuity** controller (IdP failover).
@@ -21,6 +23,19 @@ The lab models four parties on a shared platform (an advisory firm, its SaaS
 vendor, a client and her brokerage), each with its own namespaces, SPIFFE
 identities, IdP and hostnames. They meet only at the edge. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Products
+
+| Product | In this lab | Product page | Docs |
+| --- | --- | --- | --- |
+| kgateway | the edge: TLS, one listener per party, SSO for every UI | [solo.io](https://www.solo.io/products/kgateway) | [docs.solo.io/kgateway](https://docs.solo.io/kgateway/) |
+| agentgateway | the firm's AI gateway (models, Cross App Access), its MCP waypoint, Meridian's gateway | [solo.io](https://www.solo.io/products/agentgateway) | [docs.solo.io/agentgateway](https://docs.solo.io/agentgateway/) |
+| kagent + kmcp | agents, their controller and UI; MCP servers as Kubernetes resources | [solo.io](https://www.solo.io/products/kagent) | [docs.solo.io/kagent](https://docs.solo.io/kagent/) |
+| Agent Substrate | every agent runs in a snapshot-backed sandbox on a worker pool | [solo.io](https://www.solo.io/products/kagent) | [docs.solo.io/kagent](https://docs.solo.io/kagent/) |
+| agentregistry | the firm's catalog of agents, MCP servers and skills | [solo.io](https://www.solo.io/products/agentregistry) | [docs.solo.io/agentregistry](https://docs.solo.io/agentregistry/) |
+| Istio ambient | mTLS and a SPIFFE identity for every workload, waypoints, default-deny per party | [solo.io](https://www.solo.io/products/istio) | [docs.solo.io/istio](https://docs.solo.io/istio/) |
+
+Enterprise editions, trial licences and support: [solo.io/get-started](https://www.solo.io/get-started).
 
 ## Requirements
 
@@ -67,8 +82,8 @@ workers in zones a, b and c). The full lab uses about 17 GB of memory.
 | https://kagent.sterling.lab | kagent, where Bob's agents run | `bob` / `bob-demo` (or Bob's upstream IdP account) |
 | https://registry.sterling.lab | agentregistry | S&V sign-in |
 | https://portal.alice.lab | Alice's portal (her grants and terms) | `alice` / `alice-demo` |
-| https://grafana.ops.lab | Grafana | `admin` / `solo-lab` |
-| https://kiali.ops.lab | Kiali mesh graph | none |
+| https://grafana.ops.lab | Grafana | `ops` / `ops-demo` |
+| https://kiali.ops.lab | Kiali mesh graph (view-only) | `ops` / `ops-demo` |
 | https://idp.sterling.lab | S&V Keycloak | admin password in `.lab/secrets.env` |
 
 Generated secrets (Keycloak admin passwords, client secrets) are in
@@ -171,7 +186,7 @@ Layers:
 | `60-kagent` | kagent + kmcp (patched), ops agents on Substrate, edge SSO |
 | `70-agentregistry` | agentregistry behind S&V SSO |
 | `80-mesh-policy` | S&V's mesh baseline |
-| `90-observatory` | Observatory, its Keycloak (realm `ops`), gateway access logs |
+| `90-observatory` | Observatory, its Keycloak (realm `ops`), Grafana and Kiali on the edge behind it, gateway access logs |
 | `95-demos` | every story: `demos/bob`, then `demos/bob-to-alice` |
 
 ## Docs
@@ -179,6 +194,7 @@ Layers:
 | Doc | Covers |
 | --- | --- |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | parties, workloads and identities, enforcement layers, DNS and TLS, patches |
+| [COMMANDS.md](docs/COMMANDS.md) | terminal commands for every part of the running lab: cluster, mesh, gateways, identity, agents, observability |
 | [IDENTITY-FLOWS.md](docs/IDENTITY-FLOWS.md) | delegation (RFC 8693), Cross App Access (ID-JAG), UMA for agents: every hop, policy and check |
 | [OBSERVATORY.md](docs/OBSERVATORY.md) | using the Observatory, how it derives the map, access model, local development |
 | [IDENTITY-CONTINUITY.md](docs/IDENTITY-CONTINUITY.md) | the IdentityContinuity API, the controller, Auth0 setup, the kill switch |

@@ -7,3 +7,7 @@ need_cluster
 step "Sterling & Vance mesh baseline"
 apply_tmpl "$D/sterling-vance.yaml"
 ok "STRICT: sv-identity sv-agents sv-egress kagent agentgateway-system; identity-scoped ALLOWs on Keycloak, kagent, agents, egress"
+
+step "Sterling & Vance egress: out only through the firm's gateways"
+deny_internet sv-identity kagent sv-agents sv-mcp agentregistry
+ok "no direct internet from sv-identity kagent sv-agents sv-mcp agentregistry (ai-gateway and sv-egress are the ways out)"

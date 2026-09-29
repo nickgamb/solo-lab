@@ -1,4 +1,4 @@
-# One OpenAI-compatible surface for every caller:
+# One OpenAI-compatible surface for the firm's agents (llm-callers, below):
 #   http://ai-gateway.agentgateway-system/v1/chat/completions
 # The backend behind it is swapped by `make llm` without touching kagent or
 # any agent. The model name callers send is overridden by the backend.
@@ -17,3 +17,22 @@ spec:
     - group: ${AGW_BACKEND_GROUP}
       kind: ${AGW_BACKEND_KIND}
       name: llm
+---
+# Who may spend the firm's model credential: the agents' worker pools, by
+# ServiceAccount (an actor's calls leave as its pool). A new agent pool adds
+# its ServiceAccount here.
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata:
+  name: llm-callers
+  namespace: agentgateway-system
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: llm}]
+  traffic:
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+        - >-
+          (source.identity.namespace == "sv-agents" && source.identity.serviceAccount in ["bob-assistant", "advisor-desk"])
+          || (source.identity.namespace == "kagent" && source.identity.serviceAccount == "kagent-ops")

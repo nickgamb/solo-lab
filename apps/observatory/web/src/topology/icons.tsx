@@ -40,14 +40,14 @@ export const kindLabel: Record<string, string> = {
 }
 
 // The Solo products the map can highlight, in display order.
-export const PRODUCTS: { id: string; label: string; blurb: string }[] = [
-  { id: 'kgateway', label: 'kgateway', blurb: 'the edge: TLS, per-party listeners, SSO' },
-  { id: 'agentgateway', label: 'agentgateway', blurb: 'AI and MCP gateway, waypoint, egress' },
-  { id: 'kagent', label: 'kagent', blurb: 'agents, their controller and UI' },
-  { id: 'kmcp', label: 'kmcp', blurb: 'MCP servers as Kubernetes resources' },
-  { id: 'agentregistry', label: 'agentregistry', blurb: 'the catalog of agents, tools and skills' },
-  { id: 'substrate', label: 'Agent Substrate', blurb: 'snapshot-backed sandboxes for agents' },
-  { id: 'istio', label: 'Istio ambient', blurb: 'mTLS, SPIFFE identity, waypoints' },
+export const PRODUCTS: { id: string; label: string; blurb: string; docs: string }[] = [
+  { id: 'kgateway', label: 'kgateway', blurb: 'the edge: TLS, per-party listeners, SSO', docs: 'https://docs.solo.io/kgateway/' },
+  { id: 'agentgateway', label: 'agentgateway', blurb: 'AI and MCP gateway, waypoint, egress', docs: 'https://docs.solo.io/agentgateway/' },
+  { id: 'kagent', label: 'kagent', blurb: 'agents, their controller and UI', docs: 'https://docs.solo.io/kagent/' },
+  { id: 'kmcp', label: 'kmcp', blurb: 'MCP servers as Kubernetes resources', docs: 'https://docs.solo.io/kagent/' },
+  { id: 'agentregistry', label: 'agentregistry', blurb: 'the catalog of agents, tools and skills', docs: 'https://docs.solo.io/agentregistry/' },
+  { id: 'substrate', label: 'Agent Substrate', blurb: 'snapshot-backed sandboxes for agents', docs: 'https://docs.solo.io/kagent/' },
+  { id: 'istio', label: 'Istio ambient', blurb: 'mTLS, SPIFFE identity, waypoints', docs: 'https://docs.solo.io/istio/' },
 ]
 
 const productGlyph: Record<string, string> = {

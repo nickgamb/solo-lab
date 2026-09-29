@@ -126,6 +126,37 @@ lab_image() {
     || { step "Building $1 ($2)"; bash "$LAB_ROOT/$2"; }
 }
 
+# deny_internet <ns>...: the namespace's pods reach the cluster and nothing
+# else. Open: pods, Services, the addresses Istio gives external ServiceEntries
+# (so a call to an upstream IdP still leaves through S&V's egress gateway), and
+# the API server. Everything else, the internet included, is dropped. The ways
+# out of the lab are the gateways built for it (ai-gateway, the egress waypoint),
+# whose namespaces are not passed here.
+deny_internet() {
+  local pods svcs api
+  pods=$(K -n kube-system get cm kubeadm-config -o jsonpath='{.data.ClusterConfiguration}' | awk '/podSubnet/{print $2}')
+  svcs=$(K -n kube-system get cm kubeadm-config -o jsonpath='{.data.ClusterConfiguration}' | awk '/serviceSubnet/{print $2}')
+  api=$(K get endpointslice -n default -l kubernetes.io/service-name=kubernetes -o jsonpath='{.items[0].endpoints[0].addresses[0]}')
+  local ns
+  for ns in "$@"; do
+    K apply -f - >/dev/null <<YAML
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: no-internet, namespace: $ns}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+  - to:
+    - ipBlock: {cidr: ${pods:-10.244.0.0/16}}
+    - ipBlock: {cidr: ${svcs:-10.96.0.0/16}}
+    - ipBlock: {cidr: 240.240.0.0/16}      # Istio's ServiceEntry addresses (egress waypoint)
+  - to: [{ipBlock: {cidr: $api/32}}]
+    ports: [{port: 6443, protocol: TCP}]
+YAML
+  done
+}
+
 need_cluster() { K get --raw /readyz >/dev/null 2>&1 || die "cluster $KCTX is not reachable — run: make cluster"; }
 
 # lab_secret <NAME>: a random secret generated once and kept in .lab/secrets.env

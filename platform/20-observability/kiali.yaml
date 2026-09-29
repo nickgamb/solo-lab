@@ -1,6 +1,11 @@
+# Kiali trusts whoever reaches it (anonymous): the sign-in is the edge's
+# (platform/90-observatory/platform-uis.yaml), and a NetworkPolicy there admits
+# only the edge. View-only: it shows the mesh's policy and cannot change it.
 auth:
-  strategy: anonymous          # switched to openid by 45-identity
+  strategy: anonymous
 deployment:
+  view_only_mode: true
+  network_policy: {enabled: false}   # replaced by kiali-callers (edge and Prometheus only)
   cluster_wide_access: true
   resources:
     requests: {cpu: 50m, memory: 128Mi}

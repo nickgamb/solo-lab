@@ -74,7 +74,7 @@ func main() {
 		json.NewEncoder(os.Stdout).Encode(g)
 		return
 	}
-	cont := &Continuity{k: k, res: &Resources{k: k}, traffic: traffic}
+	cont := &Continuity{k: k, res: &Resources{k: k, admin: env("ADMIN_GROUP", "observatory-admins")}, traffic: traffic}
 	sub := &Substrate{url: env("KAGENT_URL", ""), hc: &http.Client{Timeout: 5 * time.Second}, hub: hub, traffic: traffic,
 		index: func() *Index { return index.Load() }}
 
@@ -137,7 +137,7 @@ func main() {
 	go sub.Run(ctx)
 
 	auth := NewAuth(ctx, env("OIDC_ISSUER", ""), env("OIDC_JWKS_URL", ""), env("OIDC_AUDIENCE", "observatory"), env("ADMIN_GROUP", "observatory-admins"))
-	res := &Resources{k: k}
+	res := &Resources{k: k, admin: env("ADMIN_GROUP", "observatory-admins")}
 
 	api := http.NewServeMux()
 	api.HandleFunc("GET /api/me", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, userFrom(r.Context())) })

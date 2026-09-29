@@ -62,6 +62,14 @@ spec: {action: DENY, rules: [{}], $target}
 YAML
 }
 heal() { K delete authorizationpolicy "continuity-partition-$1" -n "$2" --ignore-not-found >/dev/null; }
+# The controller reads Secrets by name only (Role continuity-controller-secrets):
+# a new tier's Secret is granted, the way the Observatory's rule builder does it.
+secret_grant() {  # secret_grant add|remove <name>
+  local r; r=$(K get role continuity-controller-secrets -n "$NS" -o json)
+  echo "$r" | jq --arg n "$2" --arg op "$1" '.rules |= map(if (.resources | index("secrets")) then
+      .resourceNames = (if $op == "add" then ((.resourceNames // []) + [$n] | unique) else ((.resourceNames // []) - [$n]) end) else . end)' \
+    | K replace -f - >/dev/null
+}
 
 ORIG=$(idc | jq -c '{tiers: .spec.tiers, failback: .spec.failback}')
 BASE=$(active)
@@ -69,6 +77,7 @@ cleanup() {
   heal "$T" "$TNS"; heal auth0 sv-egress
   K patch idc "$IC" -n "$NS" --type merge -p "{\"spec\": $ORIG}" >/dev/null 2>&1
   K delete secret continuity-verify -n "$NS" --ignore-not-found >/dev/null
+  secret_grant remove continuity-verify 2>/dev/null
   rm -f "$BODY" "$JAR"; kill "$(jobs -p)" 2>/dev/null
 }
 trap cleanup EXIT
@@ -81,7 +90,7 @@ expect 'continuity-controller-' "leader holds Lease continuity.lab.solo.io" \
 expect '^True$' "IdentityContinuity $IC Ready" \
   "$(K get idc "$IC" -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')"
 if [ "$(tier auth0 configured)" = true ]; then
-  expect '^(auth0|keycloak)$' "auth0 configured: active is auth0 while healthy" "$(active) ($(tier auth0 reason))"
+  expect '^auth0 \(Healthy\)$' "auth0 configured and healthy: it is active" "$(active) ($(tier auth0 reason))"
 else
   expect '^keycloak ' "auth0 NotConfigured (no upstream-auth0 secret): active is local" "$(active) (auth0: $(tier auth0 reason))"
 fi
@@ -91,12 +100,17 @@ tok=$(curl -s "$KC/realms/sterling-vance/protocol/openid-connect/token" -d grant
 expect "^$BOB_ID\$" "password grant unchanged: Bob's S&V user id" "$(echo "$tok" | jq -rR 'split(".")[1] | gsub("-";"+") | gsub("_";"/") | @base64d | fromjson | .sub' 2>/dev/null)"
 unset tok
 
+# The loop runs on [scratch tier, local accounts]: upstream tiers already in the
+# chain are drained (out of rotation, their Keycloak IdPs and user links kept),
+# so a partition of the scratch tier always falls back to S&V's own form.
 step "A new tier at runtime (spec edit + its Secret, no restart)"
 K create secret generic continuity-verify -n "$NS" --from-literal=client-secret="$(openssl rand -hex 16)" \
   --dry-run=client -o yaml | K apply -f - >/dev/null
+secret_grant add continuity-verify
 K patch idc "$IC" -n "$NS" --type merge -p "$(echo "$ORIG" | jq -c --arg t "$T" --arg iss "https://idp.$LEDGERLINE_DOMAIN/realms/ledgerline" \
   '{spec: {failback: "Automatic", tiers: ([{name: $t, displayName: "verify (Ledgerline IdP)", type: "oidc",
-    oidc: {issuer: $iss, clientID: "continuity-verify", clientSecretRef: {name: "continuity-verify"}}}] + .tiers)}}')" >/dev/null
+    oidc: {issuer: $iss, clientID: "continuity-verify", clientSecretRef: {name: "continuity-verify"}}}]
+    + (.tiers | map(if .type == "oidc" then .drain = true else . end)))}}')" >/dev/null
 expect '^[0-9]+s$' "$T becomes active" "$(within 20 is_active "$T")"
 expect '^verify-ledgerline$' "Keycloak redirector -> $T" "$(redirector)"
 expect "^https://idp\.$LEDGERLINE_DOMAIN/realms/ledgerline/.*client_id=continuity-verify.*broker%2F$T%2Fendpoint" \
@@ -141,7 +155,7 @@ if K get gateway egress-waypoint -n sv-egress >/dev/null 2>&1; then
     "$(K get serviceentry continuity-auth0 -n sv-egress -o jsonpath='{.metadata.labels.istio\.io/use-waypoint}' 2>&1)"
   partition auth0 sv-egress continuity-auth0
   expect '^[0-9]+s$' "partition on the ServiceEntry: auth0 probes fail" \
-    "$(within 25 sh -c "kubectl --context $KCTX get idc $IC -n $NS -o json | jq -e '.status.tiers[]|select(.name==\"auth0\")|(.partitioned and (.message|test(\"Unreachable|HTTP 5\")))'")"
+    "$(within 25 sh -c "kubectl --context $KCTX get idc $IC -n $NS -o json | jq -e '.status.tiers[]|select(.name==\"auth0\")|(.partitioned and (.reason|test(\"Unreachable|ServerError\")))'")"
   heal auth0 sv-egress
   expect '^[0-9]+s$' "healed: auth0 probes pass again" \
     "$(within 35 sh -c "kubectl --context $KCTX get idc $IC -n $NS -o json | jq -e '.status.tiers[]|select(.name==\"auth0\")|(.message|test(\"discovery and jwks ok\"))'")"
