@@ -45,6 +45,9 @@ const (
 	cfgInstance   = "continuity.lab.solo.io/instance" // IdP config key: who owns it
 	cfgHash       = "continuity.lab.solo.io/hash"
 	maxHistory    = 20
+	// cleanupGrace: how long deletion waits for Keycloak before giving up on
+	// cleaning it (so a gone broker never wedges namespace deletion).
+	cleanupGrace = 5 * time.Minute
 )
 
 var (
@@ -85,15 +88,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	kc, brokerErr := r.broker(ctx, &ic)
 	if !ic.DeletionTimestamp.IsZero() {
-		if brokerErr != nil {
-			return ctrl.Result{}, brokerErr
-		}
-		if err := r.cleanup(ctx, &ic, kc); err != nil {
-			return ctrl.Result{}, err
-		}
-		controllerutil.RemoveFinalizer(&ic, finalizer)
-		r.forget(req.NamespacedName)
-		return ctrl.Result{}, r.Update(ctx, &ic)
+		return r.finalize(ctx, &ic, kc, brokerErr)
 	}
 	if controllerutil.AddFinalizer(&ic, finalizer) {
 		if err := r.Update(ctx, &ic); err != nil {
@@ -107,8 +102,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	egressErr := r.reconcileEgress(ctx, &ic, ic.Spec.Egress, ic.Spec.Tiers)
-	r.probeAll(ctx, &ic, creds, kc != nil)
+	egressErr := r.reconcileEgress(ctx, &ic, ic.Spec.Tiers)
+	broker := r.probeAll(ctx, &ic, creds, kc != nil, interval)
 	r.markPartitions(ctx, &ic)
 
 	byName := map[string]*v1.TierStatus{}
@@ -117,11 +112,25 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	active, why := tiers.Select(ic.Spec, byName, ic.Status.Active)
 
+	// Status says where logins go only once Keycloak does: with the broker
+	// unreachable (a restart, say) nothing can change, so hold; a Manual
+	// failback isn't undone just because the local tier's health is the
+	// broker's.
 	kcErr := brokerErr
-	if kc != nil {
-		kcErr = r.reconcileKeycloak(ctx, &ic, kc, creds, byName, active)
+	switch {
+	case kc == nil:
+	case broker.Kind != tiers.Healthy:
+		kcErr = fmt.Errorf("broker unreachable: %s", broker.Message)
+	default:
+		effective, applied, err := r.reconcileKeycloak(ctx, &ic, kc, creds, byName, active)
+		kcErr = err
+		if applied {
+			if effective != active {
+				why = fmt.Sprintf("%s; %q could not be set up in Keycloak", why, active)
+			}
+			r.recordActive(&ic, effective, why)
+		}
 	}
-	r.recordActive(&ic, active, why)
 	r.setConditions(&ic, byName, active, kcErr, egressErr)
 	ic.Status.ObservedGeneration = ic.Generation
 	if err := r.Status().Patch(ctx, &ic, client.MergeFrom(orig)); err != nil {
@@ -205,7 +214,9 @@ func (r *Reconciler) tierCredentials(ctx context.Context, ic *v1.IdentityContinu
 }
 
 // probeAll probes every tier concurrently and folds the results into status.
-func (r *Reconciler) probeAll(ctx context.Context, ic *v1.IdentityContinuity, creds map[string]credential, brokerCreds bool) {
+// A probe counts toward the thresholds at most once per interval (tiers.Due),
+// however often reconciles run. It returns the broker's own probe.
+func (r *Reconciler) probeAll(ctx context.Context, ic *v1.IdentityContinuity, creds map[string]credential, brokerCreds bool, interval time.Duration) tiers.Result {
 	timeout := time.Duration(max(ic.Spec.Health.TimeoutSeconds, 1)) * time.Second
 	prev := map[string]*v1.TierStatus{}
 	for i := range ic.Status.Tiers {
@@ -249,10 +260,17 @@ func (r *Reconciler) probeAll(ctx context.Context, ic *v1.IdentityContinuity, cr
 			p = nil
 		}
 		failed := res.Kind == tiers.NotConfigured || tiers.Counts(res, t.FailoverWhen)
-		healthy, fails, succ := tiers.Advance(p, failed, ic.Spec.Health)
+		last := &now
+		var healthy bool
+		var fails, succ int32
+		if tiers.Due(p, now.Time, interval) {
+			healthy, fails, succ = tiers.Advance(p, failed, ic.Spec.Health)
+		} else {
+			healthy, fails, succ, last = p.Healthy, p.ConsecutiveFailures, p.ConsecutiveSuccesses, p.LastProbe
+		}
 		st := v1.TierStatus{
 			Name: t.Name, Type: t.Type, Configured: true, Healthy: healthy,
-			LatencyMs: res.Latency.Milliseconds(), LastProbe: &now,
+			LatencyMs: res.Latency.Milliseconds(), LastProbe: last,
 			Reason: res.Kind, Message: res.Message, ConsecutiveFailures: fails, ConsecutiveSuccesses: succ,
 		}
 		if res.Kind == tiers.NotConfigured {
@@ -281,6 +299,7 @@ func (r *Reconciler) probeAll(ctx context.Context, ic *v1.IdentityContinuity, cr
 		out = append(out, st)
 	}
 	ic.Status.Tiers = out
+	return broker
 }
 
 func discoveryKey(ic *v1.IdentityContinuity, t v1.Tier) string {
@@ -346,7 +365,7 @@ func (r *Reconciler) recordActive(ic *v1.IdentityContinuity, active, why string)
 	reason := tiers.Direction(ic.Spec, from, active)
 	msg := fmt.Sprintf("logins now go to %q (was %q): %s", active, from, why)
 	if active == "" {
-		msg = "no tier is eligible and there is no local tier"
+		msg = "no tier can take logins; the realm's own login form is shown"
 	}
 	ic.Status.Active, ic.Status.ActiveSince = active, &now
 	ic.Status.Transitions = append(ic.Status.Transitions, v1.Transition{Time: now, From: from, To: active, Reason: reason})
@@ -376,7 +395,16 @@ func (r *Reconciler) setConditions(ic *v1.IdentityContinuity, st map[string]*v1.
 		}
 		break
 	}
-	for _, c := range []metav1.Condition{ready, degraded} {
+	rules := metav1.Condition{Type: "RulesEffective", Status: metav1.ConditionTrue, Reason: "Effective", Message: "every failover rule can fire"}
+	timeoutMs := max(ic.Spec.Health.TimeoutSeconds, 1) * 1000
+	for _, t := range ic.Spec.Tiers {
+		if l := t.FailoverWhen.LatencyAboveMs; l != nil && *l >= timeoutMs {
+			rules.Status, rules.Reason = metav1.ConditionFalse, "LatencyAboveTimeout"
+			rules.Message = fmt.Sprintf("tier %s: latencyAboveMs %d is not below the %dms probe timeout, so it never fires (a slower answer is Unreachable)", t.Name, *l, timeoutMs)
+			break
+		}
+	}
+	for _, c := range []metav1.Condition{ready, degraded, rules} {
 		c.ObservedGeneration = ic.Generation
 		meta.SetStatusCondition(&ic.Status.Conditions, c)
 	}
@@ -384,11 +412,12 @@ func (r *Reconciler) setConditions(ic *v1.IdentityContinuity, st map[string]*v1.
 
 // reconcileKeycloak: one OIDC IdP per configured oidc tier (hidden on the
 // login page unless eligible), the redirector on the active tier, and no
-// IdPs this instance owns beyond those.
-func (r *Reconciler) reconcileKeycloak(ctx context.Context, ic *v1.IdentityContinuity, kc *keycloak.Client, creds map[string]credential, st map[string]*v1.TierStatus, active string) error {
+// IdPs this instance owns beyond those. It returns the tier logins actually
+// go to now, and whether the redirector was set (so status can follow it).
+func (r *Reconciler) reconcileKeycloak(ctx context.Context, ic *v1.IdentityContinuity, kc *keycloak.Client, creds map[string]credential, st map[string]*v1.TierStatus, active string) (string, bool, error) {
 	existing, err := kc.IdPs(ctx)
 	if err != nil {
-		return err
+		return "", false, err
 	}
 	have := map[string]keycloak.IdP{}
 	for _, p := range existing {
@@ -402,12 +431,25 @@ func (r *Reconciler) reconcileKeycloak(ctx context.Context, ic *v1.IdentityConti
 	redirect := ""
 	for _, t := range ic.Spec.Tiers {
 		c, ok := creds[t.Name]
-		if t.Type != "oidc" || !ok || c.missing != "" {
+		if t.Type != "oidc" || !ok {
 			continue
 		}
 		cur, exists := have[t.Name]
 		if exists && !owned(cur) {
 			errs = append(errs, fmt.Errorf("identity provider %q exists and is not managed by %s", t.Name, owner))
+			continue
+		}
+		if c.missing != "" {
+			// Credentials gone, perhaps only for a moment: keep the IdP (and
+			// every user's link to it), just stop offering it. Only removing
+			// the tier from the spec deletes it.
+			if exists {
+				keep[t.Name] = true
+				if cur["hideOnLogin"] != true {
+					cur["hideOnLogin"] = true
+					errs = append(errs, kc.UpdateIdP(ctx, t.Name, cur))
+				}
+			}
 			continue
 		}
 		hide := !tiers.Eligible(t, st[t.Name])
@@ -446,8 +488,9 @@ func (r *Reconciler) reconcileKeycloak(ctx context.Context, ic *v1.IdentityConti
 		}
 	}
 	flow := ic.Spec.Broker.Keycloak.BrowserFlow
-	if changed, err := kc.SetRedirector(ctx, flow, redirect); err != nil {
-		errs = append(errs, err)
+	changed, rerr := kc.SetRedirector(ctx, flow, redirect)
+	if rerr != nil {
+		errs = append(errs, rerr)
 	} else if changed {
 		log.FromContext(ctx).Info("redirector updated", "flow", flow, "defaultProvider", redirect)
 	}
@@ -456,7 +499,22 @@ func (r *Reconciler) reconcileKeycloak(ctx context.Context, ic *v1.IdentityConti
 			errs = append(errs, kc.DeleteIdP(ctx, alias))
 		}
 	}
-	return errors.Join(errs...)
+	effective := redirect
+	if effective == "" {
+		// no upstream redirect: the realm's own form, i.e. the local tier
+		effective, _ = tiers.Select(v1.IdentityContinuitySpec{Tiers: localTiers(ic.Spec.Tiers)}, nil, "")
+	}
+	return effective, rerr == nil, errors.Join(errs...)
+}
+
+func localTiers(ts []v1.Tier) []v1.Tier {
+	var out []v1.Tier
+	for _, t := range ts {
+		if t.Type == "local" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func desiredIdP(ic *v1.IdentityContinuity, t v1.Tier, c credential, d *probe.Discovery, owner string, hide, enabled bool) keycloak.IdP {
@@ -506,23 +564,43 @@ func desiredIdP(ic *v1.IdentityContinuity, t v1.Tier, c credential, d *probe.Dis
 	return p
 }
 
+// sameIdP compares what the controller manages on an IdP with what Keycloak
+// has now, so a change made in Keycloak by hand is put back. The client
+// secret comes back masked; the hash (which covers it) stands in for it.
 func sameIdP(cur, want keycloak.IdP) bool {
-	for _, k := range []string{"displayName", "enabled", "hideOnLogin", "firstBrokerLoginFlowAlias"} {
-		if cur[k] != want[k] {
+	for _, k := range []string{"displayName", "providerId", "enabled", "hideOnLogin", "trustEmail", "storeToken", "firstBrokerLoginFlowAlias"} {
+		if fmt.Sprint(cur[k]) != fmt.Sprint(want[k]) {
 			return false
 		}
 	}
-	return cur.Config()[cfgHash] == want.Config()[cfgHash]
+	cc := cur.Config()
+	for k, v := range want.Config() {
+		if k != "clientSecret" && fmt.Sprint(cc[k]) != fmt.Sprint(v) {
+			return false
+		}
+	}
+	return true
 }
 
 // reconcileEgress keeps one ServiceEntry per external oidc tier, bound to the
 // egress waypoint: that is where S&V's back-channel to the upstream leaves the
-// mesh, so it is where policy (and a partition) applies.
-func (r *Reconciler) reconcileEgress(ctx context.Context, ic *v1.IdentityContinuity, e *v1.Egress, ts []v1.Tier) error {
-	if e == nil {
-		return nil
+// mesh, so it is where policy (and a partition) applies. It never takes over
+// another instance's ServiceEntry, and when spec.egress goes away or moves it
+// removes what it left in the old namespace (status.egressNamespace).
+func (r *Reconciler) reconcileEgress(ctx context.Context, ic *v1.IdentityContinuity, ts []v1.Tier) error {
+	e := ic.Spec.Egress
+	var errs []error
+	if old := ic.Status.EgressNamespace; old != "" && (e == nil || e.Namespace != old) {
+		if err := r.pruneServiceEntries(ctx, ic, old, nil); err != nil {
+			errs = append(errs, err)
+		} else {
+			ic.Status.EgressNamespace = ""
+		}
 	}
-	instance := ic.Namespace + "." + ic.Name
+	if e == nil {
+		return errors.Join(errs...)
+	}
+	instance := instanceOf(ic)
 	want := map[string]*unstructured.Unstructured{}
 	for _, t := range ts {
 		if t.Type != "oidc" || t.OIDC == nil {
@@ -533,17 +611,33 @@ func (r *Reconciler) reconcileEgress(ctx context.Context, ic *v1.IdentityContinu
 			want[serviceEntryName(t.Name)] = serviceEntry(e, ic.Namespace, instance, t.Name, hosts)
 		}
 	}
-	var errs []error
-	for _, se := range want {
+	for name, se := range want {
+		var cur unstructured.Unstructured
+		cur.SetGroupVersionKind(serviceEntryGVK)
+		err := r.Reader.Get(ctx, types.NamespacedName{Namespace: e.Namespace, Name: name}, &cur)
+		if err == nil && cur.GetLabels()[LabelInstance] != instance {
+			errs = append(errs, fmt.Errorf("ServiceEntry %s/%s belongs to %q, not this instance", e.Namespace, name, cur.GetLabels()[LabelInstance]))
+			continue
+		}
 		errs = append(errs, r.Apply(ctx, client.ApplyConfigurationFromUnstructured(se), client.FieldOwner("continuity-controller"), client.ForceOwnership))
 	}
+	errs = append(errs, r.pruneServiceEntries(ctx, ic, e.Namespace, want))
+	ic.Status.EgressNamespace = e.Namespace
+	return errors.Join(errs...)
+}
+
+func instanceOf(ic *v1.IdentityContinuity) string { return ic.Namespace + "." + ic.Name }
+
+// pruneServiceEntries deletes this instance's ServiceEntries in ns that aren't in keep.
+func (r *Reconciler) pruneServiceEntries(ctx context.Context, ic *v1.IdentityContinuity, ns string, keep map[string]*unstructured.Unstructured) error {
 	var list unstructured.UnstructuredList
 	list.SetGroupVersionKind(serviceEntryGVK.GroupVersion().WithKind("ServiceEntryList"))
-	if err := r.Reader.List(ctx, &list, client.InNamespace(e.Namespace), client.MatchingLabels{LabelInstance: instance}); err != nil {
-		return errors.Join(append(errs, err)...)
+	if err := r.Reader.List(ctx, &list, client.InNamespace(ns), client.MatchingLabels{LabelInstance: instanceOf(ic)}); err != nil {
+		return err
 	}
+	var errs []error
 	for i := range list.Items {
-		if want[list.Items[i].GetName()] == nil {
+		if keep[list.Items[i].GetName()] == nil {
 			errs = append(errs, client.IgnoreNotFound(r.Delete(ctx, &list.Items[i])))
 		}
 	}
@@ -606,6 +700,32 @@ func toAny(s []string) []any {
 	return out
 }
 
+// finalize cleans up on deletion. If Keycloak can't be reached (or its
+// credentials are gone) for longer than cleanupGrace, it gives up on
+// Keycloak, says so in an event, and lets the object go.
+func (r *Reconciler) finalize(ctx context.Context, ic *v1.IdentityContinuity, kc *keycloak.Client, brokerErr error) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(ic, finalizer) {
+		return ctrl.Result{}, nil
+	}
+	err := brokerErr
+	if err == nil {
+		err = r.cleanup(ctx, ic, kc)
+	} else {
+		err = errors.Join(err, r.cleanupEgress(ctx, ic))
+	}
+	if err != nil {
+		if time.Since(ic.DeletionTimestamp.Time) < cleanupGrace {
+			log.FromContext(ctx).Info("cleanup failed, retrying", "err", err.Error())
+			return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
+		}
+		r.Recorder.Eventf(ic, nil, corev1.EventTypeWarning, "CleanupAbandoned", "Delete",
+			"gave up cleaning Keycloak after %s; its identity providers and redirector may remain: %v", cleanupGrace, err)
+	}
+	controllerutil.RemoveFinalizer(ic, finalizer)
+	r.forget(client.ObjectKeyFromObject(ic))
+	return ctrl.Result{}, r.Update(ctx, ic)
+}
+
 // cleanup puts the realm back to plain local login and removes what this
 // instance created.
 func (r *Reconciler) cleanup(ctx context.Context, ic *v1.IdentityContinuity, kc *keycloak.Client) error {
@@ -624,5 +744,24 @@ func (r *Reconciler) cleanup(ctx context.Context, ic *v1.IdentityContinuity, kc 
 			}
 		}
 	}
-	return r.reconcileEgress(ctx, ic, ic.Spec.Egress, nil)
+	return r.cleanupEgress(ctx, ic)
+}
+
+func (r *Reconciler) cleanupEgress(ctx context.Context, ic *v1.IdentityContinuity) error {
+	var errs []error
+	seen := map[string]bool{}
+	for _, ns := range []string{ic.Status.EgressNamespace, egressNamespace(ic)} {
+		if ns != "" && !seen[ns] {
+			seen[ns] = true
+			errs = append(errs, r.pruneServiceEntries(ctx, ic, ns, nil))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func egressNamespace(ic *v1.IdentityContinuity) string {
+	if ic.Spec.Egress == nil {
+		return ""
+	}
+	return ic.Spec.Egress.Namespace
 }

@@ -61,6 +61,10 @@ func TestSelect(t *testing.T) {
 			map[string]*v1.TierStatus{"auth0": up(false), "keycloak": up(false), "ping": up(false)}, "ping", "keycloak", "NoEligibleTier"},
 		{"nothing eligible, no local tier", chain("Automatic", oidc("auth0")),
 			map[string]*v1.TierStatus{"auth0": up(false)}, "auth0", "", "NoEligibleTier"},
+		{"a disabled local tier is never the last resort", chain("Automatic", oidc("auth0"), v1.Tier{Name: "keycloak", Type: "local", Enabled: ptr(false)}),
+			map[string]*v1.TierStatus{"auth0": up(false), "keycloak": up(true)}, "auth0", "", "NoEligibleTier"},
+		{"a drained local tier is never the last resort", chain("Automatic", oidc("auth0"), v1.Tier{Name: "keycloak", Type: "local", Drain: true}, local("breakglass")),
+			map[string]*v1.TierStatus{"auth0": up(false), "keycloak": up(false), "breakglass": up(false)}, "auth0", "breakglass", "NoEligibleTier"},
 	}
 	for _, c := range cases {
 		got, why := Select(c.spec, c.status, c.current)
@@ -134,6 +138,28 @@ func TestDirection(t *testing.T) {
 	} {
 		if got := Direction(s, c[0], c[1]); got != c[2] {
 			t.Errorf("%s->%s: got %s want %s", c[0], c[1], got, c[2])
+		}
+	}
+}
+
+func TestDue(t *testing.T) {
+	now := time.Now()
+	at := func(ago time.Duration) *v1.TierStatus {
+		return &v1.TierStatus{LastProbe: &metav1.Time{Time: now.Add(-ago)}}
+	}
+	for _, c := range []struct {
+		name string
+		prev *v1.TierStatus
+		want bool
+	}{
+		{"never probed", nil, true},
+		{"no last probe", &v1.TierStatus{}, true},
+		{"a full interval ago", at(5 * time.Second), true},
+		{"just inside jitter", at(4600 * time.Millisecond), true},
+		{"a spec edit a second later", at(time.Second), false},
+	} {
+		if got := Due(c.prev, now, 5*time.Second); got != c.want {
+			t.Errorf("%s: Due = %v, want %v", c.name, got, c.want)
 		}
 	}
 }

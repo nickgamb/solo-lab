@@ -1,7 +1,8 @@
 # S&V's login chain: Auth0 while it is healthy, else the firm's own accounts.
 # Keycloak stays the only issuer relying parties trust either way. Installed
 # once; after that the spec belongs to its operators (the Observatory's rule
-# builder edits it), so re-running the layer does not reset it.
+# builder edits it), so re-running the layer only updates the auth0 tier's
+# issuer from AUTH0_ISSUER. With AUTH0_ISSUER unset the auth0 tier is left out.
 apiVersion: continuity.lab.solo.io/v1alpha1
 kind: IdentityContinuity
 metadata:
@@ -21,7 +22,7 @@ spec:
     oidc:
       issuer: ${AUTH0_ISSUER}
       clientSecretRef: {name: upstream-auth0}   # client-id + client-secret, from .env
-    failoverWhen: {unreachable: true, serverError: true, invalidDiscovery: true, latencyAboveMs: 2000}
+    failoverWhen: {unreachable: true, serverError: true, invalidDiscovery: true, latencyAboveMs: 1500}
   - name: keycloak
     displayName: Sterling & Vance (local)
     type: local
