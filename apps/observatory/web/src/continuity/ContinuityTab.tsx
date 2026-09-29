@@ -74,10 +74,15 @@ function Continuity({ lab, ic, items, pick, setPick }: {
     const rfEdges: Edge[] = []
     const COL = 330, ROW = 170
     const signInOK = !!active
+    // Nodes are rebuilt on every update. React Flow keeps a node's measured
+    // handle positions only when the node says it is measured; without that,
+    // each rebuild drops them and its wires vanish until something re-measures
+    // (which may never happen on an idle page). Every size here is fixed.
     const tile = (id: string, n: LabNode | undefined, col: number, row: number, extra: Partial<CardData> = {}) => {
       if (!n) return
       rfNodes.push({ id, type: 'tile', position: { x: col * COL, y: row * ROW }, data: { n, ...extra } as CardData,
-        width: LABEL_W, height: TILE + LABEL_H + 4, style: { width: LABEL_W, height: TILE + LABEL_H + 4 }, draggable: false })
+        width: LABEL_W, height: TILE + LABEL_H + 4, style: { width: LABEL_W, height: TILE + LABEL_H + 4 }, draggable: false,
+        measured: { width: LABEL_W, height: TILE + LABEL_H + 4 } })
     }
     const wire = (s: string, t: string, data: Partial<FlowData>) => rfEdges.push({ id: `${s}>${t}`, source: s, target: t, type: 'flow',
       sourceHandle: 'o0', targetHandle: 'i0', data: { kind: 'oidc', ...data } as FlowData,
