@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Mesh baselines for the platform-owned parties. Alice's and Meridian's are
 # installed with their story (demos/bob-to-alice), because they own them.
+# Layer 45 applies S&V's first, before any S&V workload; this re-applies it.
 . "$(dirname "$0")/../../scripts/lib.sh"
 D="$(cd "$(dirname "$0")" && pwd)"
 need_cluster

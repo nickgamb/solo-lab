@@ -7,20 +7,11 @@ D="$(cd "$(dirname "$0")" && pwd)"
 need_cluster
 
 step "Images (local registry)"
-# Tagged by a hash of the build context, so a source change is a new image and
-# a rollout, and an unchanged one is never rebuilt.
-build() {  # build <var> <repo> <dir>: exports <var>=<repo>:<content hash>
-  local tag img; tag=$(cd "$3" && find . -type f -not -name .DS_Store | LC_ALL=C sort | xargs cat | sha1 | cut -c1-12)
-  img="localhost:$LAB_REGISTRY_PORT/$2:$tag"
-  docker image inspect "$img" >/dev/null 2>&1 || docker build -q -t "$img" "$3" >/dev/null
-  docker push -q "$img" >/dev/null
-  export "$1=$img"; ok "$img"
-}
-build BOB_WORKSPACE_IMAGE sv/bob-workspace "$D/mcp/bob-workspace"
-build LEDGERLINE_RESEARCH_IMAGE ledgerline/research-mcp "$D/ledgerline/mcp"
-docker image inspect "localhost:$LAB_REGISTRY_PORT/lab/toolbox:1" >/dev/null 2>&1 \
-  || docker build -q -t "localhost:$LAB_REGISTRY_PORT/lab/toolbox:1" "$LAB_ROOT/tools/toolbox" >/dev/null
-docker push -q "localhost:$LAB_REGISTRY_PORT/lab/toolbox:1" >/dev/null
+# tagged by a hash of their source (lab_build)
+BOB_WORKSPACE_IMAGE=$(lab_build sv/bob-workspace "$D/mcp/bob-workspace"); export BOB_WORKSPACE_IMAGE
+LEDGERLINE_RESEARCH_IMAGE=$(lab_build ledgerline/research-mcp "$D/ledgerline/mcp"); export LEDGERLINE_RESEARCH_IMAGE
+ok "$BOB_WORKSPACE_IMAGE  $LEDGERLINE_RESEARCH_IMAGE"
+ok "$(lab_build lab/toolbox "$LAB_ROOT/tools/toolbox")   (probe pods for the checks)"
 
 step "Ledgerline Research (its own IdP, MCP server, Istio waypoint)"
 K create secret generic kc-secrets -n ledgerline-identity \
@@ -39,10 +30,10 @@ K create secret generic ledgerline-client -n agentgateway-system \
 for f in "$D"/manifests/*.yaml; do apply_tmpl "$f"; done
 # Bob's agent is a SandboxAgent; an Agent of the same name (older labs) must go first.
 K delete agent bob-assistant -n sv-agents --ignore-not-found --wait >/dev/null
-K apply -k "$D/agent" >/dev/null
+apply_kustomize "$D/agent"
 rollout sv-mcp deploy/bob-workspace deploy/mcp-waypoint
 wait_for "bob-assistant Ready" 60 5 K wait sandboxagent/bob-assistant -n sv-agents --for=condition=Ready --timeout=2s
-K apply -k "$D/desk" >/dev/null
+apply_kustomize "$D/desk"
 for a in meeting-prep market-brief compliance-check; do
   wait_for "$a Ready" 60 5 K wait "sandboxagent/$a" -n sv-agents --for=condition=Ready --timeout=2s
 done

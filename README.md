@@ -146,12 +146,14 @@ See [docs/OBSERVATORY.md](docs/OBSERVATORY.md).
 | `LLM_PROVIDER` | `ollama` (default), `anthropic` or `openai`; apply with `make llm` |
 | `OLLAMA_MODEL`, `OLLAMA_URL` | the local model and where the cluster reaches it |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL` | hosted models (held by agentgateway only) |
-| `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | S&V's upstream workforce IdP; apply with `make layer-47` |
+| `AUTH0_ISSUER`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | S&V's upstream workforce IdP (your Auth0 tenant); apply with `make layer-47` |
 | `EDITION`, `<PRODUCT>_EDITION`, `SOLO_LICENSE_KEY` | Solo Enterprise, all products or one at a time |
 
 `config/lab.env` holds the lab's shape: cluster name, node image, worker
-count, host ports, party domains, `AUTH0_ISSUER`, registry port. Any value
-can be overridden in `.env` or the shell.
+count, host ports, party domains, registry port; `config/oss.env` and
+`config/enterprise.env` pin every version. Any of them can be overridden in
+`.env`, and the command line wins over both (`make llm LLM_PROVIDER=anthropic`,
+`KAGENT_VERSION=... make layer-60`).
 
 ## Make targets
 
@@ -169,7 +171,7 @@ can be overridden in `.env` or the shell.
 | `status` | pods, the active sign-in tier, URLs |
 | `preflight` | tools, Docker resources, Ollama |
 | `down` | delete the cluster (keeps caches and the CA) |
-| `nuke` | delete the cluster and the image caches |
+| `nuke` | delete the cluster and every `lab-*` container and volume: registry caches, the local registry with every image built into it, lab DNS (`make up` recreates them) |
 
 ## Layout
 

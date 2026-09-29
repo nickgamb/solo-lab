@@ -7,23 +7,33 @@
 D="$(cd "$(dirname "$0")" && pwd)"
 need_cluster
 export U4A_TAG=${U4A_TAG:-u4a-ea9d86f}      # uma4agents commit the images are built from
-# the uma4agents checkout the images build from: U4A_SRC, else one beside this
-# repo, else a clone of the pinned commit under .lab/
+# The images are built from exactly that commit, whatever state a checkout is
+# in: U4A_SRC, else a checkout beside this repo, else a clone under .lab/,
+# exported at the commit into .lab/cache.
 U4A_SRC=${U4A_SRC:-$( [ -d "$LAB_ROOT/../uma4agents" ] && cd "$LAB_ROOT/../uma4agents" && pwd || echo "$LAB_STATE/uma4agents")}
-if [ ! -d "$U4A_SRC" ]; then
-  git clone -q https://github.com/nickgamb/uma4agents "$U4A_SRC"
-  git -C "$U4A_SRC" checkout -q "${U4A_TAG#u4a-}"
+[ -d "$U4A_SRC" ] || git clone -q https://github.com/nickgamb/uma4agents "$U4A_SRC"
+U4A_COMMIT=${U4A_TAG#u4a-}
+git -C "$U4A_SRC" cat-file -e "$U4A_COMMIT^{commit}" 2>/dev/null || git -C "$U4A_SRC" fetch -q origin \
+  || die "uma4agents commit $U4A_COMMIT not found in $U4A_SRC"
+U4A_CTX="$LAB_STATE/cache/uma4agents-$U4A_COMMIT"
+if [ ! -d "$U4A_CTX" ]; then
+  rm -rf "$U4A_CTX.tmp"; mkdir -p "$U4A_CTX.tmp"
+  git -C "$U4A_SRC" archive "$U4A_COMMIT" | tar -x -C "$U4A_CTX.tmp" && mv "$U4A_CTX.tmp" "$U4A_CTX"
 fi
 
 step "u4a images ($U4A_TAG)"
-img() { docker image inspect "localhost:$LAB_REGISTRY_PORT/u4a/$1:$U4A_TAG" >/dev/null 2>&1 \
-  || { docker build -q -t "localhost:$LAB_REGISTRY_PORT/u4a/$1:$U4A_TAG" -f "$2" "$3" >/dev/null; }
-  docker push -q "localhost:$LAB_REGISTRY_PORT/u4a/$1:$U4A_TAG" >/dev/null; }
-img uma-as          "$U4A_SRC/services/uma-as/Dockerfile"        "$U4A_SRC"
-img uma-pep         "$U4A_SRC/services/uma-pep/Dockerfile"       "$U4A_SRC"
-img alice-vault-mcp "$U4A_SRC/mcp/alice-vault/Dockerfile"        "$U4A_SRC"
-img portal          "$U4A_SRC/services/alice-portal/Dockerfile"  "$U4A_SRC/services/alice-portal"
-img agent-adapter   "$D/adapter/Dockerfile"                      "$U4A_SRC"
+img() {  # img <name> <dockerfile> <context> [tag]
+  local tag=${4:-$U4A_TAG}
+  in_registry "u4a/$1:$tag" || { docker build -q -t "localhost:$LAB_REGISTRY_PORT/u4a/$1:$tag" -f "$2" "$3" >/dev/null \
+    && docker push -q "localhost:$LAB_REGISTRY_PORT/u4a/$1:$tag" >/dev/null; } || die "building u4a/$1 failed"
+}
+# the adapter's Dockerfile is this repo's: its tag carries that too
+export U4A_ADAPTER_TAG="$U4A_TAG-$(sha1 < "$D/adapter/Dockerfile" | cut -c1-8)"
+img uma-as          "$U4A_CTX/services/uma-as/Dockerfile"        "$U4A_CTX"
+img uma-pep         "$U4A_CTX/services/uma-pep/Dockerfile"       "$U4A_CTX"
+img alice-vault-mcp "$U4A_CTX/mcp/alice-vault/Dockerfile"        "$U4A_CTX"
+img portal          "$U4A_CTX/services/alice-portal/Dockerfile"  "$U4A_CTX/services/alice-portal"
+img agent-adapter   "$D/adapter/Dockerfile"                      "$U4A_CTX" "$U4A_ADAPTER_TAG"
 ok "uma-as uma-pep alice-vault-mcp portal agent-adapter"
 
 step "CloudNativePG operator (Alice's database)"
@@ -44,7 +54,8 @@ ok "https://idp.$ALICE_DOMAIN/realms/alice"
 step "Signing keys and per-party secrets"
 ed25519() {  # ed25519 <name>: generated once, stable across rebuilds
   local f="$LAB_STATE/keys/$1.pem"; mkdir -p "$LAB_STATE/keys"
-  [ -s "$f" ] || { openssl genpkey -algorithm ed25519 -out "$f" 2>/dev/null; chmod 600 "$f"; }
+  [ -s "$f" ] || { openssl genpkey -algorithm ed25519 -out "$f" 2>/dev/null && chmod 600 "$f"; } \
+    || { rm -f "$f"; die "openssl can't make an ed25519 key ($(openssl version)); OpenSSL 3 is needed (make preflight)"; }
   echo "$f"; }
 K create secret generic uma-as-signing-key -n alice --from-file=uma-as-ed25519.pem="$(ed25519 uma-as)" \
   --dry-run=client -o yaml | K apply -f - >/dev/null
@@ -70,6 +81,6 @@ rollout sv-u4a deploy/u4a-adapter
 ok "https://portal.$ALICE_DOMAIN  https://as.$ALICE_DOMAIN  https://gateway.$MERIDIAN_DOMAIN"
 
 step "Bob's agent: one more tool (kustomize overlay on story 1's agent)"
-K apply -k "$D/agent" >/dev/null
+apply_kustomize "$D/agent"
 wait_for "bob-assistant Ready" 60 5 K wait sandboxagent/bob-assistant -n sv-agents --for=condition=Ready --timeout=2s
 ok "Alice: https://portal.$ALICE_DOMAIN (alice / alice-demo). Bob: https://kagent.$SV_DOMAIN"

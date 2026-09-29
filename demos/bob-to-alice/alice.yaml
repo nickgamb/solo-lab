@@ -31,7 +31,7 @@ spec:
       - {maxSkew: 1, topologyKey: topology.kubernetes.io/zone, whenUnsatisfiable: ScheduleAnyway, labelSelector: {matchLabels: {app: uma-as}}}
       containers:
       - name: uma-as
-        image: localhost:5001/u4a/uma-as:${U4A_TAG}
+        image: localhost:${LAB_REGISTRY_PORT}/u4a/uma-as:${U4A_TAG}
         ports: [{name: http, containerPort: 9000}]
         env:
         - {name: UMA_AS_ISSUER, value: "https://as.${ALICE_DOMAIN}"}
@@ -116,7 +116,7 @@ spec:
       serviceAccountName: portal
       containers:
       - name: portal
-        image: localhost:5001/u4a/portal:${U4A_TAG}
+        image: localhost:${LAB_REGISTRY_PORT}/u4a/portal:${U4A_TAG}
         ports: [{name: http, containerPort: 9010}]
         env:
         - {name: UMA_PORTAL_OWNER, value: alice}

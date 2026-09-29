@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Minimal MCP-over-HTTP probe (stdlib only) for verify scripts.
 
-  mcp-probe.py URL list                  [--token T]
-  mcp-probe.py URL call TOOL '{"a":1}'   [--token T]
+  mcp-probe.py URL list                  [--token T] [--header name=value]
+  mcp-probe.py URL call TOOL '{"a":1}'   [--token T] [--header name=value]
+
+A token or header value of "-" is read from stdin, one line each in the
+order they appear, so credentials stay off the command line.
 
 Speaks the session protocol (initialize -> Mcp-Session-Id) that agentgateway
 serves, and falls back to the sessionless 2026-07-28 envelope when a server
@@ -16,10 +19,11 @@ import urllib.request
 args = sys.argv[1:]
 token = None
 extra = {}
+stdin_value = lambda v: sys.stdin.readline().rstrip("\n") if v == "-" else v
 if "--token" in args:
-    i = args.index("--token"); token = args[i + 1]; del args[i:i + 2]
+    i = args.index("--token"); token = stdin_value(args[i + 1]); del args[i:i + 2]
 while "--header" in args:  # --header name=value (repeatable)
-    i = args.index("--header"); k, v = args[i + 1].split("=", 1); extra[k] = v; del args[i:i + 2]
+    i = args.index("--header"); k, v = args[i + 1].split("=", 1); extra[k] = stdin_value(v); del args[i:i + 2]
 url, op, *rest = args
 NEW = "2026-07-28"
 META = {"io.modelcontextprotocol/protocolVersion": NEW,
