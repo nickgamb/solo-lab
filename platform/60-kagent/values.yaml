@@ -20,12 +20,12 @@ controller:
   # and two SandboxAgent fixes (callback auth in the Go ADK, suspend race). The
   # controller pins the patched golang-adk by digest; other runtimes are the release's.
   image:
-    registry: localhost:5001
+    registry: localhost:${LAB_REGISTRY_PORT}
     repository: kagent-dev/kagent/controller
-    tag: 0.10.2-lab.3
+    tag: ${KAGENT_LAB_TAG}
   goAgentImage:
-    registry: localhost:5001
-    tag: 0.10.2-lab.3
+    registry: localhost:${LAB_REGISTRY_PORT}
+    tag: ${KAGENT_LAB_TAG}
   auth:
     mode: trusted-proxy
     userIdClaim: preferred_username
@@ -53,7 +53,7 @@ substrateWorkerPool:
   create: true
   name: kagent-ops
   replicas: 2
-  ateomImage: localhost:5001/kagent-dev/substrate/ateom-gvisor:v0.0.9-lab.1
+  ateomImage: localhost:${LAB_REGISTRY_PORT}/kagent-dev/substrate/ateom-gvisor:${SUBSTRATE_LAB_TAG}
   sandboxClass: gvisor
   template:
     serviceAccountName: kagent-ops

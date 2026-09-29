@@ -85,10 +85,12 @@ with `--token <jwt>` and `--header name=value`.
 | `kubectl --context kind-solo-lab -n sv-identity port-forward svc/keycloak 18080:80` | S&V Keycloak's admin console at http://127.0.0.1:18080/admin (the edge publishes only the realm; same for `ops-identity`, `alice-identity`, `ledgerline-identity`) |
 | `kubectl --context kind-solo-lab -n sv-identity logs deploy/keycloak --since=10m \| grep -i -E "claim\|IDENTITY_PROVIDER\|error"` | sign-in and broker errors (it names the claim or step that failed) |
 
-**Get Bob's tokens** (the password grant the checks use; lab test accounts only):
+**Get Bob's tokens** (the password grant the checks use, over a port-forward,
+with the client secret and password on stdin rather than a command line; lab
+test accounts only):
 
 ```bash
-bash -c '. scripts/lib.sh; port_forward sv-identity keycloak 18081 80; curl -s http://127.0.0.1:18081/realms/sterling-vance/protocol/openid-connect/token -d grant_type=password -d client_id=kagent -d client_secret="$(lab_secret SV_KAGENT_CLIENT_SECRET)" -d username=bob -d password=bob-demo -d scope=openid' > /tmp/bob.json
+bash -c '. scripts/lib.sh; kc_token sv-identity sterling-vance kagent "$(lab_secret SV_KAGENT_CLIENT_SECRET)" bob bob-demo' > /tmp/bob.json
 ```
 
 **Decode a token's claims** (no verification; to see what it carries):

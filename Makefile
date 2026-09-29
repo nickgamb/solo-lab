@@ -14,10 +14,10 @@ cluster: ## kind cluster + registry caches + cloud-provider-kind + lab DNS
 platform: ## install every platform layer in order (idempotent)
 	@for l in $(LAYERS); do bash $$l || exit 1; done
 layer-%: ## install one layer, e.g. make layer-40 (agentgateway)
-	@bash $(wildcard platform/$*-*/install.sh)
+	@f="$(wildcard platform/$*-*/install.sh)"; [ -n "$$f" ] || { echo "no layer $*; layers: $(patsubst platform/%/install.sh,%,$(LAYERS))" >&2; exit 2; }; bash $$f
 down: ## delete the cluster (keeps image caches and the CA)
 	@./scripts/cluster-down.sh
-nuke: ## delete the cluster AND the image caches
+nuke: ## delete the cluster AND every lab container and volume (caches, registry with built images, lab DNS)
 	@./scripts/cluster-down.sh --all
 
 ## ---- demos (all installed by `make up`; cards in docs/cards) ---------------

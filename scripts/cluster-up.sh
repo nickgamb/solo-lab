@@ -71,7 +71,7 @@ for m in $MIRRORS; do
       -e REGISTRY_PROXY_REMOTEURL="$up" \
       -e REGISTRY_STORAGE_DELETE_ENABLED=true \
       -e OTEL_TRACES_EXPORTER=none \
-      registry:3.1.2 >/dev/null
+      registry:3.1.2@sha256:ddf754342cfc8acc51a56d5d0ab6af06826461864460636d8bd5c546dab2a7b8 >/dev/null
   else
     docker start "$name" >/dev/null
     docker network connect kind "$name" 2>/dev/null || true
@@ -80,7 +80,7 @@ done
 if [ -z "$(docker ps -aq -f name='^lab-registry$')" ]; then
   docker run -d --restart=always --name lab-registry --network kind \
     -p "127.0.0.1:$LAB_REGISTRY_PORT:5000" -v lab-registry:/var/lib/registry \
-    -e OTEL_TRACES_EXPORTER=none registry:3.1.2 >/dev/null
+    -e OTEL_TRACES_EXPORTER=none registry:3.1.2@sha256:ddf754342cfc8acc51a56d5d0ab6af06826461864460636d8bd5c546dab2a7b8 >/dev/null
 else
   docker start lab-registry >/dev/null; docker network connect kind lab-registry 2>/dev/null || true
 fi

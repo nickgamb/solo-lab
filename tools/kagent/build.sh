@@ -9,8 +9,8 @@
 #   controller       built from the patched source (0001, 0003), digests baked in
 set -euo pipefail
 cd "$(dirname "$0")"
-TAG=${TAG:-0.10.2-lab.3}
-REG=${REG:-localhost:5001}
+TAG=${TAG:-${KAGENT_LAB_TAG:-0.10.2-lab.3}}
+REG=${REG:-localhost:${LAB_REGISTRY_PORT:-5001}}
 IMG=${IMG:-$REG/kagent-dev/kagent/controller:$TAG}
 ADK=$REG/kagent-dev/kagent/golang-adk
 SRC=${SRC:-../../.lab/cache/kagent-build}

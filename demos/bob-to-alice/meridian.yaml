@@ -11,7 +11,7 @@ spec:
   transportType: http
   httpTransport: {targetPort: 9020, path: /mcp}
   deployment:
-    image: localhost:5001/u4a/alice-vault-mcp:${U4A_TAG}
+    image: localhost:${LAB_REGISTRY_PORT}/u4a/alice-vault-mcp:${U4A_TAG}
     port: 9020
     replicas: 1
     env: {ENFORCEMENT_MODE: gateway, UMA_VAULT_OWNER: alice}
@@ -44,7 +44,7 @@ spec:
       - {maxSkew: 1, topologyKey: topology.kubernetes.io/zone, whenUnsatisfiable: ScheduleAnyway, labelSelector: {matchLabels: {app: uma-pep}}}
       containers:
       - name: uma-pep
-        image: localhost:5001/u4a/uma-pep:${U4A_TAG}
+        image: localhost:${LAB_REGISTRY_PORT}/u4a/uma-pep:${U4A_TAG}
         ports: [{name: http, containerPort: 9002}]
         env:
         - {name: UMA_REALM, value: alice-vault}
