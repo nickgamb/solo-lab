@@ -49,8 +49,8 @@ export SOLO_KAGENT_LICENSE_KEY="${SOLO_KAGENT_LICENSE_KEY:-${SOLO_LICENSE_KEY:-}
 
 export KCTX="kind-$LAB_NAME"
 
-# Docker Desktop's credsStore can wedge helm's OCI pulls for minutes (hit in
-# both uma4agents and kagent-substrate-demo). Every chart we pull is public,
+# Docker Desktop's credsStore can wedge helm's OCI pulls for minutes. Every
+# chart we pull is public,
 # so give helm an empty docker config. LAB_USE_DOCKER_CREDS=1 opts out.
 # Scoped to helm only: the docker CLI needs the real config for its context.
 HELM_DOCKER_CONFIG="$LAB_STATE/docker-anon"
@@ -96,7 +96,7 @@ helm_up() {
 }
 
 # ensure_ns <name> [ambient]  — namespaces we create are labelled into the
-# mesh up front; helm --create-namespace ones are NOT (uma4agents gotcha).
+# mesh up front; ones helm makes with --create-namespace are not.
 ensure_ns() {
   K create namespace "$1" --dry-run=client -o yaml | K apply -f - >/dev/null
   [ "${2:-}" = ambient ] && K label namespace "$1" istio.io/dataplane-mode=ambient --overwrite >/dev/null

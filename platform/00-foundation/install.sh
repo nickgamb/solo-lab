@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Gateway API CRDs, metrics-server (HPAs), cert-manager, lab namespaces.
+# Gateway API CRDs, metrics-server (HPAs), cert-manager, trust-manager and the
+# lab CA, the lab namespaces, and CoreDNS answering *.lab with the edge.
 . "$(dirname "$0")/../../scripts/lib.sh"
 D="$(cd "$(dirname "$0")" && pwd)"
 need_cluster
