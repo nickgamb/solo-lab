@@ -1,0 +1,26 @@
+# Solo Enterprise for agentregistry 2026.9.0: its own OIDC sign-in against
+# S&V's Keycloak (the UI runs PKCE as agentregistry-ui; the server validates
+# tokens issued to agentregistry), roles from the groups claim.
+oidc:
+  issuer: https://idp.${SV_DOMAIN}/realms/sterling-vance
+  clientId: agentregistry
+  publicClientId: agentregistry-ui
+  roleClaim: groups
+  superuserRole: platform-admins
+
+licensing:
+  createSecret: false         # install.sh makes it from SOLO_AGENTREGISTRY_LICENSE_KEY
+  secretName: enterprise-agentregistry-license
+
+clickhouse:
+  auth:
+    password: ${AR_CLICKHOUSE_PASSWORD}   # not the chart's default
+
+# The issuer is https://idp.sterling.lab, signed by the lab CA: trust-manager's
+# bundle (public roots + the lab CA) is in every namespace.
+extraEnvVars:
+- {name: SSL_CERT_FILE, value: /etc/lab-ca/ca.crt}
+volumes:
+- {name: lab-ca, configMap: {name: lab-ca-bundle}}
+volumeMounts:
+- {name: lab-ca, mountPath: /etc/lab-ca, readOnly: true}
