@@ -78,11 +78,16 @@ if scene 1 "Bob's agent, on Bob's tools (delegation)"; then
 fi
 
 if scene 2 "Cross App Access to Ledgerline (ID-JAG)"; then
-  look "Topology: ai-gateway → ledgerline-research, badged kgateway edge and Ledgerline's waypoint"
-  ask "What is Ledgerline's view on technology, and which Ledgerline account am I using?"
-  look "Traffic: the call to mcp.ledgerline.lab. The agent held neither cross-company token:"
-  look "ai-gateway traded Bob's ID token for an ID-JAG, and Ledgerline issued its own token."
-  next
+  if [ "$KAGENT_EDITION" = enterprise ]; then
+    # kagent-enterprise doesn't forward Bob's ID token to agents (scripts/lib.sh kagent_edition)
+    warn "kagent-enterprise doesn't pass Bob's ID token to the agent, so Cross App Access isn't in chat: skipping (scene 3 still probes it)"
+  else
+    look "Topology: ai-gateway → ledgerline-research, badged kgateway edge and Ledgerline's waypoint"
+    ask "What is Ledgerline's view on technology, and which Ledgerline account am I using?"
+    look "Traffic: the call to mcp.ledgerline.lab. The agent held neither cross-company token:"
+    look "ai-gateway traded Bob's ID token for an ID-JAG, and Ledgerline issued its own token."
+    next
+  fi
 fi
 
 if scene 3 "What isn't allowed (probe pods, no model)"; then

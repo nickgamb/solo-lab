@@ -1,0 +1,65 @@
+# What kagent-enterprise 0.5.9 needs beyond the chart, in this lab.
+#
+# Its UI image proxies /api to 127.0.0.1:8083 inside its own pod, where
+# nothing listens. The edge sends /api straight to the
+# controller instead, behind the same sign-in (kagent-sso), so the browser's
+# calls carry Bob's access token as before.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: kagent-api
+  namespace: kagent
+spec:
+  parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-sterling}]
+  hostnames: ["kagent.${SV_DOMAIN}"]
+  rules:
+  - matches: [{path: {type: PathPrefix, value: /api}}]
+    backendRefs: [{name: kagent-controller, port: 8083}]
+    timeouts:
+      request: 1800s
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: kagent-api-sso
+  namespace: kagent
+spec:
+  targetRefs:
+  - {group: gateway.networking.k8s.io, kind: HTTPRoute, name: kagent-api}
+  oauth2:
+    extensionRef: {name: kagent-sso}
+---
+# The enterprise controller verifies every token itself, so the edge may reach
+# it too (the browser's /api calls, above).
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: kagent-controller-edge
+  namespace: kagent
+spec:
+  selector:
+    matchLabels: {app.kubernetes.io/name: kagent, app.kubernetes.io/component: controller}
+  action: ALLOW
+  rules:
+  - from: [{source: {principals: [cluster.local/ns/kgateway-system/sa/edge]}}]
+    to: [{operation: {ports: ["8083"]}}]
+---
+# The controller watches GatewayClasses (cluster-scoped). values.yaml scopes
+# its roles to rbac.namespaces, so the chart grants no cluster-wide read; this
+# is the one it needs, read-only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kagent-controller-gatewayclasses
+rules:
+- apiGroups: [gateway.networking.k8s.io]
+  resources: [gatewayclasses]
+  verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kagent-controller-gatewayclasses
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: kagent-controller-gatewayclasses}
+subjects:
+- {kind: ServiceAccount, name: kagent-controller, namespace: kagent}

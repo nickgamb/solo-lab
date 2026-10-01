@@ -112,7 +112,17 @@ render() {
 apply_tmpl() { local f; for f in "$@"; do render "$f" | K apply -f - >/dev/null; done; }
 # apply_kustomize <dir>: a kustomization, with the lab registry port and image
 # tags filled in (kustomize itself doesn't substitute variables)
-apply_kustomize() { K kustomize "$1" | envsubst '${LAB_REGISTRY_PORT} ${SUBSTRATE_LAB_TAG} ${KAGENT_LAB_TAG}' | K apply -f - >/dev/null; }
+apply_kustomize() { K kustomize "$1" | envsubst '${LAB_REGISTRY_PORT} ${SUBSTRATE_LAB_TAG} ${KAGENT_LAB_TAG}' | kagent_edition | K apply -f - >/dev/null; }
+# kagent_edition: agent manifests as the running kagent edition can serve them.
+# kagent-enterprise passes agents the user's access token, not
+# the ID token, so Cross App Access (which trades Bob's ID token for an ID-JAG)
+# can't work through chat there, and an MCP server that refuses the agent fails
+# its whole turn: the Ledgerline tool is left out.
+kagent_edition() {
+  if [ "${KAGENT_EDITION:-oss}" = enterprise ]; then
+    yq 'del(select(.kind == "SandboxAgent") | .spec.declarative.tools[] | select(.mcpServer.name == "ledgerline-research"))'
+  else cat; fi
+}
 
 rollout() {  # rollout <ns> <kind/name>...
   local ns=$1; shift; local r
