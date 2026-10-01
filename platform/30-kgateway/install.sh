@@ -10,7 +10,26 @@ need_cluster
 ED=$KGATEWAY_EDITION
 
 step "kgateway $KGATEWAY_VERSION ($ED)"
-helm_up "$KGATEWAY_RELEASE-crds" "$KGATEWAY_CRDS_CHART" "$KGATEWAY_VERSION" kgateway-system
+CRDS=$KGATEWAY_CRDS_CHART
+if [ "$ED" = enterprise ]; then
+  # Enterprise kgateway 2.3.5's EnterpriseKgatewayTrafficPolicy CRD is over
+  # Kubernetes 1.37's CEL cost budget, and the API server refuses it. Drop the
+  # rules it names (input format checks: durations, sizes, rate-limit entries)
+  # from a local copy of the chart.
+  CRDS="$LAB_STATE/cache/enterprise-kgateway-crds-$KGATEWAY_VERSION"
+  if [ ! -d "$CRDS" ]; then
+    rm -rf "$CRDS.tmp"
+    H pull "$KGATEWAY_CRDS_CHART" --version "$KGATEWAY_VERSION" --untar --untardir "$CRDS.tmp" >"$LAB_STATE/helm-kgateway-crds-pull.log" 2>&1 \
+      || die "pulling $KGATEWAY_CRDS_CHART $KGATEWAY_VERSION failed (log: .lab/helm-kgateway-crds-pull.log)"
+    mv "$CRDS.tmp/enterprise-kgateway-crds" "$CRDS"; rm -rf "$CRDS.tmp"
+    p=.spec.versions[].schema.openAPIV3Schema.properties.spec.properties
+    yq -i "del($p.entJWT.properties[].properties.providers.additionalProperties.properties.jwks.properties.remote.properties.cacheDuration.\"x-kubernetes-validations\")
+      | del($p.rateLimit.properties.global.properties.descriptors.items.properties.entries.items.\"x-kubernetes-validations\")
+      | del($p.buffer.properties.maxRequestSize.\"x-kubernetes-validations\")" \
+      "$CRDS/templates/enterprisekgateway.solo.io_enterprisekgatewaytrafficpolicies.yaml"
+  fi
+fi
+helm_up "$KGATEWAY_RELEASE-crds" "$CRDS" "$([ "$CRDS" = "$KGATEWAY_CRDS_CHART" ] && echo "$KGATEWAY_VERSION")" kgateway-system
 values_for "$D" values "$ED"
 helm_up "$KGATEWAY_RELEASE" "$KGATEWAY_CHART" "$KGATEWAY_VERSION" kgateway-system ${VALS[@]+"${VALS[@]}"}
 
