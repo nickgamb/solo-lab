@@ -33,6 +33,8 @@ K create serviceaccount kagent-ops -n kagent --dry-run=client -o yaml | K apply 
 helm_up kagent-crds "$KAGENT_CRDS_CHART" "$KAGENT_VERSION" kagent
 values_for "$D" values "$ED"
 HELM_TIMEOUT=15m helm_up kagent "$KAGENT_CHART" "$KAGENT_VERSION" kagent ${VALS[@]+"${VALS[@]}"}
+# before the rollout: the enterprise controller restarts until it can read GatewayClasses
+[ "$ED" = enterprise ] && apply_tmpl "$D/enterprise.yaml"
 rollout kagent deploy/kagent-controller deploy/kagent-ui
 
 step "Ops agents on Agent Substrate (kagent-ops)"
@@ -51,5 +53,4 @@ ok "$OPS"
 
 step "Edge SSO: https://kagent.${SV_DOMAIN}"
 apply_tmpl "$D/edge-sso.yaml"
-[ "$ED" = enterprise ] && apply_tmpl "$D/enterprise.yaml"
 ok "kgateway OAuth2 -> S&V Keycloak; access token forwarded to kagent"
