@@ -28,7 +28,7 @@ apiVersion: security.istio.io/v1
 kind: PeerAuthentication
 metadata: {name: controller-xds, namespace: agentgateway-system}
 spec:
-  selector: {matchLabels: {app.kubernetes.io/name: agentgateway}}
+  selector: {matchLabels: {app.kubernetes.io/name: ${AGW_RELEASE}}}   # the controller
   mtls: {mode: STRICT}
   portLevelMtls: {"9978": {mode: PERMISSIVE}}
 ---
@@ -57,7 +57,7 @@ spec:
         principals:
         - cluster.local/ns/kgateway-system/sa/edge
         - cluster.local/ns/agentgateway-system/sa/ai-gateway
-        - cluster.local/ns/agentgateway-system/sa/agentgateway   # controller: JWKS fetch
+        - cluster.local/ns/agentgateway-system/sa/${AGW_RELEASE}   # controller: JWKS fetch
         - cluster.local/ns/sv-mcp/sa/mcp-waypoint
         - cluster.local/ns/sv-mcp/sa/bob-workspace      # verifies its delegated tokens (JWKS)
         - cluster.local/ns/agentregistry/sa/agentregistry
