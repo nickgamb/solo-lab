@@ -16,7 +16,7 @@ rbac:
   namespaces: [kagent, sv-agents, sv-mcp]
 
 controller:
-  # The Go ADK runtime is tools/kagent's build (0002: callback auth for
+  # The Go ADK runtime is tools/kagent's build (0001: callback auth for
   # SandboxAgents) on both editions; values-<edition>.yaml says how it's pinned.
   goAgentImage:
     registry: localhost:${LAB_REGISTRY_PORT}

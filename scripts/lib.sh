@@ -113,17 +113,7 @@ render() {
 apply_tmpl() { local f; for f in "$@"; do render "$f" | K apply -f - >/dev/null; done; }
 # apply_kustomize <dir>: a kustomization, with the lab registry port and image
 # tags filled in (kustomize itself doesn't substitute variables)
-apply_kustomize() { K kustomize "$1" | envsubst '${LAB_REGISTRY_PORT} ${SUBSTRATE_LAB_TAG} ${KAGENT_LAB_TAG}' | kagent_edition | K apply -f - >/dev/null; }
-# kagent_edition: agent manifests as the running kagent edition can serve them.
-# kagent-enterprise passes agents the user's access token, not
-# the ID token, so Cross App Access (which trades Bob's ID token for an ID-JAG)
-# can't work through chat there, and an MCP server that refuses the agent fails
-# its whole turn: the Ledgerline tool is left out.
-kagent_edition() {
-  if [ "${KAGENT_EDITION:-oss}" = enterprise ]; then
-    yq 'del(select(.kind == "SandboxAgent") | .spec.declarative.tools[] | select(.mcpServer.name == "ledgerline-research"))'
-  else cat; fi
-}
+apply_kustomize() { K kustomize "$1" | envsubst '${LAB_REGISTRY_PORT} ${SUBSTRATE_LAB_TAG} ${KAGENT_LAB_TAG}' | K apply -f - >/dev/null; }
 
 rollout() {  # rollout <ns> <kind/name>...
   local ns=$1; shift; local r
@@ -303,13 +293,13 @@ kc_token() {
 # user_token: kc_token's access token alone
 user_token() { kc_token "$@" | jq -r .access_token; }
 
-# a2a_send <access token> <id token> <json-rpc body>: one A2A turn with Bob's
-# agent, sent as kagent's UI would (from probe-kagent-ui, with the edge's
-# Authorization and IdToken cookie). The tokens reach the pod on stdin.
+# a2a_send <access token> <json-rpc body>: one A2A turn with Bob's agent, sent
+# as kagent's UI would (from probe-kagent-ui, with the access token the edge
+# forwards). The token and body reach the pod on stdin.
 a2a_send() {
-  printf '%s\n%s\n%s\n' "$1" "$2" "$3" | K exec -i -n kagent probe-kagent-ui -- sh -c \
-    'read -r t; read -r i; read -r b; curl -s -m 300 http://kagent-controller.kagent:8083/api/a2a-sandboxes/sv-agents/bob-assistant/ \
-       -H "authorization: Bearer $t" -H "cookie: IdToken=$i" -H "content-type: application/json" -d "$b"'
+  printf '%s\n%s\n' "$1" "$2" | K exec -i -n kagent probe-kagent-ui -- sh -c \
+    'read -r t; read -r b; curl -s -m 300 http://kagent-controller.kagent:8083/api/a2a-sandboxes/sv-agents/bob-assistant/ \
+       -H "authorization: Bearer $t" -H "content-type: application/json" -d "$b"'
 }
 # with_bearer <token> curl <args...>: curl with "Authorization: Bearer <token>"
 # read from stdin (-H @-), so the token isn't on curl's command line

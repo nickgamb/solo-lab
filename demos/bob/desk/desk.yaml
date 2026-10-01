@@ -90,7 +90,6 @@ spec:
         kind: RemoteMCPServer
         name: ledgerline-research
         toolNames: [sector_outlook, research_note]
-        allowedHeaders: [x-id-token]   # the subject of the Cross App Access exchange
 ---
 apiVersion: kagent.dev/v1alpha2
 kind: SandboxAgent
