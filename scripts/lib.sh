@@ -29,7 +29,7 @@ set +a
 unset _lab_caller
 
 # Promote ENT_<P>_<X> over <P>_<X> for each product running enterprise.
-for _p in ISTIO KGATEWAY AGW KAGENT; do
+for _p in ISTIO KGATEWAY AGW KAGENT AGENTREGISTRY; do
   _ed="${_p}_EDITION"
   if [ "${!_ed}" = enterprise ]; then
     while IFS='=' read -r _k _; do
@@ -46,6 +46,7 @@ export SOLO_ISTIO_LICENSE_KEY="${SOLO_ISTIO_LICENSE_KEY:-${SOLO_LICENSE_KEY:-}}"
 export SOLO_KGATEWAY_LICENSE_KEY="${SOLO_KGATEWAY_LICENSE_KEY:-${SOLO_LICENSE_KEY:-}}"
 export SOLO_AGW_LICENSE_KEY="${SOLO_AGW_LICENSE_KEY:-${SOLO_LICENSE_KEY:-}}"
 export SOLO_KAGENT_LICENSE_KEY="${SOLO_KAGENT_LICENSE_KEY:-${SOLO_LICENSE_KEY:-}}"
+export SOLO_AGENTREGISTRY_LICENSE_KEY="${SOLO_AGENTREGISTRY_LICENSE_KEY:-${SOLO_LICENSE_KEY:-}}"
 
 export KCTX="kind-$LAB_NAME"
 
