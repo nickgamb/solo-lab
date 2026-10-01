@@ -26,7 +26,7 @@ spec:
     scopes: [openid, profile, email]
     forwardAccessToken: true
     cookies:
-      names: {accessToken: BearerToken, idToken: IdToken}   # kagent reads IdToken (AUTH_ID_TOKEN_COOKIE)
+      names: {accessToken: BearerToken, idToken: IdToken}
       sameSite: Lax
     jwt:
       jwksURI: https://idp.${SV_DOMAIN}/realms/sterling-vance/protocol/openid-connect/certs

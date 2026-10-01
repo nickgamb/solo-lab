@@ -1,7 +1,6 @@
-# OSS kagent v0.10.2 + tools/kagent (upstream PR candidates): ID token
-# forwarding and two SandboxAgent fixes (callback auth in the Go ADK, suspend
-# race). The controller pins the patched golang-adk by digest; other runtimes
-# are the release's.
+# OSS kagent v0.10.2 + tools/kagent (upstream PR candidates): two SandboxAgent
+# fixes (callback auth in the Go ADK, suspend race). The controller pins the
+# patched golang-adk by digest; other runtimes are the release's.
 controller:
   image:
     registry: localhost:${LAB_REGISTRY_PORT}
@@ -14,10 +13,3 @@ controller:
   auth:
     mode: trusted-proxy
     userIdClaim: preferred_username
-  # The edge (kgateway OAuth2) sets the user's ID token in the IdToken cookie.
-  # The controller forwards it to agents as X-Id-Token, only when bound to the
-  # authenticated user and issued to kagent. (0.10.2 chart has no
-  # controller.auth.idToken values yet, hence env.)
-  env:
-  - {name: AUTH_ID_TOKEN_COOKIE, value: IdToken}
-  - {name: AUTH_ID_TOKEN_AUDIENCE, value: kagent}

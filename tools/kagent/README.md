@@ -1,39 +1,10 @@
 # kagent 0.10.2 patches (upstream PR candidates)
 
-Three patches against v0.10.2, each its own upstream PR. `./build.sh` builds
-the controller and the Go ADK from them.
+Two patches against v0.10.2, each its own upstream PR. `./build.sh` builds
+the controller and the Go ADK from them. Both editions run the Go ADK from
+here (kagent-enterprise pins it by digest); only OSS runs the controller.
 
-## 0001: forward the user's OIDC ID token to agents
-
-**Why.** In Cross App Access (XAA, ID-JAG), the enterprise IdP issues an ID-JAG
-only for an **ID token issued to the requesting app**, the app the user
-signed into. In this lab that app is kagent. kagent 0.10.2 in trusted-proxy mode
-forwards only `Authorization` (the access token) and `X-User-Id` to agents, so
-no agent can take part in XAA without something re-minting the ID token.
-Re-minting isn't acceptable in a reference architecture.
-
-**What it does:**
-
-- New controller settings: `controller.auth.idToken.{header,cookie,audience}`
-  (`AUTH_ID_TOKEN_HEADER` / `_COOKIE` / `_AUDIENCE`). They say where the ID token
-  arrives; the cookie form covers the `IdToken` cookie an Envoy/kgateway OAuth2
-  filter sets.
-- On A2A calls to agents the controller adds `X-Id-Token`, **only when the token
-  is bound to the authenticated user**:
-  - same `sub` as the access token
-  - issued to `audience` (`aud` or `azp`)
-  - not expired
-
-  Anything else is dropped. It is never used to authenticate, so
-  `Authorization` semantics are unchanged.
-- Agents already forward selected headers to MCP servers
-  (`tools[].mcpServer.allowedHeaders`), so the ID token reaches **only the tools
-  that need it**. That's least privilege, and no ADK change is needed.
-- Tests: `TestProxyAuthenticator_ForwardsBoundIDToken`, eight cases (header,
-  cookie, precedence, other user's token, wrong client, expired, malformed,
-  not configured). The existing auth-mode tests move to keyed literals.
-
-## 0002: Substrate actors call kagent back with the caller's credential
+## 0001: Substrate actors call kagent back with the caller's credential
 
 **Why.** Agents call the controller back (sessions, task store) with their
 projected ServiceAccount token. Agent Substrate actors have no projected
@@ -47,7 +18,7 @@ it is serving (the credential kagent forwarded for this user). Nothing new is
 minted or stored, so nothing lands in Substrate snapshots. Agents with a
 ServiceAccount token are unchanged. Test: `TestAddHeaders_Authorization`.
 
-## 0003: a turn that follows a response closely no longer hangs
+## 0002: a turn that follows a response closely no longer hangs
 
 **Why.** When a SandboxAgent response closes, the controller schedules a
 suspend of the session actor. A message sent right away, a HITL approval for
@@ -62,7 +33,7 @@ resumes. Test: `TestSessionTurns_SuspendNeverLandsOnANewerTurn`.
 
 ## Build
 
-`./build.sh` → `localhost:5001/kagent-dev/kagent/{controller,golang-adk}:0.10.2-lab.3`.
+`./build.sh` → `localhost:5001/kagent-dev/kagent/{controller,golang-adk}:0.10.2-lab.4`.
 It reproduces `make build-controller`: the upstream Dockerfile, version
 ldflags, and the runtime-image digests baked into the controller. golang-adk
 is built from the patched source; every other runtime image keeps the
@@ -74,5 +45,7 @@ is a new ActorTemplate).
 
 **Upstream:** open each against `kagent-dev/kagent` main. Once they ship,
 remove `controller.image` and `controller.goAgentImage` from
-`platform/60-kagent/values.yaml` and move the `AUTH_ID_TOKEN_*` env to
-`controller.auth.idToken`.
+`platform/60-kagent/values-oss.yaml` and `values.yaml`.
+
+Agents don't receive the user's ID token on either edition. Cross App Access
+gets it at the gateway instead (`demos/bob/manifests/40-xaa-ledgerline.yaml`).

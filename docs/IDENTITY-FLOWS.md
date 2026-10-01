@@ -23,20 +23,22 @@ cross-company token.
    `platform/60-kagent/edge-sso.yaml`) and keeps two cookies:
    - `BearerToken`: Bob's **access token**, audiences `ai-gateway` and
      `mcp-waypoint`. The edge forwards it to kagent as `Authorization`.
-   - `IdToken`: Bob's **ID token**, issued to `kagent`.
-2. The kagent controller runs in trusted-proxy mode: it takes the user from
-   the forwarded token without checking its signature, so the mesh admits
-   only the UI (which forwards what the edge verified) and the agents' worker
-   pools ([ARCHITECTURE.md](ARCHITECTURE.md#what-the-lab-doesnt-enforce)). It
-   passes `Authorization` to the agent on each A2A turn. With `tools/kagent` patch 0001 it also passes `X-Id-Token`, but only
-   when that ID token is bound to the same user: same `sub`, issued to
-   `kagent`, not expired.
+   - `IdToken`: Bob's **ID token**, issued to `kagent`. It stays at the edge.
+2. The kagent controller passes `Authorization` to the agent on each A2A turn,
+   and nothing else of Bob's.
+   - OSS kagent runs in trusted-proxy mode: it takes the user from the
+     forwarded token without checking its signature, so the mesh admits only
+     the UI (which forwards what the edge verified) and the agents' worker
+     pools ([ARCHITECTURE.md](ARCHITECTURE.md#what-the-lab-doesnt-enforce)).
+   - kagent-enterprise verifies the token against S&V's Keycloak itself
+     ([ENTERPRISE.md](ENTERPRISE.md)).
 3. The agent (`sv-agents/bob-assistant`, a SandboxAgent on Agent Substrate)
-   forwards `Authorization` on every tool call (`KAGENT_PROPAGATE_TOKEN`), and
-   `X-Id-Token` only to the tools that list it in `allowedHeaders`.
+   forwards `Authorization` on every tool call (`KAGENT_PROPAGATE_TOKEN`).
 
-The edge forwards the access token, not the ID token, because Keycloak's
-standard token exchange only accepts an access token as its subject.
+The agent never holds Bob's ID token. The one flow that needs it, Cross App
+Access (section 2), has the egress gateway get it from S&V's Keycloak. The
+edge forwards the access token because Keycloak's standard token exchange
+only accepts an access token as its subject.
 
 ## 1. Delegation (RFC 8693) at the MCP waypoint
 
@@ -115,18 +117,24 @@ Checks (`make bob-verify`, from real pods with their own identities):
 Ledgerline Research is a SaaS S&V subscribes to, a separate company with its
 own IdP. Bob's agent uses Ledgerline as Bob, with no consent screen and no
 shared credential. S&V's IdP vouches for Bob to Ledgerline for one approved
-connection, and Ledgerline issues its own short-lived token. Both exchanges
-happen at the firm's egress gateway, so the agent never holds either token.
+connection, and Ledgerline issues its own short-lived token. Every exchange
+happens at the firm's egress gateway, so the agent holds only Bob's S&V
+access token: never his ID token, the ID-JAG or Ledgerline's token.
 
 ```mermaid
 sequenceDiagram
   participant A as Bob's agent
   participant G as ai-gateway (S&V egress)
+  participant X as idtoken-exchange (ai-gateway's ext-auth)
   participant K as S&V Keycloak (enterprise IdP)
   participant L as Ledgerline Keycloak (resource AS)
   participant R as ledgerline-research (behind Ledgerline's waypoint)
-  A->>G: tools/call /xaa/ledgerline/mcp, Authorization: access token, X-Id-Token: ID token
-  G->>G: verify JWT (aud ai-gateway), caller is an agent's pool, Bob in advisors, ID token for the same user
+  A->>G: tools/call /xaa/ledgerline/mcp, Authorization: Bob's access token
+  G->>G: verify JWT (aud ai-gateway), caller is an agent's pool, Bob in advisors
+  G->>X: ext-auth check with the verified access token
+  X->>K: token exchange as client kagent: subject = access token, requested type ID token
+  K-->>X: Bob's ID token for kagent (same user session)
+  X-->>G: 200, x-id-token (replaces any the caller sent)
   G->>K: token exchange as client kagent: subject = Bob's ID token, requested type ID-JAG, audience = Ledgerline's issuer
   K-->>G: ID-JAG for Bob, for this connection only
   G->>L: JWT authorization grant (RFC 7523) as client sterling-vance-kagent, assertion = ID-JAG
@@ -138,12 +146,18 @@ sequenceDiagram
 - **Requesting side** (`demos/bob/manifests/40-xaa-ledgerline.yaml`):
   - Route `xaa-ledgerline` on ai-gateway, matched only with a bearer token.
   - JWT, strict, audience `ai-gateway`. Authorization: the caller is an
-    agent's worker pool (by ServiceAccount), `"advisors" in jwt.groups`, and
-    an `x-id-token` whose subject is the access token's
-    (`unvalidatedJwtPayload(request.headers["x-id-token"]).sub == jwt.sub`).
-    The gateway only reads the ID token's subject; S&V's Keycloak verifies
-    its signature when it exchanges it, and issues an ID-JAG only for an ID
-    token issued to `kagent`.
+    agent's worker pool (by ServiceAccount) and `"advisors" in jwt.groups`.
+  - Ext-auth `idtoken-exchange` (`apps/idtoken-exchange`) gets Bob's ID token:
+    an RFC 8693 exchange at S&V's Keycloak, as client `kagent`, of the access
+    token just verified, for `requested_token_type=id_token`. Keycloak issues
+    it only for a live session of that user and client, so it belongs to the
+    same sign-in. The gateway puts it in `x-id-token`, replacing any value the
+    caller sent. Only ai-gateway may call the service (mesh policy).
+  - Why ext-auth and not the agent or the gateway's own exchange: kagent
+    forwards only the access token to agents (kagent-enterprise has no option
+    to forward the ID token), and agentgateway's `oauthTokenExchange` requires
+    `token_type: Bearer` in the response, while RFC 8693 (2.2.1) has the IdP
+    return `N_A` for an ID token.
   - Backend auth `crossAppAccess`, authenticating to S&V's Keycloak as
     client `kagent` (Secret `agentgateway-system/kagent-client`): in Cross
     App Access the requesting app is the one Bob signed into, and Keycloak
@@ -151,8 +165,7 @@ sequenceDiagram
     header `x-id-token`, type ID token; scopes `xaa-ledgerline research:read`; `accessTokenScopes: []`
     so those scopes aren't sent on to Ledgerline.
   - The agent's tool (`RemoteMCPServer ledgerline-research`) points at
-    `ai-gateway/xaa/ledgerline/mcp` and lists `x-id-token` in
-    `allowedHeaders`, so only this tool receives Bob's ID token.
+    `ai-gateway/xaa/ledgerline/mcp`.
 - **Enterprise IdP** (S&V Keycloak, realm `sterling-vance`):
   - Built from `tools/keycloak-idjag`: Keycloak 26.7.4 with
     keycloak/keycloak#49998, which adds ID-JAG issuing to the token endpoint.
@@ -163,8 +176,7 @@ sequenceDiagram
     Ledgerline's issuer as audience. The connection exists because the firm
     approved this scope for this client.
   - An ID-JAG is only issued for an ID token issued to the requesting client
-    (`kagent`), which is why the ID token has to reach the gateway at all
-    (patch 0001).
+    (`kagent`), which is why the gateway fetches one for that client.
 - **Resource AS** (Ledgerline Keycloak, realm `ledgerline`, feature
   `identity-assertion-jwt`, `demos/bob/ledgerline/realm-ledgerline.json`):
   - Identity provider `sterling-vance` trusts S&V's issuer and JWKS, with JWT
@@ -187,12 +199,13 @@ Checks (`make bob-verify`):
 
 | Case | Expected |
 | --- | --- |
-| `account_info` with Bob's tokens from an S&V agent workload | Ledgerline's own account for Bob |
+| `account_info` with Bob's access token from an S&V agent workload | Ledgerline's own account for Bob |
 | `sector_outlook` through XAA | result |
-| no ID token | refused at the egress gateway |
-| right tokens, wrong workload (`observability`) | refused |
-| Bob's access token with another user's ID token | refused at the egress gateway |
+| another user's ID token in `x-id-token` | replaced: still Bob's Ledgerline account |
+| right token, wrong workload (`observability`) | refused |
+| an agent workload calling `idtoken-exchange` directly | refused by the mesh |
 | Bob's S&V token sent straight to `mcp.ledgerline.lab` | refused by Ledgerline |
+| Bob asks his agent, in chat, which Ledgerline account he's using | Ledgerline's own account for Bob |
 
 ## 3. UMA for agents (Bob to Alice)
 
@@ -287,9 +300,8 @@ new agent key, so the next run starts as a first contact.
 
 | Patch | Needed for | Why |
 | --- | --- | --- |
-| `tools/kagent` 0001 | Cross App Access | forwards the user's ID token to agents, bound to that user |
-| `tools/kagent` 0002 | all three | Substrate actors call the kagent controller back with the caller's credential (they have no ServiceAccount token) |
-| `tools/kagent` 0003 | writes that wait for approval, UMA holds | a turn sent as the last one closes (after a human approval) no longer races the actor's suspend |
+| `tools/kagent` 0001 | all three | Substrate actors call the kagent controller back with the caller's credential (they have no ServiceAccount token) |
+| `tools/kagent` 0002 | writes that wait for approval, UMA holds | a turn sent as the last one closes (after a human approval) no longer races the actor's suspend (OSS controller only; kagent-enterprise 0.5.9 lacks it) |
 | `tools/substrate-mesh` 0001, 0002 | all three | a worker pool runs as its agent's ServiceAccount, so the agent's calls carry that SPIFFE ID (which the waypoint, ai-gateway and the adapter check), and only serves its own namespace |
 | `tools/substrate-mesh` 0003 | all three | actors work under the mesh's in-pod traffic capture |
 | `tools/keycloak-idjag` | Cross App Access | ID-JAG issuing (keycloak/keycloak#49998) |

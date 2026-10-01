@@ -3,9 +3,9 @@
 # the firm leaves here, and cross-company credentials never reach the agent.
 #
 #   requesting app   kagent (the app Bob signed into); ai-gateway is its back-channel
-#   subject          Bob's real SSO ID token for kagent. The edge sets it
-#                    (IdToken cookie), kagent forwards it bound to Bob (X-Id-Token),
-#                    and the agent sends it only to this tool (allowedHeaders).
+#   subject          Bob's ID token for kagent. ai-gateway gets it itself: S&V
+#                    Keycloak exchanges the access token the agent carries for
+#                    the same sign-in's ID token (idtoken-exchange, below)
 #   enterprise IdP   S&V Keycloak + PR #49998: ID token -> ID-JAG, for the approved
 #                    connection (scope xaa-ledgerline) only
 #   resource AS      Ledgerline Keycloak: ID-JAG -> Ledgerline access token (RFC 7523)
@@ -43,13 +43,28 @@ spec:
       action: Allow
       policy:
         matchExpressions:
-        # one of the firm's agent workloads, acting for an advisor, presenting
-        # an ID token for that same advisor (its subject is bound to the verified
-        # access token's; S&V's IdP verifies its signature when it exchanges it)
+        # one of the firm's agent workloads, acting for an advisor
         - >-
           source.identity.namespace == "sv-agents" && source.identity.serviceAccount in ["bob-assistant", "advisor-desk"]
-          && "advisors" in jwt.groups && "x-id-token" in request.headers
-          && unvalidatedJwtPayload(request.headers["x-id-token"]).sub == jwt.sub
+          && "advisors" in jwt.groups
+    # The subject of the ID-JAG exchange: Bob's ID token, from S&V's IdP, for
+    # the access token just verified. It replaces any x-id-token the caller sent.
+    #
+    # Why not from the agent: kagent sends an agent only the caller's access
+    # token (Authorization) and X-User-ID. Neither edition can forward the
+    # user's ID token (kagent-enterprise 0.5.9 has no option for it; OSS kagent
+    # only with a patch). Why not agentgateway's own oauthTokenExchange: it requires
+    # token_type Bearer in the response, while RFC 8693 2.2.1 has the IdP
+    # return N_A for a token that isn't an access token, as Keycloak does for
+    # an ID token. So a small external-auth step does the RFC 8693 exchange
+    # (apps/idtoken-exchange), the same on both editions.
+    extAuth:
+      backendRef: {kind: Service, name: idtoken-exchange, port: 8080}
+      http:
+        addRequestHeaders:
+          x-subject-token: 'jwt.rawToken.unredacted()'
+        allowedRequestHeaders: []               # the verified token above, nothing else
+        allowedResponseHeaders: [x-id-token]
 ---
 apiVersion: ${AGW_BACKEND_API}
 kind: ${AGW_BACKEND_KIND}
@@ -144,3 +159,64 @@ spec:
       policy:
         matchExpressions:
         - 'source.identity.namespace == "kagent" && source.identity.serviceAccount == "kagent-controller"'
+---
+# ---- idtoken-exchange: ai-gateway's ext-auth step (apps/idtoken-exchange) ------
+# Authenticates to S&V's IdP as kagent, the requesting app whose ID token it
+# fetches (the same client ai-gateway uses for the ID-JAG exchange).
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: idtoken-exchange, namespace: agentgateway-system}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: idtoken-exchange, namespace: agentgateway-system}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: idtoken-exchange}}
+  template:
+    metadata:
+      labels: {app: idtoken-exchange}
+    spec:
+      serviceAccountName: idtoken-exchange
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector: {matchLabels: {app: idtoken-exchange}}
+      containers:
+      - name: idtoken-exchange
+        image: ${IDTOKEN_EXCHANGE_IMAGE}
+        env:
+        - {name: TOKEN_URL, value: http://keycloak.sv-identity/realms/sterling-vance/protocol/openid-connect/token}
+        - {name: CLIENT_ID, value: kagent}
+        ports: [{name: http, containerPort: 8080}]
+        readinessProbe: {httpGet: {path: /healthz, port: http}}
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {memory: 64Mi}
+        securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+        volumeMounts: [{name: client, mountPath: /var/run/secrets/client, readOnly: true}]
+      volumes:
+      - name: client
+        secret: {secretName: kagent-client}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: idtoken-exchange, namespace: agentgateway-system}
+spec:
+  selector: {app: idtoken-exchange}
+  ports: [{name: http, port: 8080, targetPort: http}]
+---
+# Only ai-gateway asks it, and only on the check port.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: idtoken-exchange-callers, namespace: agentgateway-system}
+spec:
+  selector: {matchLabels: {app: idtoken-exchange}}
+  action: ALLOW
+  rules:
+  - from: [{source: {principals: [cluster.local/ns/agentgateway-system/sa/ai-gateway]}}]
+    to: [{operation: {ports: ["8080"]}}]
+

@@ -3,13 +3,13 @@
 # does: same Dockerfile, same version ldflags, and the runtime-image digests of
 # the RELEASED 0.10.2 images (released-digests.env, verified against the
 # released controller binary) for every runtime image the patches don't touch.
-#   golang-adk       built from the patched source (0002), pushed here
+#   golang-adk       built from the patched source (0001), pushed here
 #   golang-adk-full  the released index, mirrored here by digest (one registry
 #                    serves both Go variants: controller.goAgentImage.registry)
-#   controller       built from the patched source (0001, 0003), digests baked in
+#   controller       built from the patched source (0002), digests baked in
 set -euo pipefail
 cd "$(dirname "$0")"
-TAG=${TAG:-${KAGENT_LAB_TAG:-0.10.2-lab.3}}
+TAG=${TAG:-${KAGENT_LAB_TAG:-0.10.2-lab.4}}
 REG=${REG:-localhost:${LAB_REGISTRY_PORT:-5001}}
 IMG=${IMG:-$REG/kagent-dev/kagent/controller:$TAG}
 ADK=$REG/kagent-dev/kagent/golang-adk
