@@ -31,14 +31,7 @@ does with a key it doesn't accept:
 | kagent | logs `kagent enterprise license missing or invalid` and runs |
 | agentregistry | logs `agentregistry enterprise license missing or invalid` and runs |
 
-## Status
-
-Validated on 2026-10-01 on fresh clusters (`make up`, then `make verify`),
-with every product on enterprise (`EDITION=enterprise`), and with every
-product but Istio: story 1 15/15, story 2 10/10, identity continuity 27/27,
-the same as OSS. The keys were internal POC trial keys, which every product reported as
-invalid, so Istio ran with none; this validates the switches and the
-stories, not licensed features.
+## Versions
 
 | Product | OSS | Enterprise |
 | --- | --- | --- |
