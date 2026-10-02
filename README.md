@@ -14,9 +14,6 @@ A local, production-shaped lab for the [Solo.io](https://www.solo.io) AI platfor
 ambient, kgateway, agentgateway, kagent + kmcp, Agent Substrate,
 agentregistry and Keycloak, plus two lab apps: the **Observatory** (a live
 control-plane UI) and an **identity continuity** controller (IdP failover).
-Everything runs OSS. Istio, kgateway and agentgateway can each switch to
-Solo Enterprise on their own; kagent and agentregistry aren't wired for it yet
-([docs/ENTERPRISE.md](docs/ENTERPRISE.md)).
 
 ![The whole lab in the Observatory: the edge on the left, one lane per party, external services on the right](docs/images/observatory-export-topology-all.jpg)
 
