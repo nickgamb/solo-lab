@@ -158,8 +158,9 @@ Known gaps, kept on purpose or pending upstream work:
 - **Any namespace can get a lab CA certificate.** The `lab-ca` ClusterIssuer
   signs any `.lab` name for any cert-manager Certificate. In production,
   bind names to namespaces with cert-manager's approver-policy.
-- **kagent's controller doesn't verify token signatures.** kagent 0.10 has
-  only `trusted-proxy` mode, which reads the user from the forwarded token.
+- **OSS kagent's controller doesn't verify token signatures.** kagent 0.10 has
+  only `trusted-proxy` mode, which reads the user from the forwarded token
+  (kagent-enterprise verifies it against S&V's Keycloak, ENTERPRISE.md).
   Its mesh policy admits two callers: the UI, which forwards the access token
   the edge verified, and the agents' worker pools, calling back with the
   token the controller gave their turn. Verifying at a waypoint instead would
@@ -226,9 +227,8 @@ installs every story, so any card runs in any order on the same lab.
 | Where | What | Upstream |
 | --- | --- | --- |
 | `tools/keycloak-idjag` | Keycloak 26.7.4 + PR #49998 (ID-JAG issuing), backported | keycloak/keycloak#49998 |
-| `tools/kagent` 0001 | kagent 0.10.2: forward the user's ID token to agents (bound to the user) | kagent-dev/kagent (PR to open) |
-| `tools/kagent` 0002 | Go ADK: SandboxAgents call the controller back with the caller's credential (they have no ServiceAccount token) | kagent-dev/kagent (PR to open) |
-| `tools/kagent` 0003 | a SandboxAgent turn sent as the last one closes (HITL approval) no longer races its suspend | kagent-dev/kagent (PR to open) |
+| `tools/kagent` 0001 | Go ADK: SandboxAgents call the controller back with the caller's credential (they have no ServiceAccount token). Both editions run this ADK | kagent-dev/kagent (PR to open) |
+| `tools/kagent` 0002 | OSS controller: a SandboxAgent turn sent as the last one closes (HITL approval) no longer races its suspend | kagent-dev/kagent (PR to open) |
 | `tools/substrate-mesh` 0001 | Substrate 0.0.9: WorkerPool pod identity (`serviceAccountName`, labels, annotations) | kagent-dev/substrate (PR to open) |
 | `tools/substrate-mesh` 0002 | a pool with its own ServiceAccount only runs its namespace's actors | kagent-dev/substrate (PR to open) |
 | `tools/substrate-mesh` 0003 | ateom: inbound relayed from a local socket, worker-local traffic pinned, so actors work under in-pod mesh capture | kagent-dev/substrate (PR to open) |

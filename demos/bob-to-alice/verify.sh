@@ -9,7 +9,7 @@ res() { if [ "$1" = ok ]; then ok "$2"; pass=$((pass+1)); else warn "$2"; echo "
 expect() { echo "$3" | tr '\n' ' ' | grep -qiE "$1" && res ok "$2" || res no "$2" "$(echo "$3" | tr '\n' ' ')"; }
 
 TOK=$(kc_token sv-identity sterling-vance kagent "$(lab_secret SV_KAGENT_CLIENT_SECRET)" bob bob-demo)
-BOB=$(echo "$TOK" | jq -r .access_token); BOB_ID=$(echo "$TOK" | jq -r .id_token); unset TOK
+BOB=$(echo "$TOK" | jq -r .access_token); unset TOK
 ALICE=$(user_token alice-identity alice alice-portal "" alice alice-demo)
 [ -n "$BOB" ] && [ -n "$ALICE" ] || die "sign-in failed"
 probe_pod kagent kagent-ui; probe_pod sv-agents
@@ -17,7 +17,7 @@ AS="https://as.$ALICE_DOMAIN"; CA=(--cacert "$LAB_CA_DIR/ca.crt")
 
 ask_bob() {  # ask_bob <question> -> the agent's last reply (what the UI shows), in a new session
   local body; body=$(jq -nc --arg q "$1" --arg c "$(new_uuid)" '{jsonrpc:"2.0",id:"1",method:"message/send",params:{message:{role:"user",kind:"message",messageId:(now|tostring),contextId:$c,parts:[{kind:"text",text:$q}]}}}')
-  a2a_send "$BOB" "$BOB_ID" "$body" | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"'
+  a2a_send "$BOB" "$body" | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"'
 }
 alice_decides() {  # alice_decides approved|denied: waits for her next pending ask
   local p fam kind i

@@ -120,9 +120,6 @@ spec:
         kind: RemoteMCPServer
         name: ledgerline-research
         toolNames: [account_info, sector_outlook, research_note]
-        # Only this tool receives Bob's ID token (least privilege): it is the
-        # subject of the Cross App Access exchange at the egress gateway.
-        allowedHeaders: [x-id-token]
 ---
 # Ledgerline Research: a SaaS S&V subscribes to, reached through Cross App
 # Access on the firm's egress gateway (40-xaa-ledgerline.yaml).

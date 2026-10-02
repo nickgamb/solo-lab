@@ -10,7 +10,8 @@ step "Images (local registry)"
 # tagged by a hash of their source (lab_build)
 BOB_WORKSPACE_IMAGE=$(lab_build sv/bob-workspace "$D/mcp/bob-workspace"); export BOB_WORKSPACE_IMAGE
 LEDGERLINE_RESEARCH_IMAGE=$(lab_build ledgerline/research-mcp "$D/ledgerline/mcp"); export LEDGERLINE_RESEARCH_IMAGE
-ok "$BOB_WORKSPACE_IMAGE  $LEDGERLINE_RESEARCH_IMAGE"
+IDTOKEN_EXCHANGE_IMAGE=$(lab_build lab/idtoken-exchange "$LAB_ROOT/apps/idtoken-exchange"); export IDTOKEN_EXCHANGE_IMAGE
+ok "$BOB_WORKSPACE_IMAGE  $LEDGERLINE_RESEARCH_IMAGE  $IDTOKEN_EXCHANGE_IMAGE"
 ok "$(lab_build lab/toolbox "$LAB_ROOT/tools/toolbox")   (probe pods for the checks)"
 
 step "Ledgerline Research (its own IdP, MCP server, Istio waypoint)"
@@ -32,6 +33,7 @@ for f in "$D"/manifests/*.yaml; do apply_tmpl "$f"; done
 K delete agent bob-assistant -n sv-agents --ignore-not-found --wait >/dev/null
 apply_kustomize "$D/agent"
 rollout sv-mcp deploy/bob-workspace deploy/mcp-waypoint
+rollout agentgateway-system deploy/idtoken-exchange
 wait_for "bob-assistant Ready" 60 5 K wait sandboxagent/bob-assistant -n sv-agents --for=condition=Ready --timeout=2s
 apply_kustomize "$D/desk"
 for a in meeting-prep market-brief compliance-check; do

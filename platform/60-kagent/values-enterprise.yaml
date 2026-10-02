@@ -1,0 +1,46 @@
+# Solo Enterprise for kagent 0.5.9: the same agent model as OSS (SandboxAgents
+# on Agent Substrate 0.0.9, which layer 50 installs), with its own controller
+# that verifies every user token against S&V's Keycloak. docs/ENTERPRISE.md
+# lists what changes against OSS + tools/kagent.
+nameOverride: kagent          # OSS label values, so 80-mesh-policy's selectors hold
+
+global:
+  licensing:
+    createSecret: false       # install.sh makes it from SOLO_KAGENT_LICENSE_KEY
+    secretName: enterprise-kagent-license
+
+oidc:
+  issuer: https://idp.${SV_DOMAIN}/realms/sterling-vance
+  clientId: kagent
+  secretRef: kagent-oidc      # layer 45
+  secretKey: client-secret
+  # Pass the user's own Keycloak token to agents instead of a kagent-minted
+  # one: KAGENT_PROPAGATE_TOKEN and the sv-mcp waypoint's RFC 8693 exchange
+  # need it.
+  skipOBO: true
+
+# Roles from the token's groups (S&V's realm emits lowercase "groups"; the
+# chart's default reads "Groups" and refuses everyone). The Observatory's
+# client-credentials token reads Substrate status.
+rbac:
+  roleMapping:
+    roleMapper: >-
+      (has(claims.groups) ? claims.groups.transformList(i, v, v in rolesMap, rolesMap[v]) : [])
+      + (has(claims.azp) && claims.azp == 'observatory' ? ['global.Reader'] : [])
+    roleMappings:
+      platform-admins: global.Admin
+      advisors: global.Writer
+      admins: null
+      readers: null
+      writers: null
+
+controller:
+  # tools/kagent's golang-adk by digest (0001: SandboxAgent callbacks under
+  # OIDC, solo-io/kagent-enterprise#2258); the controller is the release's.
+  env:
+  - {name: GOLANG_ADK_IMAGE_DIGEST, value: "${KAGENT_LAB_GOADK_DIGEST}"}
+
+substrate: {enabled: false}   # layer 50 owns Substrate (tools/substrate-mesh)
+
+ui:
+  enabled: true

@@ -1,0 +1,41 @@
+# agentregistry-enterprise on the edge: it signs people in itself (PKCE in the
+# browser, bearer tokens for arctl and MCP clients), so no OAuth2 filter here.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: agentregistry, namespace: agentregistry}
+spec:
+  parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-sterling}]
+  hostnames: ["registry.${SV_DOMAIN}"]
+  rules:
+  - matches:
+    - path: {type: PathPrefix, value: /mcp}
+    - path: {type: PathPrefix, value: /.well-known/oauth-protected-resource/mcp}
+    backendRefs: [{name: agentregistry-enterprise-server, port: 31313}]
+    timeouts:
+      request: 1800s          # MCP streams
+  - backendRefs: [{name: agentregistry-enterprise-server, port: 12121}]
+---
+# Only the edge reaches the server; the server (and its telemetry collector,
+# which shares its ServiceAccount) the database and ClickHouse.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: strict, namespace: agentregistry}
+spec: {mtls: {mode: STRICT}}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: registry-enterprise-callers, namespace: agentregistry}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: agentregistry-enterprise, app.kubernetes.io/component: server}}
+  action: ALLOW
+  rules: [{from: [{source: {principals: [cluster.local/ns/kgateway-system/sa/edge]}}]}]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: registry-enterprise-internal, namespace: agentregistry}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/instance: agentregistry}}
+  action: ALLOW
+  rules:
+  - from: [{source: {principals: [cluster.local/ns/agentregistry/sa/agentregistry-enterprise]}}]
+    to: [{operation: {ports: ["5432", "9000", "8123", "4317", "4318"]}}]

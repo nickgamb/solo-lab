@@ -30,7 +30,7 @@ next() {
 
 step "Signing in (Bob at S&V, Alice at her own IdP)"
 TOK=$(kc_token sv-identity sterling-vance kagent "$(lab_secret SV_KAGENT_CLIENT_SECRET)" bob bob-demo)
-BOB=$(echo "$TOK" | jq -r .access_token); BOB_ID=$(echo "$TOK" | jq -r .id_token); unset TOK
+BOB=$(echo "$TOK" | jq -r .access_token); unset TOK
 [ -n "$BOB" ] && [ "$BOB" != null ] || die "could not get Bob's token"
 probe_pod kagent kagent-ui; probe_pod sv-agents bob-assistant; probe_pod sv-agents; probe_pod observability
 AGENT=sv-agents/probe-bob-assistant   # Bob's agent's workload identity
@@ -42,7 +42,7 @@ ask() {  # ask <question>: Bob asks his agent through kagent, prints its reply
   local body reply
   say "Bob: ${_B}$1${_N}"
   body=$(jq -nc --arg q "$1" --arg c "$CTX" '{jsonrpc:"2.0",id:"1",method:"message/send",params:{message:{role:"user",kind:"message",messageId:(now|tostring),contextId:$c,parts:[{kind:"text",text:$q}]}}}')
-  reply=$(a2a_send "$BOB" "$BOB_ID" "$body" | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"')
+  reply=$(a2a_send "$BOB" "$body" | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"')
   say "Agent: $(echo "$reply" | tr '\n' ' ' | cut -c1-240)"
 }
 probe() {  # probe <ns>[/<pod>] <label> <url> <args...>: one call from a probe pod's identity
@@ -80,8 +80,8 @@ fi
 if scene 2 "Cross App Access to Ledgerline (ID-JAG)"; then
   look "Topology: ai-gateway → ledgerline-research, badged kgateway edge and Ledgerline's waypoint"
   ask "What is Ledgerline's view on technology, and which Ledgerline account am I using?"
-  look "Traffic: the call to mcp.ledgerline.lab. The agent held neither cross-company token:"
-  look "ai-gateway traded Bob's ID token for an ID-JAG, and Ledgerline issued its own token."
+  look "Traffic: the call to mcp.ledgerline.lab. The agent held only Bob's S&V access token:"
+  look "ai-gateway got Bob's ID token from S&V's IdP, traded it for an ID-JAG, and Ledgerline issued its own token."
   next
 fi
 
@@ -94,7 +94,7 @@ if scene 3 "What isn't allowed (probe pods, no model)"; then
   probe observability "Bob's token from the wrong workload"               "$GW" call whoami '{}' --token "$BOB"
   probe sv-agents     "Bob's token from a non-agent pod beside the agents" "$GW" call whoami '{}' --token "$BOB"
   probe $AGENT        "skip the waypoint: dial the tool's pod directly"   "http://$POD_IP:3000/mcp" call whoami '{}' --token "$BOB"
-  probe $AGENT        "Ledgerline via XAA without an ID token"            "$XAA" call account_info '{}' --token "$BOB"
+  probe observability "Ledgerline via XAA from the wrong workload"        "$XAA" call account_info '{}' --token "$BOB"
   probe $AGENT        "straight to Ledgerline with Bob's S&V token"       "https://mcp.$LEDGERLINE_DOMAIN/mcp" call account_info '{}' --token "$BOB"
   look "Topology, view Cross-party: the only wires left are the calls that cross a company boundary."
   next
