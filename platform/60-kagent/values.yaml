@@ -16,26 +16,12 @@ rbac:
   namespaces: [kagent, sv-agents, sv-mcp]
 
 controller:
-  # kagent v0.10.2 + tools/kagent (upstream PR candidates): ID token forwarding
-  # and two SandboxAgent fixes (callback auth in the Go ADK, suspend race). The
-  # controller pins the patched golang-adk by digest; other runtimes are the release's.
-  image:
-    registry: localhost:${LAB_REGISTRY_PORT}
-    repository: kagent-dev/kagent/controller
-    tag: ${KAGENT_LAB_TAG}
+  # The Go ADK runtime is tools/kagent's build (0001: callback auth for
+  # SandboxAgents) on both editions; values-<edition>.yaml says how it's pinned.
   goAgentImage:
     registry: localhost:${LAB_REGISTRY_PORT}
+    repository: kagent-dev/kagent/golang-adk
     tag: ${KAGENT_LAB_TAG}
-  auth:
-    mode: trusted-proxy
-    userIdClaim: preferred_username
-  # The edge (kgateway OAuth2) sets the user's ID token in the IdToken cookie.
-  # The controller forwards it to agents as X-Id-Token, only when bound to the
-  # authenticated user and issued to kagent. (0.10.2 chart has no
-  # controller.auth.idToken values yet, hence env.)
-  env:
-  - {name: AUTH_ID_TOKEN_COOKIE, value: IdToken}
-  - {name: AUTH_ID_TOKEN_AUDIENCE, value: kagent}
   resources:
     requests: {cpu: 100m, memory: 256Mi}
   substrate:
@@ -105,11 +91,6 @@ cilium-policy-agent: {enabled: false}
 cilium-manager-agent: {enabled: false}
 cilium-debug-agent: {enabled: false}
 
-# Identity: SSO happens at the kgateway edge (edge-sso.yaml). The controller
-# trusts the forwarded access token's claims WITHOUT verifying its signature,
-# so 80-mesh-policy fences it: only the UI and the agents' worker pools, by
-# ServiceAccount, reach :8083.
-
 # The ops agents' tool server. The chart default binds it to cluster-admin and
 # lets it write anything; here it reads (no Secrets), and refuses writes itself.
 # The chart's Grafana MCP server: no agent here uses it, and it would need a
@@ -117,6 +98,7 @@ cilium-debug-agent: {enabled: false}
 grafana-mcp: {enabled: false}
 
 kagent-tools:
+  enabled: true             # the OSS chart's default; enterprise defaults it off
   tools:
     args: [--read-only]
   rbac:

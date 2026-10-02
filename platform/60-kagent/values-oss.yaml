@@ -1,0 +1,15 @@
+# OSS kagent v0.10.2 + tools/kagent (upstream PR candidates): two SandboxAgent
+# fixes (callback auth in the Go ADK, suspend race). The controller pins the
+# patched golang-adk by digest; other runtimes are the release's.
+controller:
+  image:
+    registry: localhost:${LAB_REGISTRY_PORT}
+    repository: kagent-dev/kagent/controller
+    tag: ${KAGENT_LAB_TAG}
+  # Identity: SSO happens at the kgateway edge (edge-sso.yaml). The controller
+  # trusts the forwarded access token's claims WITHOUT verifying its signature,
+  # so 80-mesh-policy fences it: only the UI and the agents' worker pools, by
+  # ServiceAccount, reach :8083.
+  auth:
+    mode: trusted-proxy
+    userIdClaim: preferred_username

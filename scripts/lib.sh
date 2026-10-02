@@ -29,7 +29,7 @@ set +a
 unset _lab_caller
 
 # Promote ENT_<P>_<X> over <P>_<X> for each product running enterprise.
-for _p in ISTIO KGATEWAY AGW KAGENT; do
+for _p in ISTIO KGATEWAY AGW KAGENT AGENTREGISTRY; do
   _ed="${_p}_EDITION"
   if [ "${!_ed}" = enterprise ]; then
     while IFS='=' read -r _k _; do
@@ -46,6 +46,7 @@ export SOLO_ISTIO_LICENSE_KEY="${SOLO_ISTIO_LICENSE_KEY:-${SOLO_LICENSE_KEY:-}}"
 export SOLO_KGATEWAY_LICENSE_KEY="${SOLO_KGATEWAY_LICENSE_KEY:-${SOLO_LICENSE_KEY:-}}"
 export SOLO_AGW_LICENSE_KEY="${SOLO_AGW_LICENSE_KEY:-${SOLO_LICENSE_KEY:-}}"
 export SOLO_KAGENT_LICENSE_KEY="${SOLO_KAGENT_LICENSE_KEY:-${SOLO_LICENSE_KEY:-}}"
+export SOLO_AGENTREGISTRY_LICENSE_KEY="${SOLO_AGENTREGISTRY_LICENSE_KEY:-${SOLO_LICENSE_KEY:-}}"
 
 export KCTX="kind-$LAB_NAME"
 
@@ -292,13 +293,13 @@ kc_token() {
 # user_token: kc_token's access token alone
 user_token() { kc_token "$@" | jq -r .access_token; }
 
-# a2a_send <access token> <id token> <json-rpc body>: one A2A turn with Bob's
-# agent, sent as kagent's UI would (from probe-kagent-ui, with the edge's
-# Authorization and IdToken cookie). The tokens reach the pod on stdin.
+# a2a_send <access token> <json-rpc body>: one A2A turn with Bob's agent, sent
+# as kagent's UI would (from probe-kagent-ui, with the access token the edge
+# forwards). The token and body reach the pod on stdin.
 a2a_send() {
-  printf '%s\n%s\n%s\n' "$1" "$2" "$3" | K exec -i -n kagent probe-kagent-ui -- sh -c \
-    'read -r t; read -r i; read -r b; curl -s -m 300 http://kagent-controller.kagent:8083/api/a2a-sandboxes/sv-agents/bob-assistant/ \
-       -H "authorization: Bearer $t" -H "cookie: IdToken=$i" -H "content-type: application/json" -d "$b"'
+  printf '%s\n%s\n' "$1" "$2" | K exec -i -n kagent probe-kagent-ui -- sh -c \
+    'read -r t; read -r b; curl -s -m 300 http://kagent-controller.kagent:8083/api/a2a-sandboxes/sv-agents/bob-assistant/ \
+       -H "authorization: Bearer $t" -H "content-type: application/json" -d "$b"'
 }
 # with_bearer <token> curl <args...>: curl with "Authorization: Bearer <token>"
 # read from stdin (-H @-), so the token isn't on curl's command line
