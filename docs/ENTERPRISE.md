@@ -70,9 +70,7 @@ enabled. Nothing else.
 
 0.5.9 keeps OSS kagent's agent model: SandboxAgents on Agent Substrate 0.0.9
 (layer 50), the same CRDs and the same controller API, so the agents and
-checks carry over. (The 1.0 line, AgentTemplate + Harness on Substrate 0.2,
-can't yet forward a user's token to tools or give agents their own identity,
-which the stories rely on.)
+checks carry over.
 
 - **Authentication:** the controller verifies every token against S&V's
   Keycloak (`oidc.*`), where OSS trusts the forwarded token. Roles come from
@@ -81,16 +79,14 @@ which the stories rely on.)
   user's own token to agents, as the RFC 8693 exchange at the waypoint needs.
 - **Go ADK:** `tools/kagent`'s build, pinned by digest
   (`GOLANG_ADK_IMAGE_DIGEST`): SandboxAgents call the controller back with
-  the caller's credential (solo-io/kagent-enterprise#2258).
+  the caller's credential.
 - **Beyond the chart** (`platform/60-kagent/enterprise.yaml`): the licence
   Secret; a read on GatewayClasses, which the controller watches and the
   chart's namespace-scoped roles leave out; and an edge route for `/api`,
   which the release's UI image proxies to `127.0.0.1:8083` in its own pod.
-- **Not in 0.5.9:**
-  - ID-token forwarding to agents. Cross App Access doesn't need it: the
-    egress gateway gets the ID token itself (IDENTITY-FLOWS.md, section 2).
-  - `tools/kagent` 0002 (suspend race): a reply sent right after a response
-    closes, a human approval for one, can wait about two minutes.
+- Agents get the caller's access token, not the ID token. Cross App Access
+  doesn't need it: the egress gateway gets the ID token itself
+  (IDENTITY-FLOWS.md, section 2).
 - The management UI chart isn't installed; the chart's own UI runs behind
   the edge's SSO, as on OSS.
 

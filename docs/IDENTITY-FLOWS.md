@@ -154,8 +154,8 @@ sequenceDiagram
     same sign-in. The gateway puts it in `x-id-token`, replacing any value the
     caller sent. Only ai-gateway may call the service (mesh policy).
   - Why ext-auth and not the agent or the gateway's own exchange: kagent
-    forwards only the access token to agents (kagent-enterprise has no option
-    to forward the ID token), and agentgateway's `oauthTokenExchange` requires
+    passes agents the access token, not the ID token, on either edition, and
+    agentgateway's `oauthTokenExchange` requires
     `token_type: Bearer` in the response, while RFC 8693 (2.2.1) has the IdP
     return `N_A` for an ID token.
   - Backend auth `crossAppAccess`, authenticating to S&V's Keycloak as
@@ -301,7 +301,7 @@ new agent key, so the next run starts as a first contact.
 | Patch | Needed for | Why |
 | --- | --- | --- |
 | `tools/kagent` 0001 | all three | Substrate actors call the kagent controller back with the caller's credential (they have no ServiceAccount token) |
-| `tools/kagent` 0002 | writes that wait for approval, UMA holds | a turn sent as the last one closes (after a human approval) no longer races the actor's suspend (OSS controller only; kagent-enterprise 0.5.9 lacks it) |
+| `tools/kagent` 0002 | writes that wait for approval, UMA holds | a turn sent as the last one closes (after a human approval) no longer races the actor's suspend (OSS controller) |
 | `tools/substrate-mesh` 0001, 0002 | all three | a worker pool runs as its agent's ServiceAccount, so the agent's calls carry that SPIFFE ID (which the waypoint, ai-gateway and the adapter check), and only serves its own namespace |
 | `tools/substrate-mesh` 0003 | all three | actors work under the mesh's in-pod traffic capture |
 | `tools/keycloak-idjag` | Cross App Access | ID-JAG issuing (keycloak/keycloak#49998) |

@@ -50,10 +50,9 @@ spec:
     # The subject of the ID-JAG exchange: Bob's ID token, from S&V's IdP, for
     # the access token just verified. It replaces any x-id-token the caller sent.
     #
-    # Why not from the agent: kagent sends an agent only the caller's access
-    # token (Authorization) and X-User-ID. Neither edition can forward the
-    # user's ID token (kagent-enterprise 0.5.9 has no option for it; OSS kagent
-    # only with a patch). Why not agentgateway's own oauthTokenExchange: it requires
+    # Why not from the agent: kagent passes an agent the caller's access token,
+    # not the ID token, and neither edition has a setting to pass it. Why not
+    # agentgateway's own oauthTokenExchange: it requires
     # token_type Bearer in the response, while RFC 8693 2.2.1 has the IdP
     # return N_A for a token that isn't an access token, as Keycloak does for
     # an ID token. So a small external-auth step does the RFC 8693 exchange

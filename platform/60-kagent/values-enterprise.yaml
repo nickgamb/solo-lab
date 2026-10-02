@@ -35,8 +35,8 @@ rbac:
       writers: null
 
 controller:
-  # tools/kagent's golang-adk by digest (0001: SandboxAgent callbacks under
-  # OIDC, solo-io/kagent-enterprise#2258); the controller is the release's.
+  # tools/kagent's golang-adk by digest (0001: SandboxAgent callbacks with the
+  # caller's credential); the controller is the release's.
   env:
   - {name: GOLANG_ADK_IMAGE_DIGEST, value: "${KAGENT_LAB_GOADK_DIGEST}"}
 

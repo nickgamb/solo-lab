@@ -3,8 +3,8 @@
 // OIDC ID token for the requesting app, which the gateway then trades for an
 // ID-JAG (demos/bob/manifests/40-xaa-ledgerline.yaml).
 //
-// It exists because the agent can't bring the ID token on every edition:
-// kagent-enterprise 0.5.9 forwards only the access token to agents. And
+// It exists because the agent doesn't have the ID token: kagent passes agents
+// the caller's access token, not the ID token. And
 // agentgateway's own token exchange can't fetch it: it requires token_type
 // Bearer in the response, while RFC 8693 (2.2.1) has an IdP return N_A for a
 // token that isn't an access token, as Keycloak does for an ID token.
