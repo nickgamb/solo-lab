@@ -314,8 +314,7 @@ failover takes about 10 s after the cut and failback about 15 s after the heal.
 - **Claims mapping** (from the rule builder): a canvas with a node per
   tier in chain order on the left and the S&V profile on the right. Each upstream
   lists its claims (from discovery, protocol claims left out, or added with
-  **+**); drag a claim onto a profile attribute to map it. The break-glass tier
-  shows in its place in the chain with nothing to map. The profile node
+  **+**); drag a claim onto a profile attribute to map it. The profile node
   sets which clients' tokens carry it. Each upstream's directory has
   **Test connection** (the saved settings, run as the sync). **Code** edits
   the same mapping as YAML; **Schedule** sets the sync's cron, pauses it,

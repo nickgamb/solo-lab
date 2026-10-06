@@ -148,5 +148,3 @@
 .cm-cron .mono { font-size: 13px; color: var(--accent-2); }
 .cm-test { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .cm-test .ok-text { color: var(--ok); }
-.cm-local { opacity: .85; border-style: dashed; }
-.cm-local p { margin: 8px 0 0; padding: 0 12px 12px; line-height: 1.45; }

@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { BUILTIN_ATTRIBUTES, IDENTITY_KEYS, type ContinuitySpec, type IdentityContinuity } from '../api'
 import { useClaims } from './claimsContext'
 import { IDP_W, UNI_W, idpPositions, sideOf, tierColor } from './claimsLayout'
-import { IdpNode, LocalNode, MappingEdge, UnifiedNode, type AttrRow, type ClaimRow, type IdpData, type LocalData, type MapEdgeData, type UnifiedData } from './ClaimsNodes'
+import { IdpNode, MappingEdge, UnifiedNode, type AttrRow, type ClaimRow, type IdpData, type MapEdgeData, type UnifiedData } from './ClaimsNodes'
 
 type XY = { x: number; y: number }
 type Props = {
@@ -15,7 +15,7 @@ type Props = {
   positions: Map<string, XY>; openEdge?: string; onMap: (tier: string, claim: string, attribute: string) => void
 }
 
-const claimNodeTypes = { idp: IdpNode, local: LocalNode, unified: UnifiedNode }
+const claimNodeTypes = { idp: IdpNode, unified: UnifiedNode }
 const claimEdgeTypes = { mapping: MappingEdge }
 const rank = (i: number) => (i === 0 ? 'primary' : i === 1 ? 'secondary' : `#${i + 1}`)
 const edgeId = (tier: string, attribute: string) => `${tier}|${attribute}`
@@ -33,17 +33,13 @@ function Canvas({ ic, spec, extras, pending, positions, openEdge, onMap }: Props
 
   const { built, edges, legend } = useMemo(() => {
     const status = new Map((ic.status?.tiers ?? []).map(s => [s.name, s]))
-    // every tier in chain order gets a node; a local tier's accounts are the
-    // profile itself, so it has nothing to map
-    const chain = spec.tiers.map((t, i) => ({ t, i })).filter(x => x.t.type === 'oidc' || x.t.type === 'local')
-    const oidc = chain.filter(x => x.t.type === 'oidc')
+    // every IdP in chain order gets a node (the broker's break-glass tier has
+    // nothing to map)
+    const chain = spec.tiers.map((t, i) => ({ t, i })).filter(x => x.t.type === 'oidc')
+    const oidc = chain
     const kOf = new Map(chain.map((x, k) => [x.t.name, k]))
     const declared = new Set((spec.profile?.attributes ?? []).map(a => a.name))
-    const idps: (IdpData | LocalData)[] = chain.map(({ t, i }, k) => {
-      if (t.type === 'local') {
-        const data: LocalData = { tier: t, order: i + 1, rank: rank(k), side: sideOf(k), color: tierColor(k) }
-        return data
-      }
+    const idps: IdpData[] = chain.map(({ t, i }, k) => {
       const discovered = (status.get(t.name)?.claimsSupported ?? []).filter(c => !PROTOCOL.has(c))
       const mappedClaims = (t.claims ?? []).map(m => m.claim)
       const extra = extras[t.name] ?? []
@@ -53,10 +49,10 @@ function Canvas({ ic, spec, extras, pending, positions, openEdge, onMap }: Props
       const data: IdpData = { tier: t, order: i + 1, rank: rank(k), side: sideOf(k), color: tierColor(k), claims: rows, credsPending: pending.has(t.name) }
       return data
     })
-    const at = idpPositions(idps.map(d => ('claims' in d ? d.claims.length : 0)))
+    const at = idpPositions(idps.map(d => d.claims.length))
     const nodes: Node[] = idps.map((data, k) => {
       const id = `idp:${data.tier.name}`
-      return { id, type: 'claims' in data ? 'idp' : 'local', position: positions.get(id) ?? at[k], data, deletable: false, style: { width: IDP_W } }
+      return { id, type: 'idp', position: positions.get(id) ?? at[k], data, deletable: false, style: { width: IDP_W } }
     })
     // attributes a tier maps but the profile doesn't declare still get a row,
     // so their wires show (and say what's wrong)
@@ -78,7 +74,7 @@ function Canvas({ ic, spec, extras, pending, positions, openEdge, onMap }: Props
         targetHandle: `l:${m.attribute}`, selected: id === sel, data, zIndex: id === openEdge ? 10 : 0,
       }
     }))
-    const legend = idps.filter(d => 'claims' in d).map(d => ({ name: d.tier.displayName || d.tier.name, color: d.color }))
+    const legend = idps.map(d => ({ name: d.tier.displayName || d.tier.name, color: d.color }))
     return { built: nodes, edges, legend }
   }, [ic, spec, extras, pending, positions, openEdge, sel])
 

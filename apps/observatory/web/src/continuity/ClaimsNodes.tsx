@@ -8,7 +8,6 @@ import { TestConnection } from './TestConnection'
 
 export type ClaimRow = { name: string; discovered: boolean; mapped: boolean; custom: boolean }
 export type IdpData = { tier: Tier; order: number; rank: string; side: Side; color: string; claims: ClaimRow[]; credsPending: boolean }
-export type LocalData = { tier: Tier; order: number; rank: string; side: Side; color: string }
 export type AttrRow = { name: string; builtin: boolean; key: boolean; multivalued: boolean; declared: boolean }
 export type UnifiedData = { title: string; issuer?: string; attrs: AttrRow[]; tokenClients: string[] }
 export type MapEdgeData = { tier: string; claim: string; attribute: string; color: string; directoryPath?: string; open: boolean }
@@ -95,25 +94,6 @@ export const IdpNode = memo(({ id, data }: NodeProps) => {
         {d.credsPending && !editing && <div className="small subtle">credentials written on save</div>}
         {t.directory && !editing && <TestConnection tier={t.name} />}
       </div>
-    </div>
-  )
-})
-
-// LocalNode: the broker's own accounts at the end of the chain: break-glass
-// for platform admins, never a workforce IdP, so nothing to map.
-export const LocalNode = memo(({ data }: NodeProps) => {
-  const d = data as LocalData
-  return (
-    <div className={`cm-node cm-idp cm-local ${d.side}`} style={tint(d.color)}>
-      <div className="cm-head">
-        <div className="row">
-          <span className="order">{d.order}</span>
-          <b className="grow ellipsis" title={d.tier.name}>{d.tier.displayName || d.tier.name}</b>
-          <span className="chip">{d.rank}</span>
-        </div>
-        <div className="subtle small">the broker's own accounts</div>
-      </div>
-      <p className="small subtle cm-pad">Platform admins only, for when every IdP is down. Workforce users have no account here, so there is nothing to map. Each IdP in the chain appears above, to be mapped.</p>
     </div>
   )
 })
