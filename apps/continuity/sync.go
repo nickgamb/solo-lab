@@ -95,10 +95,11 @@ func runSync(args []string) int {
 }
 
 func syncOnce(ctx context.Context, c client.Client, ic *v1.IdentityContinuity, caFile string, log *slog.Logger) (profilesync.Result, error) {
-	if ic.Spec.Sync == nil {
-		return profilesync.Result{}, errors.New("spec.sync is not set")
+	// a run needs no schedule: spec.sync only times them
+	ref := ""
+	if ic.Spec.Sync != nil {
+		ref = ic.Spec.Sync.CredentialsRef.Name
 	}
-	ref := ic.Spec.Sync.CredentialsRef.Name
 	if ref == "" {
 		ref = "continuity-sync"
 	}

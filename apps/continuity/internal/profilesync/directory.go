@@ -61,11 +61,12 @@ type Credentials struct {
 
 // tokenSource caches one client_credentials access token.
 type tokenSource struct {
-	hc  *http.Client
-	c   Credentials
-	mu  sync.Mutex
-	tok string
-	exp time.Time
+	hc   *http.Client
+	c    Credentials
+	post bool // client_secret_post (Auth0's default), else client_secret_basic
+	mu   sync.Mutex
+	tok  string
+	exp  time.Time
 }
 
 func (t *tokenSource) token(ctx context.Context) (string, error) {
@@ -81,12 +82,18 @@ func (t *tokenSource) token(ctx context.Context) (string, error) {
 	if t.c.Audience != "" {
 		form.Set("audience", t.c.Audience)
 	}
+	if t.post {
+		form.Set("client_id", t.c.ClientID)
+		form.Set("client_secret", t.c.ClientSecret)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.c.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.SetBasicAuth(url.QueryEscape(t.c.ClientID), url.QueryEscape(t.c.ClientSecret))
+	if !t.post {
+		req.SetBasicAuth(url.QueryEscape(t.c.ClientID), url.QueryEscape(t.c.ClientSecret))
+	}
 	resp, err := t.hc.Do(req)
 	if err != nil {
 		return "", err
@@ -165,6 +172,7 @@ func New(typ, base string, c Credentials, hc *http.Client) (Directory, error) {
 	case "scim":
 		return &scim{api{base: base, accept: "application/scim+json, application/json", ctype: "application/scim+json", hc: hc, ts: ts}}, nil
 	case "auth0":
+		ts.post = true // a Machine to Machine app's default token endpoint auth
 		return &auth0{api{base: base, accept: "application/json", ctype: "application/json", hc: hc, ts: ts}}, nil
 	case "keycloak":
 		return &keycloakDir{api{base: base, accept: "application/json", ctype: "application/json", hc: hc, ts: ts}}, nil

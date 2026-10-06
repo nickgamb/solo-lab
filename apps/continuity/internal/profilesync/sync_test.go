@@ -302,13 +302,19 @@ func TestAuth0WritesOnlyProfileAndMetadata(t *testing.T) {
 	var patched map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/token" {
+			r.ParseForm()
+			if _, _, basic := r.BasicAuth(); basic || r.PostForm.Get("client_id") != "m2m" || r.PostForm.Get("client_secret") != "s" ||
+				r.PostForm.Get("audience") != "https://t/api/v2/" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
 			tokenOK(w)
 			return
 		}
 		json.NewDecoder(r.Body).Decode(&patched)
 	}))
 	defer srv.Close()
-	d, _ := New("auth0", srv.URL+"/api/v2", Credentials{TokenURL: srv.URL + "/token"}, srv.Client())
+	d, _ := New("auth0", srv.URL+"/api/v2", Credentials{TokenURL: srv.URL + "/token", ClientID: "m2m", ClientSecret: "s", Audience: "https://t/api/v2/"}, srv.Client())
 	if err := d.Update(context.Background(), "auth0|1", map[string][]string{"user_metadata.department": {"Ops"}, "email": {"b@s"}}); err != nil {
 		t.Fatal(err)
 	}

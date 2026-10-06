@@ -291,10 +291,6 @@ func (c *Continuity) RunSync(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, err)
 		return
 	}
-	if _, ok, _ := unstructured.NestedMap(ic.Object, "spec", "sync"); !ok {
-		http.Error(w, "no sync is configured: set a schedule and save first", http.StatusConflict)
-		return
-	}
 	jobName, code, err := startSyncJob(r, cl, ns, ic, "manual", nil)
 	if err != nil {
 		http.Error(w, err.Error(), code)

@@ -30,6 +30,13 @@ K create secret generic continuity-sync -n sv-identity \
   --from-literal=client-id=continuity-sync \
   --from-literal=client-secret="$(lab_secret SV_CONTINUITY_SYNC_CLIENT_SECRET)" \
   --dry-run=client -o yaml | K apply -f - >/dev/null
+# Auth0 as a directory (the directory sync): a Machine to Machine app for its
+# Management API, in .env
+if [ -n "${AUTH0_DIRECTORY_CLIENT_ID:-}" ] && [ -n "${AUTH0_DIRECTORY_CLIENT_SECRET:-}" ]; then
+  K create secret generic directory-auth0 -n sv-identity \
+    --from-literal=client-id="$AUTH0_DIRECTORY_CLIENT_ID" --from-literal=client-secret="$AUTH0_DIRECTORY_CLIENT_SECRET" \
+    --dry-run=client -o yaml | K apply -f - >/dev/null
+fi
 # the sync reads S&V's workforce IdP's users with its view-users client there
 K create secret generic directory-keycloak -n sv-identity \
   --from-literal=client-id=continuity-directory \
@@ -79,6 +86,10 @@ rollout sv-identity deploy/continuity-controller
 desired=$({ for n in $CHAIN; do
   store=false; if echo " $IDP_ISSUES_IDJAG " | grep -q " $n "; then store=true; fi
   dir=null
+  if [ "$n" = auth0 ] && [ -n "${AUTH0_DIRECTORY_CLIENT_ID:-}" ]; then
+    a=${AUTH0_ISSUER%/}
+    dir=$(jq -nc --arg a "$a" '{directory: {type: "auth0", url: "\($a)/api/v2", audience: "\($a)/api/v2/", credentialsRef: {name: "directory-auth0"}}}')
+  fi
   if [ "$n" = keycloak ] && [ "$KEYCLOAK_ISSUER" = "https://login.$SV_DOMAIN/realms/workforce" ]; then
     dir='{"directory": {"type": "keycloak", "url": "http://keycloak.sv-workforce.svc/admin/realms/workforce", "credentialsRef": {"name": "directory-keycloak"}},
       "attributes": [{"attribute": "email", "path": "email"}, {"attribute": "firstName", "path": "firstName"}, {"attribute": "lastName", "path": "lastName"}]}'

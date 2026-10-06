@@ -369,6 +369,20 @@ slash (`https://<tenant>.us.auth0.com/`). Unset, the lab has no auth0 tier.
 
 Bob's groups come from his S&V account, not from Auth0.
 
+**Auth0 as a directory** (the directory sync): **Applications → Create
+Application → Machine to Machine Applications**, authorized for the **Auth0
+Management API** with `read:users` and `update:users`. Its credentials in
+`.env`, then `make layer-47`:
+
+```
+AUTH0_DIRECTORY_CLIENT_ID=<Client ID>
+AUTH0_DIRECTORY_CLIENT_SECRET=<Client Secret>
+```
+
+This writes Secret `sv-identity/directory-auth0` and sets the auth0 IdP's
+directory (`https://<tenant>/api/v2`); map its attributes in the
+Observatory's Directory sync.
+
 ## Gluu setup
 
 Gluu as S&V's enterprise IdP: [GLUU.md](GLUU.md#sv-enterprise-idp-gluu).
