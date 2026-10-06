@@ -1,0 +1,33 @@
+# Ledgerline's egress waypoint. One ServiceEntry per internet host Ledgerline
+# reaches (scripts/idp.sh ledgerline_egress) binds to it: the signing keys of
+# its Gluu authorization server (RESOURCE_AS=gluu) and of each enterprise IdP
+# it trusts for ID-JAGs. Its namespaces have no other way to the internet.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: egress-waypoint
+  namespace: ledgerline-egress
+  labels: {istio.io/waypoint-for: service}
+spec:
+  gatewayClassName: istio-waypoint
+  listeners:
+  - {name: mesh, port: 15008, protocol: HBONE}
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: strict, namespace: ledgerline-egress}
+spec: {mtls: {mode: STRICT}}
+---
+# Ledgerline's MCP server (its AS's keys) and its Keycloak (an ID-JAG issuer's keys)
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: egress-callers, namespace: ledgerline-egress}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: egress-waypoint}]
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/ledgerline/sa/ledgerline-research
+        - cluster.local/ns/ledgerline-identity/sa/keycloak

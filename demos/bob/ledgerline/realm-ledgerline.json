@@ -50,16 +50,19 @@
     {
       "clientId": "sterling-vance-kagent",
       "name": "Sterling & Vance agent platform (Cross App Access client)",
-      "description": "Redeems ID-JAGs issued by the S&V IdP (RFC 7523 jwt-bearer). No interactive login.",
+      "description": "Redeems ID-JAGs from S&V's enterprise IdPs (RFC 7523 jwt-bearer), authenticating with S&V's key (private_key_jwt). No interactive login.",
       "enabled": true,
       "publicClient": false,
-      "secret": "${LL_SVKAGENT_CLIENT_SECRET}",
+      "clientAuthenticatorType": "client-jwt",
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "attributes": {
         "oauth2.jwt.authorization.grant.enabled": "true",
         "oauth2.jwt.authorization.grant.idp": "sterling-vance",
+        "jwt.credential.certificate": "${SV_XAA_CLIENT_CERT}",
+        "jwt.credential.kid": "${SV_XAA_CLIENT_KID}",
+        "use.jwks.url": "false",
         "access.token.lifespan": "300"
       },
       "protocolMappers": [

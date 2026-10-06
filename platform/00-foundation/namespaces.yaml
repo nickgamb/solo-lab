@@ -126,3 +126,10 @@ kind: Namespace
 metadata:
   name: ledgerline-identity
   labels: {lab.solo.io/party: ledgerline, istio.io/dataplane-mode: ambient}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ledgerline-egress
+  # Ledgerline's way out to internet services: the keys of the IdPs it trusts
+  labels: {lab.solo.io/party: ledgerline, istio.io/dataplane-mode: ambient}
