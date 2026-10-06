@@ -1,21 +1,32 @@
 // idtoken-exchange: agentgateway's external authorization step for Cross App
-// Access. Given the caller's verified access token, it returns the same user's
-// OIDC ID token for the requesting app, which the gateway then trades for an
-// ID-JAG (demos/bob/manifests/40-xaa-ledgerline.yaml).
+// Access. Given the caller's verified access token from S&V's Keycloak, it
+// returns an OIDC ID token for the same user from the enterprise IdP that
+// vouches for them, which the gateway then trades for an ID-JAG
+// (demos/bob/manifests/40-xaa-ledgerline.yaml).
 //
 // It exists because the agent doesn't have the ID token: kagent passes agents
-// the caller's access token, not the ID token. And
-// agentgateway's own token exchange can't fetch it: it requires token_type
-// Bearer in the response, while RFC 8693 (2.2.1) has an IdP return N_A for a
-// token that isn't an access token, as Keycloak does for an ID token.
+// the caller's access token, not the ID token. And agentgateway's own token
+// exchange can't fetch it: it requires token_type Bearer in the response,
+// while RFC 8693 (2.2.1) has an IdP return N_A for a token that isn't an
+// access token, as Keycloak does for an ID token.
 //
-// The exchange is RFC 8693 at the IdP, authenticated as the requesting app:
+// Which IdP (OPS, scripts/idp.sh xaa_env): the upstream OpenID Providers that
+// issue ID-JAGs, in S&V's failover order, then S&V's Keycloak.
 //
-//	subject_token=<access token>  subject_token_type=...:access_token
-//	requested_token_type=...:id_token  scope=openid
-//
-// The IdP issues it only for a live session of that user and client, so the
-// ID token belongs to the same sign-in as the access token.
+//	upstream  S&V's Keycloak brokers the user's sign-in there and keeps their
+//	          upstream tokens. They are read through Keycloak's Identity
+//	          Brokering API v2 as the requesting app (kagent, allowed for
+//	          that upstream only) with the user's own access token, and the
+//	          ID token is renewed at the upstream with the refresh token, so
+//	          the upstream decides on every renewal. A user with no account
+//	          there skips it; an upstream that is unreachable is skipped for
+//	          the next; an upstream that refuses (revoked, disabled) refuses
+//	          the call.
+//	keycloak  RFC 8693 at S&V's Keycloak, as the requesting app:
+//	            subject_token=<access token>  subject_token_type=...:access_token
+//	            requested_token_type=...:id_token  scope=openid
+//	          Keycloak issues it only for a live session of that user and
+//	          client, so the ID token belongs to the same sign-in.
 package main
 
 import (
@@ -41,6 +52,8 @@ const (
 	tokenExchange   = "urn:ietf:params:oauth:grant-type:token-exchange"
 	typeAccessToken = "urn:ietf:params:oauth:token-type:access_token"
 	typeIDToken     = "urn:ietf:params:oauth:token-type:id_token"
+	// how long an upstream ID token is reused before the upstream is asked again
+	upstreamTTL = time.Minute
 )
 
 func env(k, def string) string {
@@ -50,14 +63,27 @@ func env(k, def string) string {
 	return def
 }
 
-// exchanger turns access tokens into ID tokens, caching each until it expires.
+// op is an OpenID Provider and S&V's client there.
+type op struct {
+	Name     string `json:"name"`
+	TokenURL string `json:"token_url"`
+	ClientID string `json:"client_id"`
+	secret   string
+}
+
+// exchanger turns access tokens into ID tokens, caching each for a while.
 type exchanger struct {
-	tokenURL, clientID, clientSecret string
-	hc                               *http.Client
-	now                              func() time.Time
+	keycloak  op   // S&V's Keycloak: the floor, and the broker
+	upstreams []op // ID-JAG-issuing upstreams, in failover order
+	brokerURL string
+	hc        *http.Client
+	now       func() time.Time
 
 	mu    sync.Mutex
 	cache map[[32]byte]cached
+	// the newest refresh token per upstream user, for upstreams that rotate
+	// them (the broker keeps only the one from sign-in)
+	refresh map[string]string
 }
 
 type cached struct {
@@ -65,17 +91,23 @@ type cached struct {
 	exp     time.Time
 }
 
-// errRefused is the IdP declining the exchange (bad or expired subject token,
-// no live session): the caller is refused. Anything else is a failure.
-var errRefused = errors.New("exchange refused")
+var (
+	// errRefused: an IdP declined (bad or expired subject token, no live
+	// session, revoked or disabled upstream account): the caller is refused.
+	errRefused = errors.New("refused")
+	// errNotLinked: the user has no stored tokens at that upstream.
+	errNotLinked = errors.New("no account at the upstream")
+	// errUnavailable: the upstream didn't answer, or answered 5xx.
+	errUnavailable = errors.New("upstream unavailable")
+)
 
-func (x *exchanger) idToken(ctx context.Context, accessToken string) (string, error) {
+func (x *exchanger) idToken(ctx context.Context, accessToken string) (id, source string, err error) {
 	key := sha256.Sum256([]byte(accessToken))
 	now := x.now()
 	x.mu.Lock()
 	if c, ok := x.cache[key]; ok && now.Before(c.exp) {
 		x.mu.Unlock()
-		return c.idToken, nil
+		return c.idToken, payload(c.idToken).Iss, nil
 	}
 	for k, c := range x.cache { // small and short-lived: prune on the way
 		if !now.Before(c.exp) {
@@ -84,74 +116,201 @@ func (x *exchanger) idToken(ctx context.Context, accessToken string) (string, er
 	}
 	x.mu.Unlock()
 
-	form := url.Values{
+	source, ttl := x.keycloak.Name, time.Duration(0)
+	for _, u := range x.upstreams {
+		id, err = x.fromUpstream(ctx, accessToken, u)
+		switch {
+		case err == nil:
+			source, ttl = u.Name, upstreamTTL
+		case errors.Is(err, errNotLinked):
+			continue
+		case errors.Is(err, errUnavailable):
+			slog.Warn("upstream unavailable, next in the chain", "upstream", u.Name, "err", err)
+			continue
+		default:
+			return "", u.Name, err
+		}
+		break
+	}
+	if id == "" {
+		if id, err = x.exchange(ctx, accessToken); err != nil {
+			return "", source, err
+		}
+	}
+	// cache until the earlier of the two expiries, less a little slack, and
+	// an upstream's for no longer than upstreamTTL
+	exp := earliest(expiry(id), expiry(accessToken)).Add(-10 * time.Second)
+	if ttl > 0 {
+		exp = earliest(exp, now.Add(ttl))
+	}
+	if exp.After(now) {
+		x.mu.Lock()
+		x.cache[key] = cached{idToken: id, exp: exp}
+		x.mu.Unlock()
+	}
+	return id, source, nil
+}
+
+// exchange gets the ID token from S&V's Keycloak (RFC 8693).
+func (x *exchanger) exchange(ctx context.Context, accessToken string) (string, error) {
+	var out struct {
+		AccessToken     string `json:"access_token"` // RFC 8693 carries any issued token here
+		IssuedTokenType string `json:"issued_token_type"`
+	}
+	if err := x.tokenRequest(ctx, x.keycloak, url.Values{
 		"grant_type":           {tokenExchange},
 		"subject_token":        {accessToken},
 		"subject_token_type":   {typeAccessToken},
 		"requested_token_type": {typeIDToken},
 		"scope":                {"openid"},
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, x.tokenURL, strings.NewReader(form.Encode()))
-	if err != nil {
+	}, &out); err != nil {
 		return "", err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.SetBasicAuth(url.QueryEscape(x.clientID), url.QueryEscape(x.clientSecret))
-	resp, err := x.hc.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		var e struct {
-			Error string `json:"error"`
-		}
-		_ = json.Unmarshal(body, &e)
-		return "", fmt.Errorf("%w: %s", errRefused, e.Error)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("token endpoint: HTTP %d", resp.StatusCode)
-	}
-	var out struct {
-		AccessToken     string `json:"access_token"` // RFC 8693 carries any issued token here
-		IssuedTokenType string `json:"issued_token_type"`
-	}
-	if err := json.Unmarshal(body, &out); err != nil {
-		return "", fmt.Errorf("token endpoint: %w", err)
 	}
 	if out.IssuedTokenType != typeIDToken || out.AccessToken == "" {
 		return "", fmt.Errorf("token endpoint issued %q, not an ID token", out.IssuedTokenType)
 	}
-	// cache until the earlier of the two expiries, less a little slack
-	exp := earliest(expiry(out.AccessToken), expiry(accessToken)).Add(-10 * time.Second)
-	if exp.After(now) {
-		x.mu.Lock()
-		x.cache[key] = cached{idToken: out.AccessToken, exp: exp}
-		x.mu.Unlock()
-	}
 	return out.AccessToken, nil
 }
 
-// expiry reads a JWT's exp without verifying it: the IdP verifies the subject
-// token, and the gateway verifies the ID token it passes on.
-func expiry(jwt string) time.Time {
+// fromUpstream reads the user's tokens from upstream u out of S&V's Keycloak
+// and renews the ID token there.
+func (x *exchanger) fromUpstream(ctx context.Context, accessToken string, u op) (string, error) {
+	form := url.Values{"token": {accessToken}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, x.brokerURL+"/"+url.PathEscape(u.Name)+"/token", strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(url.QueryEscape(x.keycloak.ClientID), url.QueryEscape(x.keycloak.secret))
+	resp, err := x.hc.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("broker: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode == http.StatusBadRequest:
+		return "", fmt.Errorf("%w: %s: %s", errNotLinked, u.Name, oauthError(body))
+	case resp.StatusCode != http.StatusOK:
+		return "", fmt.Errorf("broker: HTTP %d: %s", resp.StatusCode, oauthError(body))
+	}
+	var stored struct {
+		IDToken      string `json:"id_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.Unmarshal(body, &stored); err != nil {
+		return "", fmt.Errorf("broker: %w", err)
+	}
+	if stored.RefreshToken == "" {
+		return "", fmt.Errorf("%w: %s: no refresh token stored (offline_access)", errRefused, u.Name)
+	}
+	key := u.Name + "|" + subject(stored.IDToken)
+	x.mu.Lock()
+	rt := x.refresh[key]
+	x.mu.Unlock()
+	if rt == "" {
+		rt = stored.RefreshToken
+	}
+	id, next, err := x.renew(ctx, u, rt)
+	if errors.Is(err, errRefused) && rt != stored.RefreshToken {
+		id, next, err = x.renew(ctx, u, stored.RefreshToken) // a newer sign-in replaced it
+	}
+	if err != nil {
+		return "", err
+	}
+	if next != "" {
+		x.mu.Lock()
+		x.refresh[key] = next
+		x.mu.Unlock()
+	}
+	return id, nil
+}
+
+// renew trades a refresh token for a fresh ID token at upstream u.
+func (x *exchanger) renew(ctx context.Context, u op, refreshToken string) (idToken, next string, err error) {
+	var out struct {
+		IDToken      string `json:"id_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := x.tokenRequest(ctx, u, url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+		"scope":         {"openid"},
+	}, &out); err != nil {
+		return "", "", err
+	}
+	if out.IDToken == "" {
+		return "", "", fmt.Errorf("%s: refresh returned no ID token", u.Name)
+	}
+	return out.IDToken, out.RefreshToken, nil
+}
+
+// tokenRequest POSTs a form to o's token endpoint as S&V's client there. A
+// 400, 401 or 403 is the IdP refusing (errRefused); no answer or a 5xx is
+// errUnavailable.
+func (x *exchanger) tokenRequest(ctx context.Context, o op, form url.Values, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.TokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(url.QueryEscape(o.ClientID), url.QueryEscape(o.secret))
+	resp, err := x.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: %s: %v", errUnavailable, o.Name, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	switch {
+	case resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return fmt.Errorf("%w: %s: %s", errRefused, o.Name, oauthError(body))
+	case resp.StatusCode >= 500:
+		return fmt.Errorf("%w: %s: HTTP %d", errUnavailable, o.Name, resp.StatusCode)
+	case resp.StatusCode != http.StatusOK:
+		return fmt.Errorf("%s: HTTP %d", o.Name, resp.StatusCode)
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("%s: %w", o.Name, err)
+	}
+	return nil
+}
+
+func oauthError(body []byte) string {
+	var e struct {
+		Error string `json:"error"`
+		Desc  string `json:"error_description"`
+	}
+	_ = json.Unmarshal(body, &e)
+	return strings.TrimSpace(e.Error + " " + e.Desc)
+}
+
+// payload reads a JWT's claims without verifying them: the IdP verifies the
+// subject token, and the gateway verifies the ID token it passes on.
+func payload(jwt string) (c struct {
+	Exp int64  `json:"exp"`
+	Sub string `json:"sub"`
+	Iss string `json:"iss"`
+	Aud any    `json:"aud"`
+	Jti string `json:"jti"`
+}) {
 	parts := strings.Split(jwt, ".")
 	if len(parts) != 3 {
-		return time.Time{}
+		return c
 	}
-	b, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return time.Time{}
+	if b, err := base64.RawURLEncoding.DecodeString(parts[1]); err == nil {
+		_ = json.Unmarshal(b, &c)
 	}
-	var c struct {
-		Exp int64 `json:"exp"`
-	}
-	if json.Unmarshal(b, &c) != nil || c.Exp == 0 {
-		return time.Time{}
-	}
-	return time.Unix(c.Exp, 0)
+	return c
 }
+
+func expiry(jwt string) time.Time {
+	if e := payload(jwt).Exp; e != 0 {
+		return time.Unix(e, 0)
+	}
+	return time.Time{}
+}
+
+func subject(jwt string) string { return payload(jwt).Sub }
 
 func earliest(a, b time.Time) time.Time {
 	if a.IsZero() || (!b.IsZero() && b.Before(a)) {
@@ -168,47 +327,72 @@ func (x *exchanger) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no subject token", http.StatusForbidden)
 		return
 	}
-	id, err := x.idToken(r.Context(), tok)
+	id, source, err := x.idToken(r.Context(), tok)
 	switch {
 	case errors.Is(err, errRefused):
-		slog.Info("exchange refused", "err", err)
+		slog.Info("refused", "idp", source, "err", err)
 		http.Error(w, "refused", http.StatusForbidden)
 		return
 	case err != nil:
-		slog.Warn("exchange failed", "err", err)
+		slog.Warn("failed", "idp", source, "err", err)
 		http.Error(w, "exchange failed", http.StatusServiceUnavailable)
 		return
 	}
+	// the ID token's claims, never the token: the trail for the ID-JAG request
+	c := payload(id)
+	slog.Info("id token", "iss", c.Iss, "sub", c.Sub, "aud", c.Aud, "jti", c.Jti,
+		"exp", time.Unix(c.Exp, 0).UTC().Format(time.RFC3339), "request_id", r.Header.Get("x-request-id"))
 	w.Header().Set("x-id-token", id)
 	w.WriteHeader(http.StatusOK)
+}
+
+// loadOPs reads OPS (JSON, the last entry S&V's Keycloak) and each client
+// secret from SECRETS_DIR/<name>.
+func loadOPs(raw, dir string) (keycloak op, upstreams []op, err error) {
+	var ops []op
+	if err := json.Unmarshal([]byte(raw), &ops); err != nil || len(ops) == 0 {
+		return op{}, nil, fmt.Errorf("OPS: a JSON list, S&V's Keycloak last: %v", err)
+	}
+	for i := range ops {
+		if ops[i].Name == "" || ops[i].TokenURL == "" || ops[i].ClientID == "" {
+			return op{}, nil, fmt.Errorf("OPS[%d]: name, token_url and client_id are required", i)
+		}
+		s, err := os.ReadFile(dir + "/" + ops[i].Name)
+		if err != nil {
+			return op{}, nil, fmt.Errorf("client secret for %s: %w", ops[i].Name, err)
+		}
+		ops[i].secret = strings.TrimSpace(string(s))
+	}
+	return ops[len(ops)-1], ops[:len(ops)-1], nil
 }
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	secret, err := os.ReadFile(env("CLIENT_SECRET_FILE", "/var/run/secrets/client/clientSecret"))
+	keycloak, upstreams, err := loadOPs(os.Getenv("OPS"), env("SECRETS_DIR", "/var/run/secrets/op"))
 	if err != nil {
-		slog.Error("client secret", "err", err)
+		slog.Error("config", "err", err)
 		os.Exit(1)
 	}
 	x := &exchanger{
-		tokenURL:     env("TOKEN_URL", ""),
-		clientID:     env("CLIENT_ID", ""),
-		clientSecret: strings.TrimSpace(string(secret)),
-		hc:           &http.Client{Timeout: 10 * time.Second},
-		now:          time.Now,
-		cache:        map[[32]byte]cached{},
+		keycloak:  keycloak,
+		upstreams: upstreams,
+		brokerURL: env("BROKER_URL", "http://keycloak.sv-identity/realms/sterling-vance/broker"),
+		hc:        &http.Client{Timeout: 10 * time.Second},
+		now:       time.Now,
+		cache:     map[[32]byte]cached{},
+		refresh:   map[string]string{},
 	}
-	if x.tokenURL == "" || x.clientID == "" {
-		slog.Error("TOKEN_URL and CLIENT_ID are required")
-		os.Exit(1)
+	names := []string{}
+	for _, u := range upstreams {
+		names = append(names, u.Name)
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 	mux.Handle("/", x)
 	srv := &http.Server{Addr: env("LISTEN", ":8080"), Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
-		slog.Info("listening", "addr", srv.Addr, "token_url", x.tokenURL, "client_id", x.clientID)
+		slog.Info("listening", "addr", srv.Addr, "upstreams", names, "keycloak", keycloak.TokenURL, "client_id", keycloak.ClientID)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server", "err", err)
 			os.Exit(1)
