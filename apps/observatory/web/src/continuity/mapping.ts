@@ -1,9 +1,9 @@
-import { BUILTIN_ATTRIBUTES, type ClaimMapping, type ContinuitySpec, type Directory, type Profile, type ProfileAttribute, type Sync, type Tier } from '../api'
+import { BUILTIN_ATTRIBUTES, type AttributeMapping, type ContinuitySpec, type Directory, type Profile, type ProfileAttribute, type Sync, type Tier } from '../api'
 import { describeCron } from './cron'
 
 // Pure edits on a working copy of an IdentityContinuity spec. Each touches
-// only profile, sync, or a tier's claims and directory; everything else in
-// the spec passes through untouched.
+// only the profile, the sync, or an IdP's attribute mapping and directory;
+// everything else in the spec passes through untouched.
 
 export const ATTR_NAME = /^[a-zA-Z][a-zA-Z0-9_.-]*$/
 export const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v))
@@ -20,7 +20,6 @@ export const isBuiltin = (name: string) => (BUILTIN_ATTRIBUTES as readonly strin
 export function withProfile(spec: ContinuitySpec, p: Profile): ContinuitySpec {
   const profile: Profile = { ...p }
   if (!profile.attributes?.length) delete profile.attributes
-  if (!profile.tokenClients?.length) delete profile.tokenClients
   const next: ContinuitySpec = { ...spec, profile }
   if (!Object.keys(profile).length) delete next.profile
   return next
@@ -36,33 +35,25 @@ function withTier(spec: ContinuitySpec, name: string, f: (t: Tier) => Tier): Con
   return { ...spec, tiers: spec.tiers.map(t => (t.name === name ? f(t) : t)) }
 }
 
-function withClaims(t: Tier, claims: ClaimMapping[]): Tier {
-  const next: Tier = { ...t, claims }
-  if (!claims.length) delete next.claims
+function withMappings(t: Tier, attributes: AttributeMapping[]): Tier {
+  const next: Tier = { ...t, attributes }
+  if (!attributes.length) delete next.attributes
   return next
 }
 
-// one mapping per (tier, attribute): a new claim for the same attribute replaces the old one
-export const setMapping = (spec: ContinuitySpec, tier: string, claim: string, attribute: string) =>
-  withTier(spec, tier, t => {
-    const claims = [...(t.claims ?? [])]
-    const i = claims.findIndex(c => c.attribute === attribute)
-    if (i >= 0 && claims[i].claim === claim) return t
-    if (i >= 0) claims[i] = { claim, attribute }
-    else claims.push({ claim, attribute })
-    return withClaims(t, claims)
+// one mapping per (IdP, profile attribute): a new path for the same attribute replaces the old one
+export const setMapping = (spec: ContinuitySpec, idp: string, path: string, attribute: string) =>
+  withTier(spec, idp, t => {
+    const ms = [...(t.attributes ?? [])]
+    const i = ms.findIndex(m => m.attribute === attribute)
+    if (i >= 0 && ms[i].path === path) return t
+    if (i >= 0) ms[i] = { attribute, path }
+    else ms.push({ attribute, path })
+    return withMappings(t, ms)
   })
 
-export const removeMapping = (spec: ContinuitySpec, tier: string, attribute: string) =>
-  withTier(spec, tier, t => withClaims(t, (t.claims ?? []).filter(c => c.attribute !== attribute)))
-
-export const setDirectoryPath = (spec: ContinuitySpec, tier: string, attribute: string, path: string) =>
-  withTier(spec, tier, t => withClaims(t, (t.claims ?? []).map(c => {
-    if (c.attribute !== attribute) return c
-    const next: ClaimMapping = { ...c, directoryPath: path.trim() }
-    if (!next.directoryPath) delete next.directoryPath
-    return next
-  })))
+export const removeMapping = (spec: ContinuitySpec, idp: string, attribute: string) =>
+  withTier(spec, idp, t => withMappings(t, (t.attributes ?? []).filter(m => m.attribute !== attribute)))
 
 export const setDirectory = (spec: ContinuitySpec, tier: string, d: Directory | undefined) =>
   withTier(spec, tier, t => {
@@ -85,7 +76,7 @@ export const toggleMultivalued = (spec: ContinuitySpec, name: string) =>
 // removing an attribute removes every mapping into it, so none is left dangling
 export function removeAttribute(spec: ContinuitySpec, name: string): ContinuitySpec {
   const next = withProfile(spec, { ...spec.profile, attributes: (spec.profile?.attributes ?? []).filter(a => a.name !== name) })
-  return { ...next, tiers: next.tiers.map(t => (t.claims?.some(c => c.attribute === name) ? withClaims(t, t.claims.filter(c => c.attribute !== name)) : t)) }
+  return { ...next, tiers: next.tiers.map(t => (t.attributes?.some(m => m.attribute === name) ? withMappings(t, t.attributes.filter(m => m.attribute !== name)) : t)) }
 }
 
 export function attributeError(name: string, spec: ContinuitySpec): string | undefined {
@@ -94,11 +85,27 @@ export function attributeError(name: string, spec: ContinuitySpec): string | und
   return undefined
 }
 
-// one line for the rule builder: how much is mapped and when the sync runs
-export function claimsSummary(spec: ContinuitySpec): string {
-  const oidc = spec.tiers.filter(t => t.type === 'oidc')
-  const mapped = oidc.filter(t => t.claims?.length).length
-  const sync = !spec.sync ? 'no scheduled sync' : spec.sync.suspend ? 'sync paused'
-    : `sync ${describeCron(spec.sync.schedule).replace(/^./, c => c.toLowerCase()) || spec.sync.schedule}`
-  return `${mapped} of ${oidc.length} IdPs mapped · ${sync}`
+// one line for the rule builder: which IdPs sync and when
+export function syncSummary(spec: ContinuitySpec): string {
+  const idps = spec.tiers.filter(t => t.type === 'oidc')
+  const withDir = idps.filter(t => t.directory && t.attributes?.length).length
+  const sync = !spec.sync ? 'no schedule' : spec.sync.suspend ? 'paused'
+    : describeCron(spec.sync.schedule).replace(/^./, c => c.toLowerCase()) || spec.sync.schedule
+  return `${withDir} of ${idps.length} IdPs mapped · ${sync}`
+}
+
+// the kind of directory an IdP likely has, from its issuer, before one is set
+export function kindOf(issuer = ''): Directory['type'] {
+  if (/\.auth0\.com\/?$/.test(issuer)) return 'auth0'
+  if (/\/realms\/[^/]+\/?$/.test(issuer)) return 'keycloak'
+  return 'scim'
+}
+
+// where a directory of that kind usually is for that issuer (SCIM varies by
+// product: none suggested)
+export function suggestDirectory(type: Directory['type'], issuer = ''): { url: string; audience?: string } {
+  const base = issuer.replace(/\/$/, '')
+  if (type === 'auth0') return { url: `${base}/api/v2`, audience: `${base}/api/v2/` }
+  if (type === 'keycloak' && /\/realms\/[^/]+$/.test(base)) return { url: base.replace(/\/realms\/([^/]+)$/, '/admin/realms/$1') }
+  return { url: '' }
 }

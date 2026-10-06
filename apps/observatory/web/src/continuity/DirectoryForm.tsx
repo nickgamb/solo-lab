@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import type { Directory } from '../api'
-import { useClaims } from './claimsContext'
+import { useSync } from './syncContext'
 import { TestConnection } from './TestConnection'
-import { credentialsName } from './mapping'
+import { credentialsName, kindOf, suggestDirectory } from './mapping'
 
 const TYPES: { v: Directory['type']; label: string }[] = [
   { v: 'scim', label: 'SCIM 2.0' }, { v: 'auth0', label: 'Auth0 Management API' }, { v: 'keycloak', label: 'Keycloak Admin API' },
@@ -13,12 +13,20 @@ const TYPES: { v: Directory['type']; label: string }[] = [
 // read back; they live in this form only until they're written or staged.
 // Both are always written together: the server replaces the Secret's keys
 // as a set.
-export function DirectoryForm({ tier, dir, onClose }: { tier: string; dir?: Directory; onClose: () => void }) {
-  const c = useClaims()
-  const [type, setType] = useState<Directory['type']>(dir?.type ?? 'scim')
-  const [url, setUrl] = useState(dir?.url ?? '')
+export function DirectoryForm({ tier, issuer, dir, onClose }: { tier: string; issuer?: string; dir?: Directory; onClose: () => void }) {
+  const c = useSync()
+  // a new directory starts from what the IdP's issuer suggests
+  const first = dir ? undefined : suggestDirectory(kindOf(issuer), issuer)
+  const [type, setType] = useState<Directory['type']>(dir?.type ?? kindOf(issuer))
+  const [url, setUrl] = useState(dir?.url ?? first?.url ?? '')
   const [scopes, setScopes] = useState((dir?.scopes ?? []).join(' '))
-  const [audience, setAudience] = useState(dir?.audience ?? '')
+  const [audience, setAudience] = useState(dir?.audience ?? first?.audience ?? '')
+  const pick = (t: Directory['type']) => {
+    setType(t)
+    if (dir) return
+    const s = suggestDirectory(t, issuer)
+    setUrl(s.url); setAudience(s.audience ?? '')
+  }
   const [id, setId] = useState('')
   const [secret, setSecret] = useState('')
   const [state, setState] = useState<{ ok: boolean; text: string }>()
@@ -48,7 +56,7 @@ export function DirectoryForm({ tier, dir, onClose }: { tier: string; dir?: Dire
   return (
     <div className="cm-dir-form nodrag nowheel" onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }}>
       <label>type
-        <select className="field" value={type} onChange={e => setType(e.target.value as Directory['type'])}>
+        <select className="field" value={type} onChange={e => pick(e.target.value as Directory['type'])}>
           {TYPES.map(t => <option key={t.v} value={t.v}>{t.label}</option>)}
         </select>
       </label>
@@ -62,7 +70,7 @@ export function DirectoryForm({ tier, dir, onClose }: { tier: string; dir?: Dire
         <button className="btn small" disabled={!id || !secret} onClick={write} title="Write the client id and secret to the Secret now (both are needed)">Set credentials</button>
         {state && <span className={`small ${state.ok ? 'subtle' : 'danger-text'}`}>{state.text}</span>}
       </div>
-      {dir && <TestConnection tier={tier} />}
+      {dir && <TestConnection idp={tier} />}
       <div className="row">
         {dir && <button className="btn small ghost danger-text" onClick={() => { c.setDirectory(tier, undefined); onClose() }} title="Stop syncing this IdP">Remove</button>}
         <span className="grow" />

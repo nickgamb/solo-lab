@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type ContinuitySpec, type IdentityContinuity, type Tier } from '../api'
-import { ClaimsMapping } from './ClaimsMapping'
-import { claimsSummary } from './mapping'
+import { DirectorySync } from './DirectorySync'
+import { syncSummary } from './mapping'
 
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v))
 const DNS = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
@@ -104,10 +104,10 @@ export function RuleBuilder({ ic, broker }: { ic: IdentityContinuity; broker: st
       {/* the window saves the live spec, so unsaved rule edits would be lost behind it */}
       <div className="cm-open">
         <button className="btn small" disabled={dirty} onClick={() => setMapping(true)}
-          title={dirty ? 'Save or reset the rule changes first' : 'Map IdP claims to the unified profile and schedule the directory sync'}>Claims mapping</button>
-        <span className="subtle small">{claimsSummary(ic.spec)}</span>
+          title={dirty ? 'Save or reset the rule changes first' : "Map the IdPs' profile attributes and schedule the sync from the primary to the failovers"}>Directory sync</button>
+        <span className="subtle small">{syncSummary(ic.spec)}</span>
       </div>
-      {mapping && <ClaimsMapping ic={ic} onClose={() => setMapping(false)} />}
+      {mapping && <DirectorySync ic={ic} onClose={() => setMapping(false)} />}
 
       <div className="label" style={{ marginTop: 18 }}>Health checks</div>
       <div className="grid2">

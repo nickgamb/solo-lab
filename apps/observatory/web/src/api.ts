@@ -36,32 +36,32 @@ export type Substrate = {
   actors: SubActor[]; workers: SubWorker[]
 }
 // Mirrors apps/continuity/api/v1alpha1 (IdentityContinuity).
-export type ClaimMapping = { claim: string; attribute: string; directoryPath?: string }
+// an IdP's attribute (path) paired with the broker's profile attribute
+export type AttributeMapping = { attribute: string; path: string }
 export type Directory = {
   type: 'scim' | 'auth0' | 'keycloak'; url: string; credentialsRef: { name: string }
   scopes?: string[]; audience?: string; clientID?: string
 }
 export type ProfileAttribute = { name: string; displayName?: string; multivalued?: boolean }
-export type Profile = { attributes?: ProfileAttribute[]; tokenClients?: string[] }
+export type Profile = { attributes?: ProfileAttribute[] }
 export type Sync = { schedule: string; suspend?: boolean; credentialsRef?: { name: string } }
 export type SyncStatus = {
-  cronJob?: string; lastRun?: string; lastSuccess?: string; users?: number; updated?: number; failed?: number; message?: string
+  cronJob?: string; lastRun?: string; lastSuccess?: string; users?: number; updated?: number; written?: number; created?: number; failed?: number; message?: string
 }
-// the broker's built-in profile attributes: always in the unified schema
+// the broker's built-in profile attributes: always in its profile
 export const BUILTIN_ATTRIBUTES = ['username', 'email', 'firstName', 'lastName'] as const
-// identity keys: never written by the scheduled sync
-export const IDENTITY_KEYS = ['username', 'email'] as const
+// never synced: the broker's own name for the user
+export const NEVER_SYNCED = ['username'] as const
 export type Tier = {
   name: string; displayName?: string; type: 'oidc' | 'local'; enabled?: boolean; drain?: boolean
   oidc?: { issuer: string; clientID: string; clientAuth?: string; clientSecretRef?: { name: string; key?: string } }
   failoverWhen?: { unreachable?: boolean; serverError?: boolean; invalidDiscovery?: boolean; latencyAboveMs?: number }
-  claims?: ClaimMapping[]
+  attributes?: AttributeMapping[]
   directory?: Directory
 }
 export type TierStatus = {
   name: string; type?: string; healthy?: boolean; configured?: boolean; partitioned?: boolean; latencyMs?: number
   lastProbe?: string; reason?: string; message?: string; redirectURI?: string; consecutiveFailures?: number; consecutiveSuccesses?: number
-  claimsSupported?: string[]
 }
 export type ContinuitySpec = {
   broker?: { keycloak?: { url?: string; realm?: string; credentialsRef?: { name: string } } }
