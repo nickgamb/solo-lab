@@ -93,15 +93,17 @@ function Continuity({ lab, ic, items, pick, setPick }: {
       markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: data.state === 'down' ? 'var(--bad)' : data.state === 'active' ? 'var(--ok)' : 'var(--text-subtle)' } })
     const broker = paths[0]?.broker
     const apps = [...new Set(paths.map(p => p.app))]
-    const rows = Math.max(apps.length, tiers.length, 1)
+    // the IdPs only: the broker's break-glass accounts aren't a hop on the map
+    const idps = tiers.filter(t => t.type === 'oidc')
+    const rows = Math.max(apps.length, idps.length, 1)
     const mid = (rows - 1) / 2
     apps.forEach((id, i) => {
       tile(id, nodes.get(id), 0, mid - (apps.length - 1) / 2 + i, { fog: !signInOK })
       if (broker) wire(id, broker, { state: signInOK ? 'active' : 'down' })
     })
     if (broker) tile(broker, nodes.get(broker), 1, mid, { highlight: signInOK ? 'ok' : 'bad' })
-    const tierRow = (i: number) => mid - (tiers.length - 1) / 2 + i
-    const external = tiers.map((t, i) => ({ t, i })).filter(x => x.t.type === 'oidc')
+    const tierRow = (i: number) => mid - (idps.length - 1) / 2 + i
+    const external = idps.map((t, i) => ({ t, i }))
     const egressRow = external.length ? external.reduce((a, x) => a + tierRow(x.i), 0) / external.length : mid
     const egressCut = external.some(x => cuts.has(x.t.name))
     const egressLive = external.some(x => x.t.name === active)
@@ -109,16 +111,16 @@ function Continuity({ lab, ic, items, pick, setPick }: {
       tile(egress.id, egress, 2, egressRow, { highlight: egressCut ? 'bad' : egressLive ? 'ok' : undefined })
       wire(broker, egress.id, { state: egressLive ? 'active' : 'standby', rps: egressLive ? 1 : 0 })
     }
-    tiers.forEach((t, i) => {
+    idps.forEach((t, i) => {
       const st = status.get(t.name)
       const isActive = t.name === active
       const isCut = cuts.has(t.name)
       const down = isCut || (!!st && st.configured !== false && !st.healthy)
-      const n: LabNode = { id: `tier:${t.name}`, kind: t.type === 'local' ? 'idp' : 'external', label: t.type === 'local' ? (t.displayName ?? t.name) : `${tiers.slice(0, i + 1).filter(x => x.type === 'oidc').length}. ${t.displayName ?? t.name}`, group: '',
-        status: isActive ? 'ok' : down ? 'down' : 'idle', sub: t.type === 'local' ? 'break-glass (platform admins)' : host(t.oidc?.issuer), summary: {}, products: [] }
+      const n: LabNode = { id: `tier:${t.name}`, kind: 'external', label: `${i + 1}. ${t.displayName ?? t.name}`, group: '',
+        status: isActive ? 'ok' : down ? 'down' : 'idle', sub: host(t.oidc?.issuer), summary: {}, products: [] }
       const off = st?.configured === false || t.enabled === false || !!t.drain
       tile(n.id, n, 3, tierRow(i), { fog: !isActive && !down && off, highlight: isActive ? 'ok' : down ? 'bad' : undefined, outage: isCut })
-      const from = t.type === 'oidc' && egress ? egress.id : broker
+      const from = egress ? egress.id : broker
       if (from) wire(from, n.id, { state: isActive ? 'active' : down ? 'down' : 'standby', rps: isActive ? 1 : 0,
         cut: isCut, label: isCut ? 'network cut' : undefined })
     })
