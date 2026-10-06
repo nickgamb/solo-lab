@@ -69,8 +69,7 @@
       "clientRoles": {
         "realm-management": [
           "manage-identity-providers",
-          "manage-realm",
-          "manage-clients"
+          "manage-realm"
         ]
       },
       "id": "5b0b0000-0000-4000-8000-0000000000c0"

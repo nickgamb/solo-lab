@@ -74,13 +74,14 @@ rollout sv-identity deploy/continuity-controller
 # issues ID-JAGs the broker keeps the user's tokens (storeTokens) so the
 # egress can have it vouch for them (docs/IDENTITY-FLOWS.md). No offline
 # access: the stored refresh token lives and dies with the user's session at
-# that IdP, so a logout there stops its ID-JAGs. S&V's own
-# workforce IdP comes with its directory, for the profile sync.
+# that IdP, so a logout there stops its ID-JAGs. S&V's own workforce IdP
+# comes with its directory and an attribute mapping, for the directory sync.
 desired=$({ for n in $CHAIN; do
   store=false; if echo " $IDP_ISSUES_IDJAG " | grep -q " $n "; then store=true; fi
   dir=null
   if [ "$n" = keycloak ] && [ "$KEYCLOAK_ISSUER" = "https://login.$SV_DOMAIN/realms/workforce" ]; then
-    dir='{"type": "keycloak", "url": "http://keycloak.sv-workforce.svc/admin/realms/workforce", "credentialsRef": {"name": "directory-keycloak"}}'
+    dir='{"directory": {"type": "keycloak", "url": "http://keycloak.sv-workforce.svc/admin/realms/workforce", "credentialsRef": {"name": "directory-keycloak"}},
+      "attributes": [{"attribute": "email", "path": "email"}, {"attribute": "firstName", "path": "firstName"}, {"attribute": "lastName", "path": "lastName"}]}'
   fi
   jq -nc --arg n "$n" --arg iss "$(_idp_var "$n" ISSUER)" --arg cid "$(_idp_var "$n" CLIENT_ID)" \
     --arg auth "$(idp_client_auth "$n")" --argjson store "$store" --argjson dir "$dir" '{name: $n,
@@ -89,7 +90,7 @@ desired=$({ for n in $CHAIN; do
       + (if $auth == "private_key_jwt" then {clientAssertionSigningAlg: "PS256"} else {clientSecretRef: {name: "upstream-\($n)"}} end)
       + (if $store then {scopes: ["openid", "email", "profile"], storeTokens: true} else {} end)),
     failoverWhen: {unreachable: true, serverError: true, invalidDiscovery: true, latencyAboveMs: 1500}}
-    + (if $dir then {directory: $dir} else {} end)'
+    + ($dir // {})'
 done
 jq -nc '{name: "break-glass", displayName: "Platform admins (break-glass)", type: "local"}'
 } | jq -sc .)
@@ -102,7 +103,8 @@ else
   merged=$(jq -nc --argjson d "$desired" --argjson c "$cur" '$d | map(. as $t
     | ([$c[] | select(.name == $t.name and .type == $t.type)][0]) as $old
     | if $old == null then $t
-      else ($old * ($t | del(.displayName, .failoverWhen) | if $old.directory then del(.directory) else . end))
+      else ($old * ($t | del(.displayName, .failoverWhen) | if $old.directory then del(.directory) else . end
+          | if $old.attributes then del(.attributes) else . end))
         | if .oidc.clientAuth == "private_key_jwt" then del(.oidc.clientSecretRef) else . end end)')
   # every S&V caller of an upstream goes through the egress waypoint
   egress=$(render "$D/identitycontinuity.yaml" | yq -o json -I0 '.spec.egress')
