@@ -1,7 +1,8 @@
 # continuity-controller: S&V's component, next to the Keycloak it drives.
 # Reads its own credentials and each tier's client secret (sv-identity), owns
-# the ServiceEntries for external upstreams (sv-egress), and reads partition
-# policies anywhere (status only).
+# the ServiceEntries for external upstreams (sv-egress) and the profile-sync
+# CronJob (sv-identity), and reads partition policies in the egress (status
+# only).
 apiVersion: v1
 kind: ServiceAccount
 metadata: {name: continuity-controller, namespace: sv-identity}
@@ -25,6 +26,9 @@ rules:
 - apiGroups: ["", events.k8s.io]   # core: leader election; events.k8s.io: tier events
   resources: [events]
   verbs: [create, patch]
+- apiGroups: [batch]               # the scheduled profile sync
+  resources: [cronjobs]
+  verbs: [get, create, update, patch, delete]
 ---
 # The Secrets the controller may read, by name, and nothing else in
 # sv-identity (not Keycloak's admin or signing-key Secrets). No list or watch:
@@ -54,6 +58,51 @@ kind: RoleBinding
 metadata: {name: continuity-controller, namespace: sv-identity}
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: continuity-controller}
 subjects: [{kind: ServiceAccount, name: continuity-controller, namespace: sv-identity}]
+---
+# The scheduled profile sync (a CronJob the controller keeps from spec.sync,
+# running this image's "sync" command): reads its instance, records its run
+# in status, and reads Secrets by name: its own realm client and each tier's
+# directory credentials. It never sees the controller's or a tier's client
+# secret. The Observatory adds a directory's Secret here when it stores one
+# (it finds this Role by its label).
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: continuity-sync, namespace: sv-identity}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: continuity-sync, namespace: sv-identity}
+rules:
+- apiGroups: [continuity.lab.solo.io]
+  resources: [identitycontinuities]
+  verbs: [get]
+- apiGroups: [continuity.lab.solo.io]
+  resources: [identitycontinuities/status]
+  verbs: [patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: continuity-sync-secrets
+  namespace: sv-identity
+  labels: {continuity.lab.solo.io/sync-secrets-role: "true"}
+rules:
+- apiGroups: [""]
+  resources: [secrets]
+  resourceNames: [continuity-sync]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: continuity-sync, namespace: sv-identity}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: continuity-sync}
+subjects: [{kind: ServiceAccount, name: continuity-sync, namespace: sv-identity}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: continuity-sync-secrets, namespace: sv-identity}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: continuity-sync-secrets}
+subjects: [{kind: ServiceAccount, name: continuity-sync, namespace: sv-identity}]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -98,7 +147,7 @@ spec:
       containers:
       - name: controller
         image: ${CONTINUITY_IMAGE}
-        args: [--ca-file=/etc/lab-ca/ca.crt]
+        args: [--ca-file=/etc/lab-ca/ca.crt, --sync-image=${CONTINUITY_IMAGE}, --sync-ca-configmap=lab-ca-bundle]
         env:
         - name: POD_NAMESPACE
           valueFrom: {fieldRef: {fieldPath: metadata.namespace}}

@@ -111,7 +111,7 @@ Not built. Each item, with what it needs.
 | OAuth MCP flow (401 + `WWW-Authenticate` to Protected Resource Metadata) | the MCP server on a public HTTPS host; agentgateway serving the metadata and the challenge for `/mcp` |
 | ID-JAG checks and redacted token-request logs inside agentgateway | crossAppAccess validating the ID-JAG and logging both legs; then xaa-relay goes |
 | Path-level policy on S&V's Keycloak | a waypoint for `sv-identity`, so each caller reaches only its endpoints (the egress: token, certs, broker token; never admin) |
-| Narrower rights for the continuity controller | it holds `manage-identity-providers` and `manage-realm` (the login redirector lives in an authentication flow): Keycloak permissions scoped to the IdPs and that one flow, or its credential treated as tier 0 (rotation, monitoring) |
+| Narrower rights for the continuity controller and its sync | the controller holds `manage-identity-providers`, `manage-realm` (the login redirector lives in an authentication flow) and `manage-clients` (the profile scope); the sync `manage-users`: Keycloak fine-grained admin permissions scoped to the IdPs, that one flow, that scope and attribute writes, or each credential treated as tier 0 (rotation, monitoring) |
 | Token status list / revocation at the RS | Ledgerline's server checking `status` (Gluu `status_list_endpoint`) per call |
 | AuthZEN policy decision at the egress | an ext_proc calling the PDP's `/access/v1/evaluation` (subject Bob, action tool call, resource tool) before the XAA exchange |
 | TRACE evidence for each agent action | an emitter from xaa-relay and gateway logs: EAT claims (agent SPIFFE ID, model, policy hash), references to the ID-JAG `jti` and tool call, SCITT registration |

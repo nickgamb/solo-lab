@@ -73,8 +73,12 @@ doesn't create flows or roles, so the realm needs them first
   `idp-auto-link`);
 - a service-account client whose roles include realm-management
   `manage-identity-providers` and `manage-realm` (editing the redirector's
-  config is realm config), with its credentials in the Secret
-  `broker.keycloak.credentialsRef` names.
+  config is realm config; so is the user profile), plus `manage-clients`
+  when `profile.tokenClients` is set, with its credentials in the Secret
+  `broker.keycloak.credentialsRef` names;
+- for `sync`: a second service-account client with realm-management
+  `view-users` and `manage-users` only (`continuity-sync`), its credentials
+  in the Secret `sync.credentialsRef` names.
 
 ### spec
 
@@ -97,18 +101,25 @@ doesn't create flows or roles, so the realm needs them first
 | `tiers[].oidc.clientID` | optional; falls back to the Secret's `client-id` key |
 | `tiers[].oidc.clientSecretRef` | Secret and key (default `client-secret`); missing means `NotConfigured` |
 | `tiers[].oidc.scopes` | default `openid email profile` |
+| `tiers[].claims[]` | `claim` (in the upstream's ID token or userinfo) to `attribute` (built-in or `profile.attributes`); `directoryPath` where the directory record holds it, when not under the claim's name |
+| `tiers[].directory` | where `sync` reads this tier's users: `type` (`scim`, `auth0`, `keycloak`), `url`, `credentialsRef` (`client-secret`, and `client-id` unless `clientID` is set), `scopes`, `audience` (Auth0) |
 | `tiers[].failoverWhen` | which probe results count against the tier: `unreachable`, `serverError`, `invalidDiscovery` (each default true), `latencyAboveMs` (must be below `health.timeoutSeconds`: a slower answer times out first) |
 | `health` | `intervalSeconds`, `timeoutSeconds`, `unhealthyThreshold` (failures in a row to go down), `healthyThreshold` (successes in a row to come back) |
 | `failback` | `Automatic` (move back up as soon as a higher tier is healthy) or `Manual` |
+| `profile.attributes[]` | S&V's unified profile beyond `username`, `email`, `firstName`, `lastName`: `name`, `displayName`, `multivalued` |
+| `profile.tokenClients` | clients whose tokens carry the profile (client scope `<instance>-profile`) |
+| `sync.schedule` | cron, UTC; `sync.suspend` pauses it |
+| `sync.credentialsRef` | Secret with the sync's realm client (default `continuity-sync`) |
 
 ### status
 
 `active` (where logins go now: the tier Keycloak's redirector points at, or
 the local tier), `activeSince`, `broker.issuer`, `egressNamespace`, per tier (`configured`, `healthy`,
 `partitioned`, `latencyMs`, `reason`, `message`, consecutive failures and
-successes, and `redirectURI`: the callback the upstream app must allow), the
-last 20 `transitions`, and conditions `Ready` and `Degraded` (not on the first
-tier). The controller also emits Kubernetes events (`TierHealthy`,
+successes, `redirectURI`: the callback the upstream app must allow, and
+`claimsSupported` from its discovery), the last 20 `transitions`, `sync`
+(CronJob, last run and last success, users read, updated and failed), and
+conditions `Ready`, `Degraded` (not on the first tier) and `ProfileApplied`. The controller also emits Kubernetes events (`TierHealthy`,
 `TierUnhealthy`, failovers).
 
 ## What the controller does
@@ -164,6 +175,72 @@ never sees Keycloak's own admin or signing-key Secrets. Credentials are re-read
 on every reconcile, so a rotated secret takes effect within one interval. The DNS capture that makes the
 ServiceEntry apply is Istio ambient's (`AMBIENT_DNS_CAPTURE`, on in 1.31).
 
+## Profile and claim mapping
+
+Every upstream's users land on one S&V profile in the broker; apps see only
+that profile. Two paths fill it, both from `tiers[].claims`:
+
+- **At sign-in:** an IdP mapper per mapping (`claim-to-<attribute>`). The
+  chain's first upstream updates the attribute on every sign-in; a later
+  upstream fills it at first sign-in only, so a failover never overwrites
+  the first upstream's values.
+- **On a schedule** (`spec.sync`): CronJob `<instance>-profile-sync` reads
+  each linked user's record from each tier's `directory` with read-only
+  client credentials and writes the mapped attributes. For each attribute
+  the first tier in chain order with a value wins. A tier whose directory
+  can't be read leaves its attributes as they are for that run. Accounts
+  with role `local-only` are skipped. The CronJob exists while any tier has
+  a directory (suspended until `spec.sync` is set), so a directory can be
+  tested and a run started by hand before there is a schedule.
+
+Neither path reads or writes passwords or other credentials. `username` and
+`email` are identity keys: set at first sign-in, never overwritten. Users
+can view the profile attributes but not edit them; their values come from
+the upstreams. Tokens for `profile.tokenClients` carry them as claims.
+
+```yaml
+spec:
+  profile:
+    attributes: [{name: department, displayName: Department}]
+    tokenClients: [kagent]
+  sync: {schedule: "0 */6 * * *"}
+  tiers:
+  - name: gluu
+    claims:
+    - {claim: given_name, attribute: firstName}
+    - {claim: department, attribute: department,
+       directoryPath: "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:department"}
+    directory: {type: scim, url: https://<gluu>/jans-scim/restv1/v2,
+      credentialsRef: {name: directory-gluu}, scopes: [https://jans.io/scim/users.read]}
+  - name: auth0
+    claims:
+    - {claim: given_name, attribute: firstName}
+    - {claim: https://sv/department, attribute: department, directoryPath: app_metadata.department}
+    directory: {type: auth0, url: https://<tenant>/api/v2, audience: https://<tenant>/api/v2/,
+      credentialsRef: {name: directory-auth0}}
+```
+
+| Directory | Read with | The user is |
+| --- | --- | --- |
+| `scim` (Gluu, most enterprise IdPs) | `client_credentials` with the SCIM read scope | `/Users/<sub>` |
+| `auth0` | Management API client with `read:users` | `/users/<sub>` |
+| `keycloak` | service-account client with `view-users` in that realm | `/users/<sub>` |
+
+SCIM is the standard for directories: Gluu and Ping's SCIM 2.0 servers
+need nothing else. An upstream without a SCIM endpoint for its users is
+mapped at sign-in only (no `directory`).
+
+A directory test (`sync --test-tier <tier>`, a Job from the CronJob) gets a
+token and reads the users' count along the sync's own path and
+credentials; its result (`ok`, the count, or the step that failed, never
+user records) is the container's termination message.
+
+The sync runs as ServiceAccount `continuity-sync`: `get` on its instance,
+`patch` on its status, and `get` on its own Secret and the directories'
+Secrets by name (Role `continuity-sync-secrets`). It reaches Keycloak and the
+directories under the same mesh policy as the controller; directory hosts
+get ServiceEntries on the tier's egress path.
+
 ## Kill switch
 
 A real network partition. The controller never reads a flag; it only sees
@@ -218,6 +295,16 @@ failover takes about 10 s after the cut and failback about 15 s after the heal.
   latency limit, client secrets (write-only), new OIDC tiers (the redirect URI
   to register is shown), health settings, failback. Save applies the spec as
   you.
+- **Claims mapping** (from the rule builder): a canvas with a node per
+  tier in chain order on the left and the S&V profile on the right. Each upstream
+  lists its claims (from discovery, protocol claims left out, or added with
+  **+**); drag a claim onto a profile attribute to map it. The local tier
+  shows in its place in the chain with nothing to map. The profile node
+  sets which clients' tokens carry it. Each upstream's directory has
+  **Test connection** (the saved settings, run as the sync). **Code** edits
+  the same mapping as YAML; **Schedule** sets the sync's cron, pauses it,
+  shows the last run and runs it now. Directory credentials are write-only
+  and readable by the sync alone.
 - **Transitions** and **Identity traffic** (bottom): failovers, cuts and
   restores, and OIDC calls.
 
@@ -306,6 +393,10 @@ interactive and is skipped.
 | outage button: "no network path is known" | no ServiceEntry for the tier: `spec.egress` unset, or the tier is `local` |
 | cut has no effect | the caller isn't in the ambient mesh, or DNS capture is off, so traffic bypasses the ServiceEntry |
 | stays on local after a heal | failback waits for `healthyThreshold` successes; `Manual` failback never moves back |
+| `ProfileApplied` False: maps to "x", not in the profile | add the attribute to `profile.attributes`, or fix the mapping |
+| sync: `directory token: HTTP 401` | the directory client's credentials, or it lacks `client_credentials` |
+| sync: `directory: HTTP 403` | the directory client lacks the read scope (`scopes`) or Auth0 `read:users` |
+| sync failed, attribute unchanged | that tier's directory was unreachable; its attributes are kept until the next run |
 
 Keycloak's log names the claim or step that failed:
 

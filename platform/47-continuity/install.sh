@@ -24,6 +24,11 @@ K create secret generic continuity-controller -n sv-identity \
   --from-literal=client-id=continuity-controller \
   --from-literal=client-secret="$(lab_secret SV_CONTINUITY_CLIENT_SECRET)" \
   --dry-run=client -o yaml | K apply -f - >/dev/null
+# the scheduled profile sync's realm client (users' profile attributes only)
+K create secret generic continuity-sync -n sv-identity \
+  --from-literal=client-id=continuity-sync \
+  --from-literal=client-secret="$(lab_secret SV_CONTINUITY_SYNC_CLIENT_SECRET)" \
+  --dry-run=client -o yaml | K apply -f - >/dev/null
 . "$LAB_ROOT/scripts/idp.sh"
 CHAIN=$(idp_chain)
 for n in $IDP_UPSTREAMS; do

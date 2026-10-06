@@ -81,12 +81,13 @@ secret_grant() {  # secret_grant add|remove <name>
     | K replace -f - >/dev/null
 }
 
-ORIG=$(idc | jq -c '{tiers: .spec.tiers, failback: .spec.failback}')
+ORIG=$(idc | jq -c '{tiers: .spec.tiers, failback: .spec.failback, profile: .spec.profile, sync: .spec.sync}')
 BASE=$(active)
 cleanup() {
   heal "$T" "$TNS"; [ -n "$UP" ] && heal "$UP" sv-egress
   K patch idc "$IC" -n "$NS" --type merge -p "{\"spec\": $ORIG}" >/dev/null 2>&1
-  K delete secret continuity-verify -n "$NS" --ignore-not-found >/dev/null
+  K delete secret continuity-verify continuity-verify-directory -n "$NS" --ignore-not-found >/dev/null
+  K delete job -n "$NS" -l continuity.lab.solo.io/verify=true --ignore-not-found >/dev/null
   secret_grant remove continuity-verify 2>/dev/null
   rm -f "$BODY" "$JAR"; kill "$(jobs -p)" 2>/dev/null
 }
@@ -156,10 +157,68 @@ expect '^[0-9]+s SlowResponse$' "failoverWhen latencyAboveMs=1: slow counts, fai
 K patch idc "$IC" -n "$NS" --type json -p '[{"op":"remove","path":"/spec/tiers/0/failoverWhen/latencyAboveMs"}]' >/dev/null
 expect '^[0-9]+s$' "rule removed: back to $T" "$(within 35 is_active "$T")"
 
-step "Removing the tier cleans up"
+step "Profile, claim mapping and scheduled sync"
+A=verifyDepartment SCOPE="$IC-profile" CJ="$IC-profile-sync"
+K create secret generic continuity-verify-directory -n "$NS" --from-literal=client-id=verify --from-literal=client-secret="$(openssl rand -hex 16)" \
+  --dry-run=client -o yaml | K apply -f - >/dev/null
+K patch idc "$IC" -n "$NS" --type merge -p "$(jq -nc --arg a "$A" --arg t "$T" --argjson tiers "$(idc | jq -c .spec.tiers)" --arg kc "https://idp.$LEDGERLINE_DOMAIN/admin/realms/ledgerline" \
+  '{spec: {profile: {attributes: [{name: $a, displayName: "Department (verify)"}], tokenClients: ["kagent"]},
+    sync: {schedule: "0 3 * * *", suspend: true},
+    tiers: ($tiers | map(if .name == $t then .claims = [{claim: "department", attribute: $a}, {claim: "given_name", attribute: "firstName"}]
+      | .directory = {type: "keycloak", url: $kc, credentialsRef: {name: "continuity-verify-directory"}} else . end))}}')" >/dev/null
+profile_has() { kcadm /users/profile | jq -e --arg a "$A" '.attributes[] | select(.name==$a) | .permissions.edit == ["admin"]'; }
+expect '^[0-9]+s$' "user profile: $A added, users view only" "$(within 20 profile_has)"
+mapper_mode() { kcadm "/identity-provider/instances/$T/mappers" | jq -r --arg n "claim-to-$A" '.[] | select(.name==$n) | .config.syncMode'; }
+mapper_set() { [ "$(mapper_mode)" = FORCE ]; }
+within 15 mapper_set >/dev/null
+expect '^FORCE$' "IdP mapper claim-to-$A on $T: the first upstream updates it at every sign-in" "$(mapper_mode)"
+kagent_scopes() { kcadm "/clients/$(kcadm '/clients?clientId=kagent' | jq -r '.[0].id')/default-client-scopes" | jq -r '.[].name'; }
+expect "^$SCOPE\$" "client scope $SCOPE: a default scope of kagent (profile in its tokens)" "$(kagent_scopes | grep -x "$SCOPE")"
+expect '^True$' "ProfileApplied" "$(K get idc "$IC" -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="ProfileApplied")].status}')"
+cj_ready() { K get cronjob "$CJ" -n "$NS" >/dev/null; }
+expect '^[0-9]+s$' "CronJob $CJ created" "$(within 15 cj_ready)"
+expect '^0 3 \* \* \* Etc/UTC true Forbid IdentityContinuity continuity-sync$' "schedule UTC, suspended, no overlap, owned by the instance, runs as continuity-sync" \
+  "$(K get cronjob "$CJ" -n "$NS" -o jsonpath='{.spec.schedule} {.spec.timeZone} {.spec.suspend} {.spec.concurrencyPolicy} {.metadata.ownerReferences[0].kind} {.spec.jobTemplate.spec.template.spec.serviceAccountName}')"
+can() { K auth can-i get "secret/$2" -n "$NS" --as="system:serviceaccount:$NS:$1" 2>/dev/null; }
+expect '^no no yes$' "sync reads only its Secrets: not the controller's or a tier's client secret" \
+  "$(can continuity-sync continuity-controller) $(can continuity-sync continuity-verify) $(can continuity-sync continuity-sync)"
+secret_grant_sync() {
+  local r; r=$(K get role continuity-sync-secrets -n "$NS" -o json)
+  echo "$r" | jq --arg n "$2" --arg op "$1" '.rules |= map(if (.resources | index("secrets")) then
+      .resourceNames = (if $op == "add" then ((.resourceNames // []) + [$n] | unique) else ((.resourceNames // []) - [$n]) end) else . end)' \
+    | K replace -f - >/dev/null
+}
+secret_grant_sync add continuity-verify-directory
+expect '^no$' "the controller can't read a directory's credentials" "$(can continuity-controller continuity-verify-directory)"
+J="$CJ-verify-$(date +%s)"
+K create job "$J" -n "$NS" --from="cronjob/$CJ" >/dev/null && K label job "$J" -n "$NS" continuity.lab.solo.io/verify=true >/dev/null
+job_done() { [ "$(K get job "$J" -n "$NS" -o jsonpath='{.status.succeeded}')" = 1 ]; }
+expect '^[0-9]+s$' "a run completes (as continuity-sync, through the mesh to Keycloak)" "$(within 120 job_done)"
+expect "^[0-9]+ [0-9]+ 0 .*users read" "status.sync: last run recorded, no failures" \
+  "$(idc | jq -r '.status.sync | "\(.users // 0) \(.updated // 0) \(.failed // 0) \(.lastSuccess // "never") \(.message)"')"
+# Test connection: a Job of the sync with --test-tier, on the sync's own path;
+# the directory's token endpoint (Ledgerline's) refuses this made-up client
+JT="$CJ-test-$(date +%s)"
+K get cronjob "$CJ" -n "$NS" -o json | jq --arg n "$JT" --arg t "$T" '{apiVersion: "batch/v1", kind: "Job",
+  metadata: {name: $n, labels: (.spec.jobTemplate.metadata.labels + {"continuity.lab.solo.io/verify": "true"})},
+  spec: (.spec.jobTemplate.spec | .template.spec.containers[0].args += ["--test-tier=\($t)"])}' | K apply -n "$NS" -f - >/dev/null
+test_done() { [ -n "$(K get job "$JT" -n "$NS" -o jsonpath='{.status.failed}{.status.succeeded}')" ]; }
+within 120 test_done >/dev/null
+expect '"ok":false.*directory token: HTTP 401' "directory test: run as the sync, reports the token endpoint's refusal (no user data)" \
+  "$(K get pods -n "$NS" -l job-name="$JT" -o jsonpath='{.items[0].status.containerStatuses[0].state.terminated.message}')"
+secret_grant_sync remove continuity-verify-directory
+
+step "Removing the tier and profile cleans up"
 K patch idc "$IC" -n "$NS" --type merge -p "{\"spec\": $ORIG}" >/dev/null
 expect "^[0-9]+s\$" "active returns to $BASE" "$(within 15 is_active "$BASE")"
 expect '^[0-9]+s$' "Keycloak IdP $T deleted" "$(within 15 idp_gone "$T")"
+if [ "$(echo "$ORIG" | jq -r '.sync')" = null ]; then
+  expect '^[0-9]+s$' "CronJob $CJ deleted" "$(within 15 sh -c "! kubectl --context $KCTX get cronjob $CJ -n $NS")"
+fi
+if [ "$(echo "$ORIG" | jq -r '.profile')" = null ]; then
+  profile_gone() { ! profile_has && ! kagent_scopes | grep -qx "$SCOPE"; }
+  expect '^[0-9]+s$' "profile attribute $A and scope $SCOPE removed" "$(within 20 profile_gone)"
+fi
 
 step "External upstream: ${UP:-none} through S&V's egress waypoint"
 # a NotConfigured tier (no credentials) is still probed: its outcome is in the
