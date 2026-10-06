@@ -21,12 +21,16 @@ ok "$IDTOKEN_EXCHANGE_IMAGE  $XAA_RELAY_IMAGE"
 ok "$(lab_build lab/toolbox "$LAB_ROOT/tools/toolbox")   (probe pods for the checks)"
 
 step "Ledgerline Research (its own IdP, MCP server, Istio waypoint)"
-# S&V registered its public key with Ledgerline (private_key_jwt)
+# S&V registered its public key with Ledgerline (private_key_jwt); Ledgerline
+# signs in to S&V's IdPs with its own key (its SSO client there)
+realm_signing_key ledgerline-sso-client
 K create secret generic kc-secrets -n ledgerline-identity \
   --from-literal=KC_BOOTSTRAP_ADMIN_USERNAME=admin --from-literal=KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret LL_KC_ADMIN_PASSWORD)" \
   --from-literal=SV_XAA_CLIENT_CERT="$SV_XAA_CLIENT_CERT" --from-literal=SV_XAA_CLIENT_KID="$SV_XAA_CLIENT_KID" \
+  --from-literal=LL_SSO_CLIENT_KEY="$(pem_body "$LAB_STATE/keys/ledgerline-sso-client.key")" \
+  --from-literal=LL_SSO_CLIENT_CERT="$(pem_body "$LAB_STATE/keys/ledgerline-sso-client.crt")" \
   --dry-run=client -o yaml | K apply -f - >/dev/null
-# its Keycloak trusts each enterprise IdP of S&V's that issues ID-JAGs
+# its Keycloak trusts each of S&V's IdPs that vouch, for S&V's domain only
 mkdir -p "$LAB_STATE/realm"
 ledgerline_realm "$D/ledgerline/realm-ledgerline.json" >"$LAB_STATE/realm/realm-ledgerline.json"
 deploy_keycloak ledgerline-identity "$LEDGERLINE_DOMAIN" https-ledgerline "$LAB_STATE/realm/realm-ledgerline.json" identity-assertion-jwt
@@ -35,15 +39,11 @@ apply_tmpl "$D/ledgerline/identity.yaml" "$D/ledgerline/egress.yaml"
 deny_internet ledgerline ledgerline-identity
 ledgerline_egress
 K delete networkpolicy research-to-as -n ledgerline --ignore-not-found >/dev/null   # earlier labs
-waiting=$(ledgerline_link_bob)
 ok "https://mcp.$LEDGERLINE_DOMAIN  authorization server: ${RESOURCE_AS} ($LEDGERLINE_AS_ISSUER)"
-for n in $waiting; do
-  warn "Ledgerline links Bob's $n account once he has signed in to S&V through $n: sign in at https://kagent.$SV_DOMAIN, then re-run demos/bob/install.sh"
-done
 
 step "Sterling & Vance: workspace, waypoint, agent, Cross App Access"
-# S&V's client secret at each upstream that vouches for Bob, and its key for
-# Ledgerline, kept with its egress gateway
+# S&V's keys (or a client secret) for each upstream that vouches for Bob and
+# for Ledgerline, kept with its egress gateway
 xaa_secrets
 K delete secret ledgerline-client -n agentgateway-system --ignore-not-found >/dev/null   # earlier labs: a shared secret
 apply_tmpl "$D"/manifests/*.yaml

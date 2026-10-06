@@ -15,7 +15,10 @@
       "name": "advisors"
     },
     {
-      "name": "platform-admins"
+      "name": "platform-admins",
+      "realmRoles": [
+        "local-only"
+      ]
     }
   ],
   "users": [
@@ -88,9 +91,7 @@
       "attributes": {
         "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "https://kagent.${SV_DOMAIN}/*",
-        "standard.token.exchange.enabled": "true",
-        "external.token.enabled": "true",
-        "external.token.idp": "${XAA_UPSTREAMS}"
+        "standard.token.exchange.enabled": "true"
       },
       "protocolMappers": [
         {
@@ -124,6 +125,29 @@
             "access.token.claim": "true",
             "id.token.claim": "false"
           }
+        },
+        {
+          "name": "aud-xaa-egress",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "xaa-egress",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "idp",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "config": {
+            "user.session.note": "identity_provider",
+            "claim.name": "idp",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
         }
       ],
       "defaultClientScopes": [
@@ -145,7 +169,33 @@
         "organization",
         "xaa-ledgerline",
         "research:read"
-      ]
+      ],
+      "fullScopeAllowed": false
+    },
+    {
+      "clientId": "xaa-egress",
+      "name": "S&V egress: stored upstream tokens",
+      "description": "Reads users' stored upstream tokens (Identity Brokering API v2) for the IdPs that vouch for them, and nothing else. Authenticates with the egress's own key (private_key_jwt).",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-jwt",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "attributes": {
+        "external.token.enabled": "true",
+        "external.token.idp": "${XAA_UPSTREAMS}",
+        "use.jwks.url": "false",
+        "jwt.credential.certificate": "${SV_EGRESS_CLIENT_CERT}",
+        "jwt.credential.kid": "${SV_EGRESS_CLIENT_KID}",
+        "token.endpoint.auth.signing.alg": "RS256"
+      },
+      "defaultClientScopes": [
+        "basic"
+      ],
+      "optionalClientScopes": []
     },
     {
       "clientId": "ai-gateway",
@@ -215,6 +265,34 @@
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false
+    },
+    {
+      "clientId": "ledgerline",
+      "name": "Ledgerline Research (SSO)",
+      "description": "Ledgerline signs S&V users in with S&V's IdP. Ledgerline authenticates with its own key (private_key_jwt).",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-jwt",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "redirectUris": [
+        "https://idp.${LEDGERLINE_DOMAIN}/realms/ledgerline/broker/sterling-vance/endpoint"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "use.jwks.url": "true",
+        "jwks.url": "https://idp.${LEDGERLINE_DOMAIN}/realms/ledgerline/protocol/openid-connect/certs",
+        "token.endpoint.auth.signing.alg": "PS256"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "profile",
+        "email"
+      ],
+      "optionalClientScopes": [],
+      "fullScopeAllowed": false
     },
     {
       "clientId": "agentregistry",
@@ -363,7 +441,7 @@
     },
     {
       "alias": "continuity-first-broker-login",
-      "description": "Upstream IdPs only authenticate: link to the existing S&V user by (verified) email, never create one",
+      "description": "Upstream IdPs only authenticate: link to the existing S&V user by verified email, never create one, never an account with role local-only",
       "providerId": "basic-flow",
       "topLevel": true,
       "builtIn": false,
@@ -379,6 +457,34 @@
           "requirement": "REQUIRED",
           "priority": 20,
           "authenticatorFlow": false
+        },
+        {
+          "flowAlias": "continuity-first-broker-login local-only",
+          "requirement": "CONDITIONAL",
+          "priority": 30,
+          "authenticatorFlow": true
+        }
+      ]
+    },
+    {
+      "alias": "continuity-first-broker-login local-only",
+      "description": "Refuse the link for an account with role local-only",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "conditional-user-role",
+          "authenticatorConfig": "local-only",
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "authenticatorFlow": false
+        },
+        {
+          "authenticator": "deny-access-authenticator",
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "authenticatorFlow": false
         }
       ]
     }
@@ -387,6 +493,13 @@
     {
       "alias": "continuity",
       "config": {}
+    },
+    {
+      "alias": "local-only",
+      "config": {
+        "condUserRole": "local-only",
+        "negate": "false"
+      }
     }
   ],
   "components": {
@@ -413,6 +526,31 @@
           ],
           "certificate": [
             "${KC_REALM_RSA_CERT}"
+          ]
+        }
+      },
+      {
+        "name": "upstream-client-ps256",
+        "providerId": "rsa",
+        "subComponents": {},
+        "config": {
+          "priority": [
+            "100"
+          ],
+          "enabled": [
+            "true"
+          ],
+          "active": [
+            "true"
+          ],
+          "algorithm": [
+            "PS256"
+          ],
+          "privateKey": [
+            "${SV_BROKER_CLIENT_KEY}"
+          ],
+          "certificate": [
+            "${SV_BROKER_CLIENT_CERT}"
           ]
         }
       }
@@ -1127,5 +1265,13 @@
     "phone",
     "microprofile-jwt",
     "organization"
-  ]
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "local-only",
+        "description": "Signs in with S&V's own account only: never linked to an upstream IdP (break-glass and platform admins)"
+      }
+    ]
+  }
 }

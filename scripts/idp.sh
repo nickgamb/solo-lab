@@ -71,22 +71,28 @@ ras_env() {
   export LEDGERLINE_AS_TOKEN_URL LEDGERLINE_AS_JWKS_URI
 }
 
+# idp_client_auth <name>: how S&V authenticates to an upstream: with its keys
+# (private_key_jwt) unless the upstream was given a client secret in .env
+idp_client_auth() { if [ -n "$(_idp_var "$1" CLIENT_SECRET)" ]; then echo client_secret_post; else echo private_key_jwt; fi; }
+
 # xaa_env: the OpenID Providers S&V's egress may get Bob's ID-JAG from, in
 # order, S&V's Keycloak last (XAA_OPS, for idtoken-exchange and xaa-relay),
 # and S&V's client key at Ledgerline's AS
 xaa_env() {
   local n d ops='[]'
   for n in $(idp_xaa_upstreams); do
-    [ -n "$(_idp_var "$n" CLIENT_ID)" ] && [ -n "$(_idp_var "$n" CLIENT_SECRET)" ] \
-      || die "ENTERPRISE_IDP: $n needs $(echo "$n" | tr '[:lower:]' '[:upper:]')_CLIENT_ID and _CLIENT_SECRET in .env"
+    [ -n "$(_idp_var "$n" CLIENT_ID)" ] \
+      || die "ENTERPRISE_IDP: $n needs $(echo "$n" | tr '[:lower:]' '[:upper:]')_CLIENT_ID in .env"
     d=$(idp_discover "$(_idp_var "$n" ISSUER)")
-    ops=$(echo "$ops" | jq -c --arg n "$n" --argjson d "$d" --arg cid "$(_idp_var "$n" CLIENT_ID)" \
-      '. + [{name: $n, issuer: $d.issuer, token_url: $d.token_endpoint, jwks_url: $d.jwks_uri, client_id: $cid}]')
+    ops=$(echo "$ops" | jq -c --arg n "$n" --argjson d "$d" --arg cid "$(_idp_var "$n" CLIENT_ID)" --arg auth "$(idp_client_auth "$n")" \
+      '. + [{name: $n, issuer: $d.issuer, token_url: $d.token_endpoint, jwks_url: $d.jwks_uri, client_id: $cid, auth: $auth}]')
   done
   XAA_OPS=$(echo "$ops" | jq -c --arg iss "$SV_ISSUER" '. + [{name: "keycloak", issuer: $iss,
     token_url: "http://keycloak.sv-identity/realms/sterling-vance/protocol/openid-connect/token",
-    jwks_url: "http://keycloak.sv-identity/realms/sterling-vance/protocol/openid-connect/certs", client_id: "kagent"}]')
+    jwks_url: "http://keycloak.sv-identity/realms/sterling-vance/protocol/openid-connect/certs", client_id: "kagent",
+    auth: "client_secret_basic"}]')
   realm_signing_key sv-xaa-client
+  realm_signing_key sv-egress-client
   SV_XAA_CLIENT_CERT=$(pem_body "$LAB_STATE/keys/sv-xaa-client.crt")
   SV_XAA_CLIENT_KID=$(xaa_client_jwks | jq -r '.keys[0].kid')
   export XAA_OPS SV_XAA_CLIENT_CERT SV_XAA_CLIENT_KID SV_CLIENT_AT_LEDGERLINE
@@ -96,46 +102,63 @@ xaa_env() {
 # (Keycloak's multivalued client attribute)
 xaa_upstreams_attr() { idp_xaa_upstreams | sed 's/ /##/g'; }
 
-# xaa_secrets: S&V's credentials for its egress: its client secret at each
-# upstream OP, and its private_key_jwt key for Ledgerline's AS
+# xaa_secrets: S&V's credentials for its egress: its own key (client
+# xaa-egress at S&V's Keycloak, S&V's client at each upstream that vouches,
+# or that upstream's client secret) and its key for Ledgerline's AS
 xaa_secrets() {
   local n
   for n in $IDP_UPSTREAMS; do
     case " $(idp_xaa_upstreams) " in
-      *" $n "*) K create secret generic "op-$n" -n agentgateway-system \
+      *" $n "*) [ "$(idp_client_auth "$n")" = client_secret_post ] && K create secret generic "op-$n" -n agentgateway-system \
                   --from-literal=clientSecret="$(_idp_var "$n" CLIENT_SECRET)" --dry-run=client -o yaml | K apply -f - >/dev/null ;;
       *) K delete secret "op-$n" -n agentgateway-system --ignore-not-found >/dev/null ;;
     esac
   done
+  # the egress's own key: client xaa-egress at S&V's Keycloak, and S&V's
+  # client at each upstream (beside the broker's key)
+  K create secret generic egress-client-key -n agentgateway-system --from-file=signingKey="$LAB_STATE/keys/sv-egress-client.key" \
+    --dry-run=client -o yaml | K apply -f - >/dev/null
   K create secret generic xaa-client-key -n agentgateway-system --from-file=signingKey="$LAB_STATE/keys/sv-xaa-client.key" \
     --dry-run=client -o yaml | K apply -f - >/dev/null
 }
 
-# xaa_client_jwks: the public half of S&V's client key, as a JWKS with its
-# RFC 7638 kid: what Ledgerline's AS registers for S&V's client
-xaa_client_jwks() {
-  openssl x509 -in "$LAB_STATE/keys/sv-xaa-client.crt" -noout -modulus | cut -d= -f2 | python3 -c '
+# jwks_of <cert>: the public half of a lab key, as a JWKS with its RFC 7638 kid
+jwks_of() {
+  openssl x509 -in "$1" -noout -modulus | cut -d= -f2 | python3 -c '
 import base64, hashlib, json, sys
 n = base64.urlsafe_b64encode(bytes.fromhex(sys.stdin.read().strip())).rstrip(b"=").decode()
 jwk = {"e": "AQAB", "kty": "RSA", "n": n}
 kid = base64.urlsafe_b64encode(hashlib.sha256(json.dumps(jwk, separators=(",", ":"), sort_keys=True).encode()).digest()).rstrip(b"=").decode()
 print(json.dumps({"keys": [{**jwk, "kid": kid, "use": "sig", "alg": "RS256"}]}, indent=2))'
 }
+# xaa_client_jwks: S&V's client key at Ledgerline's AS
+xaa_client_jwks() { jwks_of "$LAB_STATE/keys/sv-xaa-client.crt"; }
 
-# ledgerline_realm <realm.json>: Ledgerline's realm, also trusting each
-# upstream that vouches for S&V's users (as an ID-JAG issuer)
+# ledgerline_realm <realm.json>: Ledgerline's realm, trusting each IdP that
+# vouches for S&V's users, for sign-in (Ledgerline's SSO client "ledgerline"
+# there, private_key_jwt) and for ID-JAGs. Each is trusted for S&V's domain
+# only: a first sign-in creates the account (named by its verified email) or
+# links the seat with that email.
 ledgerline_realm() {
   local n d idps='[]'
   for n in $(idp_xaa_upstreams); do
     d=$(idp_discover "$(_idp_var "$n" ISSUER)")
     idps=$(echo "$idps" | jq -c --arg n "$n" --argjson d "$d" '. + [{alias: "sterling-vance-\($n)",
       displayName: "Sterling & Vance (\($n))", providerId: "oidc", enabled: true, trustEmail: true,
-      storeToken: false, linkOnly: true, config: {issuer: $d.issuer, jwksUrl: $d.jwks_uri, useJwksUrl: "true",
-        validateSignature: "true", authorizationUrl: $d.authorization_endpoint, tokenUrl: $d.token_endpoint,
-        clientId: "ledgerline-sso", jwtAuthorizationGrantEnabled: "true",
-        jwtAuthorizationGrantAssertionReuseAllowed: "false", jwtAuthorizationGrantMaxAllowedAssertionExpiration: "300"}}]')
+      storeToken: false, linkOnly: false, firstBrokerLoginFlowAlias: "enterprise first sign-in",
+      config: {issuer: $d.issuer, jwksUrl: $d.jwks_uri, useJwksUrl: "true", validateSignature: "true",
+        authorizationUrl: $d.authorization_endpoint, tokenUrl: $d.token_endpoint,
+        clientId: "ledgerline", clientAuthMethod: "private_key_jwt", clientAssertionSigningAlg: "PS256",
+        pkceEnabled: "true", pkceMethod: "S256", defaultScope: "openid email profile", syncMode: "IMPORT",
+        filteredByClaim: "true", claimFilterName: "email",
+        jwtAuthorizationGrantEnabled: "true", jwtAuthorizationGrantAssertionReuseAllowed: "false",
+        jwtAuthorizationGrantMaxAllowedAssertionExpiration: "300"}}]')
   done
-  jq --argjson idps "$idps" '.identityProviders += $idps
+  jq --argjson idps "$idps" --arg domain "$SV_DOMAIN" '.identityProviders += $idps
+    | .identityProviderMappers += ($idps | map({name: "username from email", identityProviderAlias: .alias,
+        identityProviderMapper: "oidc-username-idp-mapper", config: {syncMode: "INHERIT", template: "${CLAIM.email}"}}))
+    | (.identityProviders[] | select(.alias | startswith("sterling-vance")) | .config.claimFilterValue)
+        = (".*@" + ($domain | gsub("\\."; "\\.")))
     | (.clients[] | select(.clientId == "sterling-vance-kagent") | .attributes["oauth2.jwt.authorization.grant.idp"])
         |= ([.] + ($idps | map(.alias)) | join("##"))' "$1"
 }
@@ -186,43 +209,4 @@ YAML
   K get serviceentry -n ledgerline-egress -l lab.solo.io/egress=ledgerline -o json \
     | jq -r --arg keep " $(echo $hosts) " '.items[] | select(($keep | contains(" " + .spec.hosts[0] + " ")) | not) | .metadata.name' \
     | while read -r se; do K delete serviceentry "$se" -n ledgerline-egress >/dev/null; done
-}
-
-# kc_admin <ns> <admin password secret>: an admin token for a party's
-# Keycloak (master realm) over a port-forward; prints "<port> <token>"
-kc_admin() {
-  local lp tok; lp=$(free_port)
-  port_forward "$1" keycloak "$lp" 80
-  tok=$(_P="$(lab_secret "$2")" jq -rn '{grant_type: "password", client_id: "admin-cli", username: "admin", password: $ENV._P}
-      | to_entries | map("\(.key)=\(.value | @uri)") | join("&")' \
-    | curl -s "http://127.0.0.1:$lp/realms/master/protocol/openid-connect/token" --data @- | jq -r .access_token)
-  echo "$lp $tok"
-}
-
-# _kc_api <port> <admin token> <path> [curl args]: the token goes to curl on a
-# file descriptor, never the command line
-_kc_api() {
-  local p=$1 t=$2 path=$3; shift 3
-  curl -s -K <(printf 'header = "Authorization: Bearer %s"\n' "$t") "$@" "http://127.0.0.1:$p$path"
-}
-
-# ledgerline_link_bob: Ledgerline provisions Bob's account for each upstream
-# that vouches for him, keyed by his subject there (the step a SaaS takes at
-# onboarding or first sign-in), once Bob has signed in to S&V through it.
-# Prints the upstreams still waiting for that sign-in.
-ledgerline_link_bob() {
-  local n svp svt llp llt svid llid sub
-  [ -n "$(idp_xaa_upstreams)" ] || return 0
-  read -r svp svt <<<"$(kc_admin sv-identity SV_KC_ADMIN_PASSWORD)"
-  read -r llp llt <<<"$(kc_admin ledgerline-identity LL_KC_ADMIN_PASSWORD)"
-  svid=$(_kc_api "$svp" "$svt" "/admin/realms/sterling-vance/users?username=bob&exact=true" | jq -r '.[0].id')
-  llid=$(_kc_api "$llp" "$llt" "/admin/realms/ledgerline/users?username=bob@sterling.lab&exact=true" | jq -r '.[0].id')
-  for n in $(idp_xaa_upstreams); do
-    sub=$(_kc_api "$svp" "$svt" "/admin/realms/sterling-vance/users/$svid/federated-identity" \
-      | jq -r --arg n "$n" '.[] | select(.identityProvider == $n) | .userId')
-    if [ -z "$sub" ]; then echo "$n"; continue; fi
-    jq -n --arg sub "$sub" '{userId: $sub, userName: "bob"}' | _kc_api "$llp" "$llt" \
-      "/admin/realms/ledgerline/users/$llid/federated-identity/sterling-vance-$n" -o /dev/null -X POST \
-      -H 'Content-Type: application/json' --data @-
-  done
 }

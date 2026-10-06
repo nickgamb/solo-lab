@@ -45,11 +45,16 @@ if [ "$RESOURCE_AS" = gluu ]; then
   ACCOUNT="issuer[\\\"]*: [\\\"]*$ISS.*ledgerline_account[\\\"]*: [\\\"]*bob|ledgerline_account[\\\"]*: [\\\"]*bob.*issuer[\\\"]*: [\\\"]*$ISS"
   CHAT='bob'
 fi
-# the enterprise IdP that should vouch for Bob: S&V's active tier when it
-# issues ID-JAGs (gluu), else S&V's Keycloak
+# the IdP that should vouch for Bob: his session's (the token's idp claim)
+# when it issues ID-JAGs and is S&V's active tier, else S&V's Keycloak. These
+# checks sign Bob in with S&V's own login; a browser session through Gluu
+# has Gluu vouch.
+SESSION_IDP=$(echo "$BOB" | cut -d. -f2 | python3 -c 'import base64,json,sys; s=sys.stdin.read().strip(); print(json.loads(base64.urlsafe_b64decode(s+"="*(-len(s)%4))).get("idp",""))')
 ACTIVE=$(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}' 2>/dev/null)
 VOUCHER=keycloak
-case " $(idp_xaa_upstreams) " in *" $ACTIVE "*) VOUCHER=$ACTIVE ;; esac
+if [ -n "$SESSION_IDP" ] && [ "$SESSION_IDP" = "$ACTIVE" ]; then
+  case " $(idp_xaa_upstreams) " in *" $SESSION_IDP "*) VOUCHER=$SESSION_IDP ;; esac
+fi
 step "Cross App Access: Bob's agent -> Ledgerline Research (ID-JAG)"
 check "$ACCOUNT"                                "account_info: Ledgerline's own account for Bob"  $AGENT $XAA call account_info '{}' --token "$BOB"
 # xaa-relay's record of the last ID-JAG it accepted (the gateway caches
@@ -59,11 +64,15 @@ vouched=$(K logs -n agentgateway-system -l app=xaa-relay --since=6m --tail=-1 2>
 if [ "${vouched%% *}" = "$VOUCHER" ]; then ok "ID-JAG from $VOUCHER, checked at S&V's egress: ${vouched#* }"; pass=$((pass+1))
 else
   warn "ID-JAG from $VOUCHER, checked at S&V's egress"; echo "      got: ${vouched:-no ID-JAG in the xaa-relay log}"
-  [ "$VOUCHER" != keycloak ] && echo "      Bob vouched for by $VOUCHER needs his $VOUCHER account at S&V: sign in once at https://kagent.$SV_DOMAIN through $VOUCHER, re-run demos/bob/install.sh"
+  [ "$VOUCHER" != keycloak ] && echo "      $VOUCHER vouches for a session through it once Bob has signed in to Ledgerline through it (https://idp.$LEDGERLINE_DOMAIN/realms/ledgerline/account)"
   fail=$((fail+1))
 fi
 check 'overweight'                              "sector_outlook through XAA"                       $AGENT $XAA call sector_outlook '{"sector":"technology"}' --token "$BOB"
 check "$ACCOUNT"                                "another user's ID token is replaced: still Bob"   $AGENT $XAA call account_info '{}' --token "$BOB" --header "x-id-token=$OTHER_ID"
+# Ledgerline's server records any ID token that reaches it: none may
+leaked=$(K logs -n ledgerline -l app.kubernetes.io/name=ledgerline-research --since=10m --tail=-1 2>/dev/null | grep -c '"event": "unexpected credential header"' || true)
+if [ "${leaked:-0}" = 0 ]; then ok "Ledgerline never receives an ID token"; pass=$((pass+1))
+else warn "Ledgerline never receives an ID token"; echo "      got: $leaked requests carrying x-id-token"; fail=$((fail+1)); fi
 check 'http": 40[13]'                           "right token, wrong workload (observability)"      observability $XAA call account_info '{}' --token "$BOB"
 check 'http": 40[13]|refused|reset|Broken pipe|Connection' \
                                                 "ask the ID-token exchange directly (ai-gateway only)" $AGENT http://idtoken-exchange.agentgateway-system:8080/mcp call account_info '{}' --token "$BOB"

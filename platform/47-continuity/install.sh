@@ -29,13 +29,16 @@ CHAIN=$(idp_chain)
 for n in $IDP_UPSTREAMS; do
   case " $CHAIN " in *" $n "*) ;; *) continue ;; esac
   N=$(echo "$n" | tr '[:lower:]' '[:upper:]')
-  if [ -n "$(_idp_var "$n" CLIENT_ID)" ] && [ -n "$(_idp_var "$n" CLIENT_SECRET)" ]; then
+  if [ -z "$(_idp_var "$n" CLIENT_ID)" ]; then
+    warn "$n tier is NotConfigured until ${N}_CLIENT_ID is in .env (then re-run this layer)"
+  elif [ "$(idp_client_auth "$n")" = private_key_jwt ]; then
+    K delete secret "upstream-$n" -n sv-identity --ignore-not-found >/dev/null
+    ok "$n: private_key_jwt with S&V's broker key (make xaa-keys for its JWKS)"
+  else
     K create secret generic "upstream-$n" -n sv-identity \
       --from-literal=client-id="$(_idp_var "$n" CLIENT_ID)" --from-literal=client-secret="$(_idp_var "$n" CLIENT_SECRET)" \
       --dry-run=client -o yaml | K apply -f - >/dev/null
-    ok "sv-identity/upstream-$n"
-  else
-    warn "$n tier is NotConfigured until ${N}_CLIENT_ID and ${N}_CLIENT_SECRET are in .env (then re-run this layer)"
+    ok "$n: client_secret_post (sv-identity/upstream-$n)"
   fi
 done
 ok "sv-identity/continuity-controller  (chain: $(echo "$CHAIN" | sed 's/ / -> /g'))"
@@ -62,9 +65,11 @@ desired=$(for n in $CHAIN; do
   if [ "$n" = keycloak ]; then jq -nc '{name: "keycloak", displayName: "Sterling & Vance (local)", type: "local"}'
   else
     store=false; if echo " $IDP_ISSUES_IDJAG " | grep -q " $n "; then store=true; fi
-    jq -nc --arg n "$n" --arg iss "$(_idp_var "$n" ISSUER)" --argjson store "$store" '{name: $n,
+    jq -nc --arg n "$n" --arg iss "$(_idp_var "$n" ISSUER)" --arg cid "$(_idp_var "$n" CLIENT_ID)" \
+      --arg auth "$(idp_client_auth "$n")" --argjson store "$store" '{name: $n,
       displayName: ({auth0: "Auth0", gluu: "Gluu"}[$n] // $n), type: "oidc",
-      oidc: ({issuer: $iss, clientSecretRef: {name: "upstream-\($n)"}}
+      oidc: ({issuer: $iss, clientID: $cid, clientAuth: $auth}
+        + (if $auth == "private_key_jwt" then {clientAssertionSigningAlg: "PS256"} else {clientSecretRef: {name: "upstream-\($n)"}} end)
         + (if $store then {scopes: ["openid", "email", "profile", "offline_access"], storeTokens: true} else {} end)),
       failoverWhen: {unreachable: true, serverError: true, invalidDiscovery: true, latencyAboveMs: 1500}}'
   fi
@@ -77,7 +82,9 @@ else
   # rules); .env sets its type, issuer, secret and token settings
   merged=$(jq -nc --argjson d "$desired" --argjson c "$cur" '$d | map(. as $t
     | ([$c[] | select(.name == $t.name)][0]) as $old
-    | if $old == null then $t else $old * ($t | del(.displayName, .failoverWhen)) end)')
+    | if $old == null then $t
+      else ($old * ($t | del(.displayName, .failoverWhen)))
+        | if .oidc.clientAuth == "private_key_jwt" then del(.oidc.clientSecretRef) else . end end)')
   # every S&V caller of an upstream goes through the egress waypoint
   egress=$(render "$D/identitycontinuity.yaml" | yq -o json -I0 '.spec.egress')
   if [ "$(K get idc sterling-vance -n sv-identity -o json | jq -cS '.spec.egress | del(.internalDomains)')" != "$(echo "$egress" | jq -cS .)" ]; then
