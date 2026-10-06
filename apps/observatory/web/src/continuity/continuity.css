@@ -99,7 +99,7 @@
 .cm-disc { font: 500 9.5px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .04em; color: var(--text-subtle); flex: none; }
 .cm-x, .cm-multi, .cm-link, .cm-addbtn { border: 0; background: transparent; cursor: pointer; padding: 0 3px; color: var(--text-subtle); border-radius: 4px; flex: none; }
 .cm-x:hover { color: var(--bad); }
-.cm-multi { font: 500 11px/1 var(--font-mono); padding: 2px 3px; }
+.cm-multi { font: 500 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .04em; padding: 3px 5px; border: 1px solid var(--border-soft); }
 .cm-multi.on { background: var(--accent-soft); color: var(--accent-2); }
 .cm-link { color: var(--accent-2); font-size: 12px; }
 .cm-link:hover, .cm-addbtn:hover { text-decoration: underline; }

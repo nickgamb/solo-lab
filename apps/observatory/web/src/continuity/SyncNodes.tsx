@@ -125,7 +125,8 @@ export const ProfileNode = memo(({ id, data }: NodeProps) => {
             {!a.builtin && a.declared && (
               <>
                 <button className={a.multivalued ? 'cm-multi on nodrag' : 'cm-multi nodrag'} aria-pressed={a.multivalued}
-                  onClick={() => c.toggleMultivalued(a.name)} title={a.multivalued ? 'Multivalued: holds a list' : 'Single value (click for a list)'}>[ ]</button>
+                  onClick={() => c.toggleMultivalued(a.name)}
+                  title={a.multivalued ? 'Holds a list of values (click for one value)' : 'Holds one value (click for a list)'}>{a.multivalued ? 'list' : 'single'}</button>
                 <button className="cm-x nodrag" onClick={() => c.removeAttribute(a.name)} title={`Remove ${a.name} and its mappings`} aria-label={`Remove attribute ${a.name}`}>×</button>
               </>
             )}
