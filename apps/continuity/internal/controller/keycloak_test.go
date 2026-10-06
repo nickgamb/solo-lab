@@ -73,6 +73,26 @@ func TestStoreTokens(t *testing.T) {
 	}
 }
 
+// private_key_jwt: the broker signs a client assertion with the realm key for
+// the algorithm; no client secret reaches Keycloak's IdP config.
+func TestClientAuth(t *testing.T) {
+	ic := &v1.IdentityContinuity{}
+	d := &probe.Discovery{AuthorizationEndpoint: "https://op.example/authorize", TokenEndpoint: "https://op.example/token", JWKSURI: "https://op.example/jwks"}
+	tier := v1.Tier{Name: "gluu", Type: "oidc", OIDC: &v1.OIDCUpstream{Issuer: "https://op.example", ClientID: "sv", ClientAuth: "private_key_jwt"}}
+	cfg := desiredIdP(ic, tier, credential{id: "sv"}, d, "o", false, true).Config()
+	if cfg["clientAuthMethod"] != "private_key_jwt" || cfg["clientAssertionSigningAlg"] != "PS256" {
+		t.Fatalf("config %v", cfg)
+	}
+	if _, ok := cfg["clientSecret"]; ok {
+		t.Fatal("private_key_jwt config carries a clientSecret")
+	}
+	tier.OIDC.ClientAuth = ""
+	cfg = desiredIdP(ic, tier, credential{id: "sv", secret: "s"}, d, "o", false, true).Config()
+	if cfg["clientAuthMethod"] != "client_secret_post" || cfg["clientSecret"] != "s" {
+		t.Fatalf("default config %v", cfg)
+	}
+}
+
 // adminAPI is a small in-memory Keycloak admin API: identity providers, their
 // mappers, and one browser flow with a redirector.
 type adminAPI struct {

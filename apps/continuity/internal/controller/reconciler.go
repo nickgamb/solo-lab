@@ -184,7 +184,19 @@ func (r *Reconciler) tierCredentials(ctx context.Context, ic *v1.IdentityContinu
 		if t.Type != "oidc" || t.OIDC == nil {
 			continue
 		}
-		ref := t.OIDC.ClientSecretRef
+		if t.OIDC.ClientAuth == "private_key_jwt" { // the realm's key, no secret
+			c := credential{id: t.OIDC.ClientID}
+			if c.id == "" {
+				c.missing = "clientAuth private_key_jwt needs clientID"
+			}
+			out[t.Name] = c
+			continue
+		}
+		if t.OIDC.ClientSecretRef == nil {
+			out[t.Name] = credential{missing: "no clientSecretRef"}
+			continue
+		}
+		ref := *t.OIDC.ClientSecretRef
 		key := ref.Key
 		if key == "" {
 			key = "client-secret"
@@ -453,7 +465,10 @@ func (r *Reconciler) reconcileKeycloak(ctx context.Context, ic *v1.IdentityConti
 			continue
 		}
 		hide := !tiers.Eligible(t, st[t.Name])
-		enabled := t.Enabled == nil || *t.Enabled
+		// Only the active tier signs anyone in: a hint or a direct broker URL
+		// can't reach an upstream that failed over, drained or is waiting
+		// its turn. Users' links to it stay.
+		enabled := (t.Enabled == nil || *t.Enabled) && t.Name == active
 		var err error
 		d := r.cachedDiscovery(ic, t)
 		switch {
@@ -534,8 +549,6 @@ func desiredIdP(ic *v1.IdentityContinuity, t v1.Tier, c credential, d *probe.Dis
 		"useJwksUrl":        "true",
 		"validateSignature": "true",
 		"clientId":          c.id,
-		"clientSecret":      c.secret,
-		"clientAuthMethod":  "client_secret_post",
 		"defaultScope":      strings.Join(scopes, " "),
 		"pkceEnabled":       "true",
 		"pkceMethod":        "S256",
@@ -545,6 +558,21 @@ func desiredIdP(ic *v1.IdentityContinuity, t v1.Tier, c credential, d *probe.Dis
 		"claimFilterName":  "email_verified",
 		"claimFilterValue": "true",
 		cfgInstance:        owner,
+	}
+	switch auth := t.OIDC.ClientAuth; auth {
+	case "private_key_jwt":
+		alg := t.OIDC.ClientAssertionSigningAlg
+		if alg == "" {
+			alg = "PS256"
+		}
+		cfg["clientAuthMethod"] = auth
+		cfg["clientAssertionSigningAlg"] = alg
+	case "client_secret_basic":
+		cfg["clientAuthMethod"] = auth
+		cfg["clientSecret"] = c.secret
+	default:
+		cfg["clientAuthMethod"] = "client_secret_post"
+		cfg["clientSecret"] = c.secret
 	}
 	if d.UserinfoEndpoint != "" {
 		cfg["userInfoUrl"] = d.UserinfoEndpoint

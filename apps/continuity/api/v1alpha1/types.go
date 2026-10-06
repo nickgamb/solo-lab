@@ -103,19 +103,36 @@ type Tier struct {
 	FailoverWhen FailoverRules `json:"failoverWhen,omitempty"`
 }
 
+// +kubebuilder:validation:XValidation:rule="self.clientAuth == 'private_key_jwt' || has(self.clientSecretRef)",message="clientSecretRef is required unless clientAuth is private_key_jwt"
+// +kubebuilder:validation:XValidation:rule="self.clientAuth != 'private_key_jwt' || (has(self.clientID) && size(self.clientID) > 0)",message="clientAuth private_key_jwt needs clientID"
 type OIDCUpstream struct {
 	// Exactly as the upstream publishes it (Auth0's ends in "/").
 	// +kubebuilder:validation:Pattern=`^https://`
 	Issuer string `json:"issuer"`
 	// Falls back to the client-id key of clientSecretRef's Secret.
 	ClientID string `json:"clientID,omitempty"`
-	// A tier whose Secret or key is missing is NotConfigured: probed, never active.
-	ClientSecretRef SecretKeyRef `json:"clientSecretRef"`
+	// How the broker authenticates to the upstream's token endpoint.
+	// private_key_jwt (RFC 7523) signs a client assertion with the realm's
+	// active key for clientAssertionSigningAlg (a key kept for that alone,
+	// published in the realm's JWKS for the upstream to register): no shared
+	// secret.
+	// +kubebuilder:validation:Enum=client_secret_post;client_secret_basic;private_key_jwt
+	// +kubebuilder:default=client_secret_post
+	ClientAuth string `json:"clientAuth,omitempty"`
+	// The algorithm of the realm key kept for client assertions alone (the
+	// token-signing key uses RS256, so it is never used here).
+	// +kubebuilder:validation:Enum=PS256
+	// +kubebuilder:default=PS256
+	ClientAssertionSigningAlg string `json:"clientAssertionSigningAlg,omitempty"`
+	// The client secret, for client_secret_post and client_secret_basic. A
+	// tier whose Secret or key is missing is NotConfigured: probed, never
+	// active.
+	ClientSecretRef *SecretKeyRef `json:"clientSecretRef,omitempty"`
 	// +kubebuilder:default={openid,email,profile}
 	Scopes []string `json:"scopes,omitempty"`
-	// Keep the upstream's tokens on each user's broker link, readable by the
-	// user's own tokens (role broker/read-token): the gateway then uses the
-	// upstream as the OpenID Provider for Cross App Access. Add
+	// Keep the upstream's tokens on each user's broker link, for a client the
+	// realm allows to read them (Identity Brokering API v2): S&V's egress has
+	// the upstream vouch for its users in Cross App Access. Add
 	// offline_access to scopes for a refresh token.
 	StoreTokens bool `json:"storeTokens,omitempty"`
 }

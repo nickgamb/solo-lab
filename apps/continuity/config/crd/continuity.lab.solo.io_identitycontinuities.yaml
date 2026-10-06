@@ -204,13 +204,36 @@ spec:
                       type: string
                     oidc:
                       properties:
+                        clientAssertionSigningAlg:
+                          default: PS256
+                          description: |-
+                            The algorithm of the realm key kept for client assertions alone (the
+                            token-signing key uses RS256, so it is never used here).
+                          enum:
+                          - PS256
+                          type: string
+                        clientAuth:
+                          default: client_secret_post
+                          description: |-
+                            How the broker authenticates to the upstream's token endpoint.
+                            private_key_jwt (RFC 7523) signs a client assertion with the realm's
+                            active key for clientAssertionSigningAlg (a key kept for that alone,
+                            published in the realm's JWKS for the upstream to register): no shared
+                            secret.
+                          enum:
+                          - client_secret_post
+                          - client_secret_basic
+                          - private_key_jwt
+                          type: string
                         clientID:
                           description: Falls back to the client-id key of clientSecretRef's
                             Secret.
                           type: string
                         clientSecretRef:
-                          description: 'A tier whose Secret or key is missing is NotConfigured:
-                            probed, never active.'
+                          description: |-
+                            The client secret, for client_secret_post and client_secret_basic. A
+                            tier whose Secret or key is missing is NotConfigured: probed, never
+                            active.
                           properties:
                             key:
                               default: client-secret
@@ -235,15 +258,21 @@ spec:
                           type: array
                         storeTokens:
                           description: |-
-                            Keep the upstream's tokens on each user's broker link, readable by the
-                            user's own tokens (role broker/read-token): the gateway then uses the
-                            upstream as the OpenID Provider for Cross App Access. Add
+                            Keep the upstream's tokens on each user's broker link, for a client the
+                            realm allows to read them (Identity Brokering API v2): S&V's egress has
+                            the upstream vouch for its users in Cross App Access. Add
                             offline_access to scopes for a refresh token.
                           type: boolean
                       required:
-                      - clientSecretRef
                       - issuer
                       type: object
+                      x-kubernetes-validations:
+                      - message: clientSecretRef is required unless clientAuth is
+                          private_key_jwt
+                        rule: self.clientAuth == 'private_key_jwt' || has(self.clientSecretRef)
+                      - message: clientAuth private_key_jwt needs clientID
+                        rule: self.clientAuth != 'private_key_jwt' || (has(self.clientID)
+                          && size(self.clientID) > 0)
                     type:
                       enum:
                       - oidc
