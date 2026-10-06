@@ -157,10 +157,153 @@ spec:
                     minimum: 1
                     type: integer
                 type: object
+              profile:
+                description: |-
+                  S&V's unified user profile: the attributes every tier's claims map
+                  into, kept on the broker's users and carried in tokens. Optional.
+                properties:
+                  attributes:
+                    description: |-
+                      Attributes beyond the built-in username, email, firstName and lastName,
+                      added to the realm's user profile. Users can view but not edit them:
+                      their values come from the upstreams.
+                    items:
+                      properties:
+                        displayName:
+                          type: string
+                        multivalued:
+                          type: boolean
+                        name:
+                          description: The Keycloak attribute name, and the claim
+                            name in tokens.
+                          maxLength: 64
+                          pattern: ^[a-zA-Z][a-zA-Z0-9_.-]*$
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    maxItems: 64
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  tokenClients:
+                    description: |-
+                      Clients whose tokens carry the profile (client scope "<instance>-profile"
+                      as a default scope). Others never see it.
+                    items:
+                      type: string
+                    type: array
+                type: object
+              sync:
+                description: |-
+                  The scheduled out-of-band sync of profile attributes from each tier's
+                  directory into the broker. Optional.
+                properties:
+                  credentialsRef:
+                    default:
+                      name: continuity-sync
+                    description: |-
+                      A Secret with client-id and client-secret of the broker's realm client
+                      the sync writes users as (view-users and manage-users; nothing else).
+                    properties:
+                      name:
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  schedule:
+                    description: Standard cron, in UTC (e.g. "0 2 * * *" daily at
+                      02:00).
+                    minLength: 9
+                    type: string
+                  suspend:
+                    type: boolean
+                required:
+                - schedule
+                type: object
               tiers:
                 description: 'Ordered: the first eligible, healthy tier is active.'
                 items:
                   properties:
+                    claims:
+                      description: |-
+                        This tier's claims, mapped into the unified profile: at sign-in
+                        (Keycloak IdP mappers, updated on every login) and in the scheduled
+                        sync. oidc tiers only.
+                      items:
+                        description: ClaimMapping maps one upstream claim to one profile
+                          attribute.
+                        properties:
+                          attribute:
+                            description: The profile attribute it fills (built-in
+                              or spec.profile.attributes).
+                            minLength: 1
+                            type: string
+                          claim:
+                            description: The claim in the upstream's ID token or userinfo,
+                              at sign-in.
+                            minLength: 1
+                            type: string
+                          directoryPath:
+                            description: |-
+                              Where the same value is in the directory's user record, when it isn't
+                              the claim's standard place there (e.g. "user_metadata.department").
+                            type: string
+                        required:
+                        - attribute
+                        - claim
+                        type: object
+                      maxItems: 64
+                      type: array
+                    directory:
+                      description: Where the scheduled sync reads this tier's users.
+                        oidc tiers only.
+                      properties:
+                        audience:
+                          type: string
+                        clientID:
+                          type: string
+                        credentialsRef:
+                          description: |-
+                            A Secret with client-secret (and client-id, unless clientID is set):
+                            an OAuth client allowed the client_credentials grant at the tier's
+                            token endpoint, with read-only access to users.
+                          properties:
+                            name:
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        scopes:
+                          description: Scopes to request (e.g. "https://jans.io/scim/users.read").
+                          items:
+                            type: string
+                          type: array
+                        type:
+                          description: |-
+                            scim (SCIM 2.0: Gluu, and most enterprise IdPs), auth0 (Management
+                            API v2) or keycloak (admin API, one realm).
+                          enum:
+                          - scim
+                          - auth0
+                          - keycloak
+                          type: string
+                        url:
+                          description: |-
+                            The API's base URL: .../scim/v2, https://<tenant>/api/v2, or
+                            https://<host>/admin/realms/<realm>.
+                          pattern: ^https://
+                          type: string
+                      required:
+                      - credentialsRef
+                      - type
+                      - url
+                      type: object
+                      x-kubernetes-validations:
+                      - message: an auth0 directory needs audience (the Management
+                          API identifier)
+                        rule: self.type != 'auth0' || has(self.audience)
                     displayName:
                       type: string
                     drain:
@@ -378,9 +521,41 @@ spec:
               observedGeneration:
                 format: int64
                 type: integer
+              sync:
+                description: SyncStatus records the scheduled sync's last run.
+                properties:
+                  cronJob:
+                    description: The CronJob that runs it.
+                    type: string
+                  failed:
+                    format: int32
+                    type: integer
+                  lastRun:
+                    format: date-time
+                    type: string
+                  lastSuccess:
+                    format: date-time
+                    type: string
+                  message:
+                    type: string
+                  updated:
+                    format: int32
+                    type: integer
+                  users:
+                    description: Users read, users whose profile changed, and failures,
+                      in the last run.
+                    format: int32
+                    type: integer
+                type: object
               tiers:
                 items:
                   properties:
+                    claimsSupported:
+                      description: The claims the upstream says it can return (discovery
+                        claims_supported).
+                      items:
+                        type: string
+                      type: array
                     configured:
                       description: Credentials present (always true for local tiers).
                       type: boolean

@@ -19,15 +19,19 @@ import (
 )
 
 type Discovery struct {
-	Issuer                string `json:"issuer"`
-	AuthorizationEndpoint string `json:"authorization_endpoint"`
-	TokenEndpoint         string `json:"token_endpoint"`
-	JWKSURI               string `json:"jwks_uri"`
-	UserinfoEndpoint      string `json:"userinfo_endpoint,omitempty"`
-	EndSessionEndpoint    string `json:"end_session_endpoint,omitempty"`
+	Issuer                string   `json:"issuer"`
+	AuthorizationEndpoint string   `json:"authorization_endpoint"`
+	TokenEndpoint         string   `json:"token_endpoint"`
+	JWKSURI               string   `json:"jwks_uri"`
+	UserinfoEndpoint      string   `json:"userinfo_endpoint,omitempty"`
+	EndSessionEndpoint    string   `json:"end_session_endpoint,omitempty"`
+	ClaimsSupported       []string `json:"claims_supported,omitempty"`
 }
 
-type Prober struct{ client *http.Client }
+type Prober struct {
+	client *http.Client
+	tls    *tls.Config
+}
 
 // New trusts the system roots plus caFile (the lab CA bundle), if present.
 func New(caFile string) (*Prober, error) {
@@ -44,14 +48,22 @@ func New(caFile string) (*Prober, error) {
 			return nil, fmt.Errorf("no certificates in %s", caFile)
 		}
 	}
+	tc := &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 	tr := &http.Transport{
 		Proxy:             nil,
-		TLSClientConfig:   &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
+		TLSClientConfig:   tc,
 		DisableKeepAlives: true, // every probe proves the path is up now
 	}
-	return &Prober{client: &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error {
+	return &Prober{tls: tc, client: &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}}, nil
+}
+
+// HTTPClient is a client with the same trust for API calls (connections
+// kept, redirects not followed).
+func (p *Prober) HTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout, Transport: &http.Transport{Proxy: nil, TLSClientConfig: p.tls},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
 // OIDC probes an upstream issuer. The discovery document is returned only

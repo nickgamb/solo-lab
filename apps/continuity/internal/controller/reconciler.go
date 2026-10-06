@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -60,15 +61,20 @@ type Reconciler struct {
 	Reader   client.Reader // uncached: Secrets, ServiceEntries, AuthorizationPolicies
 	Recorder recorder.EventRecorder
 	Prober   *probe.Prober
+	// The profile sync's image (this controller's) and the CA bundle
+	// ConfigMap it mounts.
+	SyncImage, SyncCAConfigMap string
 
 	mu        sync.Mutex
 	brokers   map[types.NamespacedName]*keycloak.Client
 	discovery map[string]*probe.Discovery // last good discovery per instance/tier
+	profiles  map[types.NamespacedName]profileMark
 }
 
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.brokers = map[types.NamespacedName]*keycloak.Client{}
 	r.discovery = map[string]*probe.Discovery{}
+	r.profiles = map[types.NamespacedName]profileMark{}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1.IdentityContinuity{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		// Secrets are not watched: listing or watching them would mean reading
@@ -117,13 +123,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// failback isn't undone just because the local tier's health is the
 	// broker's.
 	kcErr := brokerErr
+	profileErr := r.reconcileSync(ctx, &ic)
 	switch {
 	case kc == nil:
 	case broker.Kind != tiers.Healthy:
 		kcErr = fmt.Errorf("broker unreachable: %s", broker.Message)
 	default:
-		effective, applied, err := r.reconcileKeycloak(ctx, &ic, kc, creds, byName, active)
+		effective, applied, idps, err := r.reconcileKeycloak(ctx, &ic, kc, creds, byName, active)
 		kcErr = err
+		// after the failover path, and never holding it up
+		profileErr = errors.Join(profileErr, r.reconcileProfile(ctx, &ic, kc, idps))
 		if applied {
 			if effective != active {
 				why = fmt.Sprintf("%s; %q could not be set up in Keycloak", why, active)
@@ -132,6 +141,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 	}
 	r.setConditions(&ic, byName, active, kcErr, egressErr)
+	r.setProfileCondition(&ic, profileErr)
 	ic.Status.ObservedGeneration = ic.Generation
 	if err := r.Status().Patch(ctx, &ic, client.MergeFrom(orig)); err != nil {
 		return ctrl.Result{}, err
@@ -167,6 +177,7 @@ func (r *Reconciler) forget(key types.NamespacedName) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.brokers, key)
+	delete(r.profiles, key)
 	for k := range r.discovery {
 		if strings.HasPrefix(k, key.String()+"/") {
 			delete(r.discovery, k)
@@ -290,6 +301,13 @@ func (r *Reconciler) probeAll(ctx context.Context, ic *v1.IdentityContinuity, cr
 		}
 		if t.Type == "oidc" && ic.Status.Broker != nil {
 			st.RedirectURI = ic.Status.Broker.Issuer + "/broker/" + t.Name + "/endpoint"
+		}
+		if t.Type == "oidc" {
+			if d := r.cachedDiscovery(ic, t); d != nil {
+				st.ClaimsSupported = d.ClaimsSupported
+			} else if p != nil {
+				st.ClaimsSupported = p.ClaimsSupported
+			}
 		}
 		switch {
 		case res.Kind == tiers.Healthy && failed:
@@ -422,14 +440,38 @@ func (r *Reconciler) setConditions(ic *v1.IdentityContinuity, st map[string]*v1.
 	}
 }
 
+// setProfileCondition reports the profile, its mappers and the sync's
+// CronJob: separate from Ready, which is about where sign-ins go.
+func (r *Reconciler) setProfileCondition(ic *v1.IdentityContinuity, err error) {
+	c := metav1.Condition{Type: "ProfileApplied", Status: metav1.ConditionTrue, Reason: "Applied", ObservedGeneration: ic.Generation,
+		Message: "the profile, claim mappings and sync schedule are in place"}
+	switch {
+	case err != nil:
+		c.Status, c.Reason, c.Message = metav1.ConditionFalse, "Failed", err.Error()
+	case ic.Spec.Profile == nil && ic.Spec.Sync == nil && !hasClaims(ic):
+		c.Reason, c.Message = "NotConfigured", "no profile, claim mappings or sync"
+	}
+	meta.SetStatusCondition(&ic.Status.Conditions, c)
+}
+
+func hasClaims(ic *v1.IdentityContinuity) bool {
+	for _, t := range ic.Spec.Tiers {
+		if len(t.Claims) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // reconcileKeycloak: one OIDC IdP per configured oidc tier (hidden on the
 // login page unless eligible), the redirector on the active tier, and no
 // IdPs this instance owns beyond those. It returns the tier logins actually
-// go to now, and whether the redirector was set (so status can follow it).
-func (r *Reconciler) reconcileKeycloak(ctx context.Context, ic *v1.IdentityContinuity, kc *keycloak.Client, creds map[string]credential, st map[string]*v1.TierStatus, active string) (string, bool, error) {
+// go to now, whether the redirector was set (so status can follow it), and
+// the tiers whose IdP exists.
+func (r *Reconciler) reconcileKeycloak(ctx context.Context, ic *v1.IdentityContinuity, kc *keycloak.Client, creds map[string]credential, st map[string]*v1.TierStatus, active string) (string, bool, map[string]bool, error) {
 	existing, err := kc.IdPs(ctx)
 	if err != nil {
-		return "", false, err
+		return "", false, nil, err
 	}
 	have := map[string]keycloak.IdP{}
 	for _, p := range existing {
@@ -519,7 +561,7 @@ func (r *Reconciler) reconcileKeycloak(ctx context.Context, ic *v1.IdentityConti
 		// no upstream redirect: the realm's own form, i.e. the local tier
 		effective, _ = tiers.Select(v1.IdentityContinuitySpec{Tiers: localTiers(ic.Spec.Tiers)}, nil, "")
 	}
-	return effective, rerr == nil, errors.Join(errs...)
+	return effective, rerr == nil, keep, errors.Join(errs...)
 }
 
 func localTiers(ts []v1.Tier) []v1.Tier {
@@ -635,6 +677,9 @@ func (r *Reconciler) reconcileEgress(ctx context.Context, ic *v1.IdentityContinu
 			continue
 		}
 		hosts := externalHosts(e.InternalDomains, t.OIDC.Issuer, r.cachedDiscovery(ic, t))
+		if t.Directory != nil {
+			hosts = mergeHosts(hosts, externalHosts(e.InternalDomains, t.Directory.URL, nil))
+		}
 		if len(hosts) > 0 {
 			want[serviceEntryName(t.Name)] = serviceEntry(e, ic.Namespace, instance, t.Name, hosts)
 		}
@@ -691,6 +736,16 @@ func externalHosts(internal []string, issuer string, d *probe.Discovery) []strin
 	}
 	sort.Strings(hosts)
 	return hosts
+}
+
+func mergeHosts(a, b []string) []string {
+	for _, h := range b {
+		if !slices.Contains(a, h) {
+			a = append(a, h)
+		}
+	}
+	sort.Strings(a)
+	return a
 }
 
 func isInternal(domains []string, host string) bool {
@@ -758,6 +813,9 @@ func (r *Reconciler) finalize(ctx context.Context, ic *v1.IdentityContinuity, kc
 // instance created.
 func (r *Reconciler) cleanup(ctx context.Context, ic *v1.IdentityContinuity, kc *keycloak.Client) error {
 	if _, err := kc.SetRedirector(ctx, ic.Spec.Broker.Keycloak.BrowserFlow, ""); err != nil {
+		return err
+	}
+	if err := cleanupProfile(ctx, ic, kc); err != nil {
 		return err
 	}
 	idps, err := kc.IdPs(ctx)

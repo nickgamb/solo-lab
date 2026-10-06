@@ -47,6 +47,85 @@ type IdentityContinuitySpec struct {
 	// +kubebuilder:validation:Enum=Automatic;Manual
 	// +kubebuilder:default=Automatic
 	Failback string `json:"failback,omitempty"`
+	// S&V's unified user profile: the attributes every tier's claims map
+	// into, kept on the broker's users and carried in tokens. Optional.
+	Profile *Profile `json:"profile,omitempty"`
+	// The scheduled out-of-band sync of profile attributes from each tier's
+	// directory into the broker. Optional.
+	Sync *Sync `json:"sync,omitempty"`
+}
+
+// Profile is the broker's unified user profile.
+type Profile struct {
+	// Attributes beyond the built-in username, email, firstName and lastName,
+	// added to the realm's user profile. Users can view but not edit them:
+	// their values come from the upstreams.
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=64
+	Attributes []ProfileAttribute `json:"attributes,omitempty"`
+	// Clients whose tokens carry the profile (client scope "<instance>-profile"
+	// as a default scope). Others never see it.
+	TokenClients []string `json:"tokenClients,omitempty"`
+}
+
+type ProfileAttribute struct {
+	// The Keycloak attribute name, and the claim name in tokens.
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z][a-zA-Z0-9_.-]*$`
+	// +kubebuilder:validation:MaxLength=64
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName,omitempty"`
+	Multivalued bool   `json:"multivalued,omitempty"`
+}
+
+// Sync schedules reads of each linked user's record from each tier's
+// directory into the broker's profile. Tiers earlier in the chain win.
+// Passwords and credentials are never read or written; neither are the
+// identity keys username and email.
+type Sync struct {
+	// Standard cron, in UTC (e.g. "0 2 * * *" daily at 02:00).
+	// +kubebuilder:validation:MinLength=9
+	Schedule string `json:"schedule"`
+	Suspend  bool   `json:"suspend,omitempty"`
+	// A Secret with client-id and client-secret of the broker's realm client
+	// the sync writes users as (view-users and manage-users; nothing else).
+	// +kubebuilder:default={name: "continuity-sync"}
+	CredentialsRef LocalRef `json:"credentialsRef,omitempty"`
+}
+
+// ClaimMapping maps one upstream claim to one profile attribute.
+type ClaimMapping struct {
+	// The claim in the upstream's ID token or userinfo, at sign-in.
+	// +kubebuilder:validation:MinLength=1
+	Claim string `json:"claim"`
+	// The profile attribute it fills (built-in or spec.profile.attributes).
+	// +kubebuilder:validation:MinLength=1
+	Attribute string `json:"attribute"`
+	// Where the same value is in the directory's user record, when it isn't
+	// the claim's standard place there (e.g. "user_metadata.department").
+	DirectoryPath string `json:"directoryPath,omitempty"`
+}
+
+// Directory is where the scheduled sync reads an upstream's users, with
+// read-only client credentials.
+// +kubebuilder:validation:XValidation:rule="self.type != 'auth0' || has(self.audience)",message="an auth0 directory needs audience (the Management API identifier)"
+type Directory struct {
+	// scim (SCIM 2.0: Gluu, and most enterprise IdPs), auth0 (Management
+	// API v2) or keycloak (admin API, one realm).
+	// +kubebuilder:validation:Enum=scim;auth0;keycloak
+	Type string `json:"type"`
+	// The API's base URL: .../scim/v2, https://<tenant>/api/v2, or
+	// https://<host>/admin/realms/<realm>.
+	// +kubebuilder:validation:Pattern=`^https://`
+	URL string `json:"url"`
+	// A Secret with client-secret (and client-id, unless clientID is set):
+	// an OAuth client allowed the client_credentials grant at the tier's
+	// token endpoint, with read-only access to users.
+	CredentialsRef LocalRef `json:"credentialsRef"`
+	ClientID       string   `json:"clientID,omitempty"`
+	// Scopes to request (e.g. "https://jans.io/scim/users.read").
+	Scopes   []string `json:"scopes,omitempty"`
+	Audience string   `json:"audience,omitempty"`
 }
 
 type Broker struct {
@@ -99,6 +178,13 @@ type Tier struct {
 	Drain bool `json:"drain,omitempty"`
 	// +optional
 	OIDC *OIDCUpstream `json:"oidc,omitempty"`
+	// This tier's claims, mapped into the unified profile: at sign-in
+	// (Keycloak IdP mappers, updated on every login) and in the scheduled
+	// sync. oidc tiers only.
+	// +kubebuilder:validation:MaxItems=64
+	Claims []ClaimMapping `json:"claims,omitempty"`
+	// Where the scheduled sync reads this tier's users. oidc tiers only.
+	Directory *Directory `json:"directory,omitempty"`
 	// +kubebuilder:default={}
 	FailoverWhen FailoverRules `json:"failoverWhen,omitempty"`
 }
@@ -193,6 +279,7 @@ type IdentityContinuityStatus struct {
 	Tiers []TierStatus `json:"tiers,omitempty"`
 	// Newest last, at most 20.
 	Transitions []Transition `json:"transitions,omitempty"`
+	Sync        *SyncStatus  `json:"sync,omitempty"`
 	// +listType=map
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
@@ -222,6 +309,8 @@ type TierStatus struct {
 	Message              string       `json:"message,omitempty"`
 	ConsecutiveFailures  int32        `json:"consecutiveFailures,omitempty"`
 	ConsecutiveSuccesses int32        `json:"consecutiveSuccesses,omitempty"`
+	// The claims the upstream says it can return (discovery claims_supported).
+	ClaimsSupported []string `json:"claimsSupported,omitempty"`
 }
 
 type Transition struct {
@@ -233,4 +322,17 @@ type Transition struct {
 
 func init() {
 	SchemeBuilder.Register(&IdentityContinuity{}, &IdentityContinuityList{})
+}
+
+// SyncStatus records the scheduled sync's last run.
+type SyncStatus struct {
+	// The CronJob that runs it.
+	CronJob     string       `json:"cronJob,omitempty"`
+	LastRun     *metav1.Time `json:"lastRun,omitempty"`
+	LastSuccess *metav1.Time `json:"lastSuccess,omitempty"`
+	// Users read, users whose profile changed, and failures, in the last run.
+	Users   int32  `json:"users,omitempty"`
+	Updated int32  `json:"updated,omitempty"`
+	Failed  int32  `json:"failed,omitempty"`
+	Message string `json:"message,omitempty"`
 }
