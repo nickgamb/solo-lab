@@ -554,7 +554,7 @@ func desiredIdP(ic *v1.IdentityContinuity, t v1.Tier, c credential, d *probe.Dis
 	}
 	p := keycloak.IdP{
 		"alias": t.Name, "displayName": name, "providerId": "oidc",
-		"enabled": enabled, "hideOnLogin": hide, "trustEmail": true, "storeToken": false,
+		"enabled": enabled, "hideOnLogin": hide, "trustEmail": true, "storeToken": t.OIDC.StoreTokens,
 		"firstBrokerLoginFlowAlias": ic.Spec.Broker.Keycloak.FirstBrokerLoginFlow,
 		"config":                    cfg,
 	}
