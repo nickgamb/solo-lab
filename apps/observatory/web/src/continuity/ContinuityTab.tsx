@@ -114,7 +114,7 @@ function Continuity({ lab, ic, items, pick, setPick }: {
       const isActive = t.name === active
       const isCut = cuts.has(t.name)
       const down = isCut || (!!st && st.configured !== false && !st.healthy)
-      const n: LabNode = { id: `tier:${t.name}`, kind: t.type === 'local' ? 'idp' : 'external', label: `${i + 1}. ${t.displayName ?? t.name}`, group: '',
+      const n: LabNode = { id: `tier:${t.name}`, kind: t.type === 'local' ? 'idp' : 'external', label: t.type === 'local' ? (t.displayName ?? t.name) : `${tiers.slice(0, i + 1).filter(x => x.type === 'oidc').length}. ${t.displayName ?? t.name}`, group: '',
         status: isActive ? 'ok' : down ? 'down' : 'idle', sub: t.type === 'local' ? 'break-glass (platform admins)' : host(t.oidc?.issuer), summary: {}, products: [] }
       const off = st?.configured === false || t.enabled === false || !!t.drain
       tile(n.id, n, 3, tierRow(i), { fog: !isActive && !down && off, highlight: isActive ? 'ok' : down ? 'bad' : undefined, outage: isCut })
@@ -212,7 +212,7 @@ function Banner({ phase, active, primary, since, cut, checks, reason }: {
     failover: `FAILOVER ACTIVE · ${up(active)} → REPLACING ${up(primary)}`,
     recovering: `${up(primary)} ANSWERING AGAIN · VERIFYING BEFORE FAILING BACK`,
     held: `${up(active)} SIGNING PEOPLE IN · ${up(primary)} HEALTHY, FAILBACK IS MANUAL`,
-    down: 'SIGN-IN UNAVAILABLE · NO HEALTHY TIER',
+    down: 'SIGN-IN UNAVAILABLE · NO HEALTHY IDP',
   }[phase]
   const why = phase === 'ok' || phase === 'held' ? undefined
     : cut ? `network to ${cut.path ?? primary} cut${cut.by ? ` by ${cut.by}` : ''}${cut.since ? ` at ${new Date(cut.since).toLocaleTimeString()}` : ''}`

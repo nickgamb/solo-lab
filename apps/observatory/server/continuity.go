@@ -310,7 +310,7 @@ func (c *Continuity) TestDirectory(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
 	var in struct{ Tier string }
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&in); err != nil || !nameRe.MatchString(in.Tier) || !nameRe.MatchString(ns) || !nameRe.MatchString(name) {
-		http.Error(w, "need tier", http.StatusBadRequest)
+		http.Error(w, "need the IdP's name", http.StatusBadRequest)
 		return
 	}
 	cl, err := c.res.client(r)
@@ -331,7 +331,7 @@ func (c *Continuity) TestDirectory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !saved {
-		http.Error(w, "tier "+in.Tier+" has no saved directory: save it first", http.StatusConflict)
+		http.Error(w, "IdP "+in.Tier+" has no saved directory: save it first", http.StatusConflict)
 		return
 	}
 	jobName, code, err := startSyncJob(r, cl, ns, ic, "test", func(spec map[string]any) error {
@@ -452,7 +452,7 @@ func (c *Continuity) Partition(w http.ResponseWriter, r *http.Request) {
 		Down bool   `json:"down"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&in); err != nil || !nameRe.MatchString(in.Tier) {
-		http.Error(w, "need tier", http.StatusBadRequest)
+		http.Error(w, "need the IdP's name", http.StatusBadRequest)
 		return
 	}
 	cl, err := c.res.client(r)
@@ -528,7 +528,7 @@ func (c *Continuity) pathOf(tier string) (string, map[string]any, string, error)
 			return ns.GetName(), nil, "namespace " + ns.GetName(), nil
 		}
 	}
-	return "", nil, "", errors.New("no network path is known for tier " + tier + " (local tiers can't be partitioned)")
+	return "", nil, "", errors.New("no network path is known for IdP " + tier)
 }
 
 func (c *Continuity) list(gvr schema.GroupVersionResource) []*unstructured.Unstructured {

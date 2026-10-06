@@ -63,7 +63,7 @@ export function ScheduleTab({ ic, spec, setSpec, dirty }: {
             <input type="checkbox" checked={on} onChange={e => toggle(e.target.checked)} />Scheduled sync
           </label>
         </div>
-        <p className="subtle small">Reads each linked user's record from each tier's directory and writes the mapped attributes into the broker. Earlier tiers win. Never passwords, never username or email.</p>
+        <p className="subtle small">Reads each linked user's record from each IdP's directory and writes the mapped attributes into the broker. IdPs earlier in the chain win. Never passwords, never username or email.</p>
         {!sync ? <p className="subtle small">No scheduled sync yet. Turn it on to run daily at 02:00 UTC.</p> : (
           <div className={on ? 'cm-presets' : 'cm-presets off'}>
             <div className="seg" role="radiogroup" aria-label="Schedule">

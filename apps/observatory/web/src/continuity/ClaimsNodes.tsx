@@ -85,7 +85,7 @@ export const IdpNode = memo(({ id, data }: NodeProps) => {
       <div className="cm-foot">
         <div className="row">
           <span className="label grow">Directory</span>
-          {!editing && <button className="cm-link nodrag" onClick={() => setEditing(true)} title="Where the sync reads this tier's user records">Edit</button>}
+          {!editing && <button className="cm-link nodrag" onClick={() => setEditing(true)} title="Where the sync reads this IdP's user records">Edit</button>}
         </div>
         {editing ? <DirectoryForm tier={t.name} dir={t.directory} onClose={() => setEditing(false)} />
           : t.directory ? (

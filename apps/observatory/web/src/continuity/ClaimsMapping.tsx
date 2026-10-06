@@ -7,7 +7,7 @@ import { ClaimsCanvas } from './ClaimsCanvas'
 import { ClaimsContext, type ClaimsActions } from './claimsContext'
 import { cronError } from './cron'
 import * as m from './mapping'
-import { applyYaml, toYaml } from './mappingYaml'
+import { applyCode, toCode } from './mappingCode'
 import { ScheduleTab } from './ScheduleTab'
 
 type Tab = 'canvas' | 'code' | 'schedule'
@@ -27,9 +27,9 @@ export function ClaimsMapping({ ic, onClose }: { ic: IdentityContinuity; onClose
   const [credsVersion, setCredsVersion] = useState(0)
   const positions = useRef(new Map<string, { x: number; y: number }>())
   const [tab, setTab] = useState<Tab>('canvas')
-  const [yaml, setYaml] = useState('')
-  const [yamlBase, setYamlBase] = useState('')
-  const [yamlErr, setYamlErr] = useState<string>()
+  const [code, setCode] = useState('')
+  const [codeBase, setCodeBase] = useState('')
+  const [codeErr, setCodeErr] = useState<string>()
   const [openEdge, setOpenEdge] = useState<string>()
   const [msg, setMsg] = useState<{ ok: boolean; text: string }>()
   const [busy, setBusy] = useState(false)
@@ -38,7 +38,7 @@ export function ClaimsMapping({ ic, onClose }: { ic: IdentityContinuity; onClose
   useEffect(() => { latest.current = spec }, [spec])
 
   const pending = useMemo(() => new Set(creds.current.keys()), [credsVersion]) // eslint-disable-line react-hooks/exhaustive-deps
-  const dirty = m.stable(spec) !== base || pending.size > 0 || (tab === 'code' && yaml !== yamlBase)
+  const dirty = m.stable(spec) !== base || pending.size > 0 || (tab === 'code' && code !== codeBase)
   const schedErr = spec.sync ? cronError(spec.sync.schedule) : undefined
 
   // follow the live object unless there are local edits
@@ -100,14 +100,14 @@ export function ClaimsMapping({ ic, onClose }: { ic: IdentityContinuity; onClose
 
   // leaving the Code tab applies it; a bad document keeps you there
   const fromCode = (): ContinuitySpec | undefined => {
-    if (yaml === yamlBase) return spec
-    try { const s = applyYaml(spec, yaml); setSpec(s); setYamlErr(undefined); return s } catch (e) { setYamlErr((e as Error).message); return undefined }
+    if (code === codeBase) return spec
+    try { const s = applyCode(spec, code); setSpec(s); setCodeErr(undefined); return s } catch (e) { setCodeErr((e as Error).message); return undefined }
   }
   const go = (next: Tab) => {
     if (next === tab) return
     const s = tab === 'code' ? fromCode() : spec
     if (!s) return
-    if (next === 'code') { const y = toYaml(s); setYaml(y); setYamlBase(y); setYamlErr(undefined) }
+    if (next === 'code') { const y = toCode(s); setCode(y); setCodeBase(y); setCodeErr(undefined) }
     setOpenEdge(undefined)
     setTab(next)
   }
@@ -118,7 +118,7 @@ export function ClaimsMapping({ ic, onClose }: { ic: IdentityContinuity; onClose
       const applied = fromCode()
       if (!applied) return
       s = applied
-      const y = toYaml(s); setYaml(y); setYamlBase(y)
+      const y = toCode(s); setCode(y); setCodeBase(y)
     }
     setBusy(true); setMsg(undefined)
     try {
@@ -134,9 +134,9 @@ export function ClaimsMapping({ ic, onClose }: { ic: IdentityContinuity; onClose
 
   const reset = () => {
     const s = m.clone(ic.spec)
-    setSpec(s); setBase(m.stable(ic.spec)); setExtras({}); setOpenEdge(undefined); setMsg(undefined); setYamlErr(undefined)
+    setSpec(s); setBase(m.stable(ic.spec)); setExtras({}); setOpenEdge(undefined); setMsg(undefined); setCodeErr(undefined)
     creds.current.clear(); setCredsVersion(v => v + 1)
-    if (tab === 'code') { const y = toYaml(s); setYaml(y); setYamlBase(y) }
+    if (tab === 'code') { const y = toCode(s); setCode(y); setCodeBase(y) }
   }
 
   const close = () => {
@@ -173,7 +173,7 @@ export function ClaimsMapping({ ic, onClose }: { ic: IdentityContinuity; onClose
           <div className="tabs" role="tablist">
             {tabs.map(([t, label]) => (
               <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'tab active' : 'tab'} onClick={() => go(t)}
-                title={t === 'code' ? 'Advanced: the mapping as YAML' : `${label} view`}>
+                title={t === 'code' ? 'Advanced: the mapping as JSON' : `${label} view`}>
                 {label}{t === 'code' && <span className="cm-adv">advanced</span>}
               </button>
             ))}
@@ -194,12 +194,12 @@ export function ClaimsMapping({ ic, onClose }: { ic: IdentityContinuity; onClose
             )}
             {tab === 'code' && (
               <div className="cm-code">
-                <p className="subtle small">The profile, the sync schedule, and each OIDC tier's claims and directory. Tiers are matched by name; add or rename them in the rule builder. Leaving this tab applies it.</p>
+                <p className="subtle small">Each S&amp;V profile attribute, and the IdP claims that fill it as <span className="mono">"idp.claim"</span>, in chain order: the first IdP with a value wins. A new key adds an attribute to the profile. Leaving this tab applies it.</p>
                 <div className="monaco">
-                  <Editor height="100%" value={yaml} onChange={v => setYaml(v ?? '')} language="yaml" theme={monacoTheme()}
+                  <Editor height="100%" value={code} onChange={v => setCode(v ?? '')} language="json" theme={monacoTheme()}
                     options={{ minimap: { enabled: false }, fontFamily: 'DM Mono', fontSize: 12, tabSize: 2, scrollBeyondLastLine: false, automaticLayout: true }} />
                 </div>
-                {yamlErr && <div className="note bad" role="alert">{yamlErr}</div>}
+                {codeErr && <div className="note bad" role="alert">{codeErr}</div>}
               </div>
             )}
             {tab === 'schedule' && <ScheduleTab ic={ic} spec={spec} setSpec={setSpec} dirty={dirty} />}

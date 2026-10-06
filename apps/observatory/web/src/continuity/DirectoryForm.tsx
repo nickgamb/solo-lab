@@ -64,7 +64,7 @@ export function DirectoryForm({ tier, dir, onClose }: { tier: string; dir?: Dire
       </div>
       {dir && <TestConnection tier={tier} />}
       <div className="row">
-        {dir && <button className="btn small ghost danger-text" onClick={() => { c.setDirectory(tier, undefined); onClose() }} title="Stop syncing this tier">Remove</button>}
+        {dir && <button className="btn small ghost danger-text" onClick={() => { c.setDirectory(tier, undefined); onClose() }} title="Stop syncing this IdP">Remove</button>}
         <span className="grow" />
         <button className="btn small ghost" onClick={onClose} title="Discard these directory edits">Cancel</button>
         <button className="btn small primary" onClick={apply}

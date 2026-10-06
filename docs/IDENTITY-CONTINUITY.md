@@ -307,8 +307,8 @@ failover takes about 10 s after the cut and failback about 15 s after the heal.
   switch policy for the active upstream (a picker appears with more than one
   upstream). The cut wire reads `NETWORK CUT`, the tier is stamped `OUTAGE`,
   and the egress gateway turns red. The policy records who cut it.
-- **Rule builder** (right): tier order, enable, drain, failover conditions,
-  latency limit, client secrets (write-only), new OIDC tiers (the redirect URI
+- **Rule builder** (right): IdP order, enable, drain, failover conditions,
+  latency limit, client secrets (write-only), new OIDC IdPs (the redirect URI
   to register is shown), health settings, failback. Save applies the spec as
   you.
 - **Claims mapping** (from the rule builder): a canvas with a node per
@@ -317,7 +317,8 @@ failover takes about 10 s after the cut and failback about 15 s after the heal.
   **+**); drag a claim onto a profile attribute to map it. The profile node
   sets which clients' tokens carry it. Each upstream's directory has
   **Test connection** (the saved settings, run as the sync). **Code** edits
-  the same mapping as YAML; **Schedule** sets the sync's cron, pauses it,
+  the same mapping as JSON, each profile attribute and the IdP claims that
+  fill it, in chain order (`"email": ["auth0.email", "keycloak.email"]`); **Schedule** sets the sync's cron, pauses it,
   shows the last run and runs it now. Directory credentials are write-only
   and readable by the sync alone.
 - **Transitions** and **Identity traffic** (bottom): failovers, cuts and
