@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gluu Interop Demo Card</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="card.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="masthead">
+    <h1>Gluu Interop Demo Card</h1>
+    <p class="standfirst">Bob signs in with a passkey at his firm's Gluu. His agent then uses a SaaS as him: Gluu vouches for Bob, the SaaS's own Gluu issues the access, and the agent never holds either.</p>
+  </header>
+  <section class="screens">
+    <div class="screen left">
+      <span class="side">Left screen</span>
+      <span class="what">Terminal</span>
+      <span class="detail">in the solo-lab checkout</span>
+    </div>
+    <div class="screen right">
+      <span class="side">Right screen</span>
+      <span class="what">kagent, signed in as Bob through Gluu</span>
+      <span class="detail">https://kagent.sterling.lab</span>
+    </div>
+  </section>
+
+  <section class="setup">
+    <h2>Pre-demo setup</h2>
+    <p class="setup-note">The lab is already up (<code>make up</code>). This card needs two Gluu servers, one per company, registered as in <code>docs/GLUU-INTEROP.md</code>. Done once.</p>
+    <div class="table-scroll">
+      <table>
+        <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
+        <thead><tr><th>#</th><th>Run this</th><th>What it does</th></tr></thead>
+        <tbody>
+        <tr class="term">
+          <td class="num">1</td>
+          <td class="act">
+            <span class="where">.env</span>
+            <div class="cmdwrap"><code class="cmd">ENTERPRISE_IDP=gluu,keycloak
+GLUU_ISSUER=https://&lt;sv-gluu&gt;
+GLUU_CLIENT_ID=&lt;client&gt;
+GLUU_CLIENT_SECRET=&lt;secret&gt;
+RESOURCE_AS=gluu
+RESOURCE_AS_ISSUER=https://&lt;ledgerline-gluu&gt;</code></div>
+          </td>
+          <td class="say">Gluu becomes Sterling &amp; Vance's enterprise IdP, with S&amp;V's own accounts as the fallback. A second Gluu becomes Ledgerline's authorization server. Two companies, two deployments.</td>
+        </tr>
+        <tr class="term">
+          <td class="num">2</td>
+          <td class="act">
+            <span class="where">Apply it</span>
+            <div class="cmdwrap"><code class="cmd">make layer-45 layer-47 &amp;&amp; ./demos/bob/install.sh</code></div>
+          </td>
+          <td class="say">S&amp;V's Keycloak brokers sign-in to Gluu and names Ledgerline's Gluu as the only audience for Bob's ID-JAG. S&amp;V's egress gets its key for <code>private_key_jwt</code>.</td>
+        </tr>
+        <tr class="port">
+          <td class="num">3</td>
+          <td class="act">
+            <span class="where">Browser, once</span>
+            <span class="click">Sign in at kagent as Bob, through Gluu, with his passkey</span>
+          </td>
+          <td class="say">S&amp;V's Keycloak links Bob's Gluu account and keeps his Gluu tokens for the egress.</td>
+        </tr>
+        <tr class="term">
+          <td class="num">4</td>
+          <td class="act">
+            <span class="where">Link and check</span>
+            <div class="cmdwrap"><code class="cmd">./demos/bob/install.sh &amp;&amp; make bob-verify</code></div>
+          </td>
+          <td class="say">Ledgerline links its account for Bob to his Gluu identity. The verify run must end with <strong>all checks passed</strong>, including <strong>ID-JAG from gluu</strong>.</td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="afters">
+      <div class="after">
+        <span class="after-label">For Gluu</span>
+        <p><code>make interop-keys</code> writes the public keys Ledgerline's Gluu registers: S&amp;V's client key and S&amp;V's IdP keys.</p>
+      </div>
+      <div class="after">
+        <span class="after-label">Back to the default</span>
+        <p>Remove the lines from <code>.env</code> and run step 2 again. Keycloak plays both roles; nothing else changes.</p>
+      </div>
+    </div>
+  </section>
+  <hr class="rule">
+
+  <section class="figure">
+    <h2>The flow</h2>
+    <div class="figure-frame"><a href="../images/gluu-interop-flow.svg"><img src="../images/gluu-interop-flow.svg" alt="Swimlane flow: Bob signs in at S&amp;V's Gluu with a passkey; S&amp;V's Keycloak keeps his Gluu tokens; his agent calls ai-gateway with his S&amp;V access token only; the egress gets his Gluu ID token, S&amp;V's Gluu issues an ID-JAG, xaa-relay checks it, Ledgerline's Gluu redeems it with private_key_jwt, and Ledgerline answers as its own account for Bob. Callouts show the ID token, the agent's request, the ID-JAG and Ledgerline's token."></a></div>
+    <p class="figure-note">Open it full size for the callouts: what is on the wire at each key hop.</p>
+  </section>
+  <hr class="rule">
+
+  <section class="runthrough">
+    <h2>The run-through</h2>
+    <p class="run-note">kagent on the right and the terminal on the left. Two companies, two Gluus, one agent that never touches a cross-company credential.</p>
+    <div class="table-scroll">
+      <table>
+        <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
+        <thead><tr><th>#</th><th>Do this</th><th>Say this</th></tr></thead>
+        <tbody>
+        <tr class="port">
+          <td class="num">1</td>
+          <td class="act">
+            <span class="where">Browser</span>
+            <span class="click">Open kagent: the login goes to Gluu. Sign in as Bob with his passkey</span>
+          </td>
+          <td class="say">
+            <span class="chip tier">Enterprise IdP</span>
+            <span class="lede">Bob's firm runs Gluu as its enterprise IdP.</span>
+            S&amp;V's platform trusts its own broker, which trusts Gluu. If Gluu goes down, sign-in falls back to the firm's own accounts and nothing downstream changes.
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">2</td>
+          <td class="act">
+            <span class="where">kagent</span>
+            <div class="cmdwrap"><code class="cmd">What is Ledgerline's view on technology, and which Ledgerline account am I using?</code></div>
+          </td>
+          <td class="say">
+            <span class="chip through">Cross App Access</span>
+            <span class="lede">Another company answers, as its own account for Bob.</span>
+            Gluu vouched for Bob for that one approved connection (an ID-JAG), and Ledgerline's Gluu turned it into a five-minute token of its own. <strong>The agent only ever held Bob's S&amp;V token.</strong>
+          </td>
+        </tr>
+        <tr class="term">
+          <td class="num">3</td>
+          <td class="act">
+            <span class="where">Terminal</span>
+            <div class="cmdwrap"><code class="cmd">make bob-verify</code></div>
+          </td>
+          <td class="say">
+            <span class="chip refused">Every bypass fails</span>
+            <span class="lede">ID-JAG from gluu, checked at S&amp;V's egress.</span>
+            The firm checks what Gluu issued before using it: type, signature, issuer, audience, subject, client. Then the checks try the wrong workload, another user's ID token, and Bob's own token straight at Ledgerline. <strong>Each one is refused.</strong>
+          </td>
+        </tr>
+        <tr class="term">
+          <td class="num">4</td>
+          <td class="act">
+            <span class="where">Terminal</span>
+            <div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab logs -n agentgateway-system -l app=xaa-relay --tail=4</code></div>
+          </td>
+          <td class="say">
+            <span class="chip tier">On the wire</span>
+            <span class="lede">Both legs, every claim, no token.</span>
+            The ID-JAG Gluu issued, its claims and the checks on it, then the same <code>jti</code> presented to Ledgerline's Gluu and the token it issued. <code>make interop-logs</code> bundles this trail for the OpenID Foundation interop.
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">5</td>
+          <td class="act">
+            <span class="where">Browser</span>
+            <span class="click">Open <strong>https://observatory.ops.lab</strong>, Topology, Identity view</span>
+          </td>
+          <td class="say">
+            <span class="chip tier">Where it ran</span>
+            <span class="lede">Each hop has a named identity.</span>
+            Bob's agent, the egress gateway, the firm's broker and Ledgerline's waypoint all show up with their SPIFFE IDs. The two companies meet only at the edge, the way they would on the internet.
+          </td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+  <footer class="foot">
+    <a href="https://www.solo.io">Solo.io</a> · <a href="https://www.gluu.org">Gluu</a> · <a href="https://docs.solo.io">docs.solo.io</a> · <a href="https://openid.net">OpenID Foundation</a>
+  </footer>
+</div>
+<script src="card.js"></script>
+</body>
+</html>
