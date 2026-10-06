@@ -58,6 +58,7 @@ spec:
         - cluster.local/ns/kgateway-system/sa/edge
         - cluster.local/ns/agentgateway-system/sa/ai-gateway
         - cluster.local/ns/agentgateway-system/sa/idtoken-exchange   # Cross App Access: access token -> ID token
+        - cluster.local/ns/agentgateway-system/sa/xaa-relay   # Cross App Access: ID token -> ID-JAG, JWKS
         - cluster.local/ns/agentgateway-system/sa/${AGW_RELEASE}   # controller: JWKS fetch
         - cluster.local/ns/sv-mcp/sa/mcp-waypoint
         - cluster.local/ns/sv-mcp/sa/bob-workspace      # verifies its delegated tokens (JWKS)

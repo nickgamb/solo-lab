@@ -5,35 +5,53 @@
 . "$(dirname "$0")/../../scripts/lib.sh"
 D="$(cd "$(dirname "$0")" && pwd)"
 need_cluster
+# who vouches for Bob (ENTERPRISE_IDP) and who redeems it for Ledgerline
+# (RESOURCE_AS): scripts/idp.sh
+. "$LAB_ROOT/scripts/idp.sh"
+ras_env; xaa_env
 
 step "Images (local registry)"
 # tagged by a hash of their source (lab_build)
 BOB_WORKSPACE_IMAGE=$(lab_build sv/bob-workspace "$D/mcp/bob-workspace"); export BOB_WORKSPACE_IMAGE
 LEDGERLINE_RESEARCH_IMAGE=$(lab_build ledgerline/research-mcp "$D/ledgerline/mcp"); export LEDGERLINE_RESEARCH_IMAGE
 IDTOKEN_EXCHANGE_IMAGE=$(lab_build lab/idtoken-exchange "$LAB_ROOT/apps/idtoken-exchange"); export IDTOKEN_EXCHANGE_IMAGE
-ok "$BOB_WORKSPACE_IMAGE  $LEDGERLINE_RESEARCH_IMAGE  $IDTOKEN_EXCHANGE_IMAGE"
+XAA_RELAY_IMAGE=$(lab_build lab/xaa-relay "$LAB_ROOT/apps/xaa-relay"); export XAA_RELAY_IMAGE
+ok "$BOB_WORKSPACE_IMAGE  $LEDGERLINE_RESEARCH_IMAGE"
+ok "$IDTOKEN_EXCHANGE_IMAGE  $XAA_RELAY_IMAGE"
 ok "$(lab_build lab/toolbox "$LAB_ROOT/tools/toolbox")   (probe pods for the checks)"
 
 step "Ledgerline Research (its own IdP, MCP server, Istio waypoint)"
+# S&V registered its public key with Ledgerline (private_key_jwt)
 K create secret generic kc-secrets -n ledgerline-identity \
   --from-literal=KC_BOOTSTRAP_ADMIN_USERNAME=admin --from-literal=KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret LL_KC_ADMIN_PASSWORD)" \
-  --from-literal=LL_SVKAGENT_CLIENT_SECRET="$(lab_secret LL_SVKAGENT_CLIENT_SECRET)" \
+  --from-literal=SV_XAA_CLIENT_CERT="$SV_XAA_CLIENT_CERT" --from-literal=SV_XAA_CLIENT_KID="$SV_XAA_CLIENT_KID" \
   --dry-run=client -o yaml | K apply -f - >/dev/null
-deploy_keycloak ledgerline-identity "$LEDGERLINE_DOMAIN" https-ledgerline "$D/ledgerline/realm-ledgerline.json" identity-assertion-jwt
-apply_tmpl "$D/ledgerline/research.yaml" "$D/ledgerline/identity.yaml"
+# its Keycloak trusts each enterprise IdP of S&V's that issues ID-JAGs
+mkdir -p "$LAB_STATE/realm"
+ledgerline_realm "$D/ledgerline/realm-ledgerline.json" >"$LAB_STATE/realm/realm-ledgerline.json"
+deploy_keycloak ledgerline-identity "$LEDGERLINE_DOMAIN" https-ledgerline "$LAB_STATE/realm/realm-ledgerline.json" identity-assertion-jwt
+render "$D/ledgerline/research.yaml" | ledgerline_research | K apply -f - >/dev/null
+apply_tmpl "$D/ledgerline/identity.yaml" "$D/ledgerline/egress.yaml"
 deny_internet ledgerline ledgerline-identity
-ok "https://idp.$LEDGERLINE_DOMAIN  https://mcp.$LEDGERLINE_DOMAIN"
+ledgerline_egress
+K delete networkpolicy research-to-as -n ledgerline --ignore-not-found >/dev/null   # earlier labs
+waiting=$(ledgerline_link_bob)
+ok "https://mcp.$LEDGERLINE_DOMAIN  authorization server: ${RESOURCE_AS} ($LEDGERLINE_AS_ISSUER)"
+for n in $waiting; do
+  warn "Ledgerline links Bob's $n account once he has signed in to S&V through $n: sign in at https://kagent.$SV_DOMAIN, then re-run demos/bob/install.sh"
+done
 
 step "Sterling & Vance: workspace, waypoint, agent, Cross App Access"
-# Ledgerline issued S&V this client secret; S&V stores it with its egress gateway.
-K create secret generic ledgerline-client -n agentgateway-system \
-  --from-literal=clientSecret="$(lab_secret LL_SVKAGENT_CLIENT_SECRET)" --dry-run=client -o yaml | K apply -f - >/dev/null
-for f in "$D"/manifests/*.yaml; do apply_tmpl "$f"; done
+# S&V's client secret at each upstream that vouches for Bob, and its key for
+# Ledgerline, kept with its egress gateway
+xaa_secrets
+K delete secret ledgerline-client -n agentgateway-system --ignore-not-found >/dev/null   # earlier labs: a shared secret
+apply_tmpl "$D"/manifests/*.yaml
 # Bob's agent is a SandboxAgent; an Agent of the same name (older labs) must go first.
 K delete agent bob-assistant -n sv-agents --ignore-not-found --wait >/dev/null
 apply_kustomize "$D/agent"
 rollout sv-mcp deploy/bob-workspace deploy/mcp-waypoint
-rollout agentgateway-system deploy/idtoken-exchange
+rollout agentgateway-system deploy/idtoken-exchange deploy/xaa-relay
 wait_for "bob-assistant Ready" 60 5 K wait sandboxagent/bob-assistant -n sv-agents --for=condition=Ready --timeout=2s
 apply_kustomize "$D/desk"
 for a in meeting-prep market-brief compliance-check; do

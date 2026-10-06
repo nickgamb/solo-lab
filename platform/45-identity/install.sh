@@ -29,9 +29,15 @@ K create secret generic kc-secrets -n sv-identity \
 # ID-JAGs: Keycloak 26.7.4 + keycloak/keycloak PR #49998 (tools/keycloak-idjag).
 # Back to stock KC_IMAGE once that PR ships upstream.
 lab_image lab/keycloak-idjag:${KEYCLOAK_VERSION}-pr49998 tools/keycloak-idjag/build.sh
+# Its realm names Ledgerline's authorization server as the ID-JAG audience
+# (RESOURCE_AS) and lets kagent read Bob's stored tokens only for upstreams
+# that issue his ID-JAG (ENTERPRISE_IDP, scripts/idp.sh), through the
+# Identity Brokering API v2.
+. "$LAB_ROOT/scripts/idp.sh"
+XAA_UPSTREAMS=$(xaa_upstreams_attr); export XAA_UPSTREAMS
 KC_IMAGE="localhost:${LAB_REGISTRY_PORT}/lab/keycloak-idjag:${KEYCLOAK_VERSION}-pr49998" \
   deploy_keycloak sv-identity "$SV_DOMAIN" https-sterling "$D/realm-sterling-vance.json" \
-  token-exchange-standard,identity-assertion-jwt
+  token-exchange-standard,identity-assertion-jwt,identity-brokering-api:v2
 wait_for "https://idp.$SV_DOMAIN discovery" 30 3 \
   sh -c "curl -sf --cacert '$LAB_CA_DIR/ca.crt' https://idp.$SV_DOMAIN/realms/sterling-vance/.well-known/openid-configuration >/dev/null"
 ok "issuer https://idp.$SV_DOMAIN/realms/sterling-vance  (admin: see .lab/secrets.env)"

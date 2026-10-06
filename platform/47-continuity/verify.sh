@@ -52,7 +52,12 @@ redirector() {
 }
 idp_gone() { ! kcadm /identity-provider/instances | jq -e --arg t "$1" 'map(.alias) | index($t)' >/dev/null; }
 
-has_auth0() { idc | jq -e '.spec.tiers | map(.name) | index("auth0")' >/dev/null; }
+# The upstream under test: the first OIDC tier as installed (the first upstream
+# in ENTERPRISE_IDP), and the authorize endpoint its discovery publishes.
+UP=$(idc | jq -r '[.spec.tiers[] | select(.type=="oidc")][0].name // empty')
+UP_ISSUER=$(idc | jq -r --arg t "$UP" '.spec.tiers[] | select(.name==$t) | .oidc.issuer // empty')
+UP_AUTHZ=$([ -n "$UP_ISSUER" ] && curl -s --max-time 10 "${UP_ISSUER%/}/.well-known/openid-configuration" | jq -r '.authorization_endpoint // empty')
+has_up() { [ -n "$UP" ]; }
 # partition <tier> <namespace> [serviceentry]: the kill switch. With a
 # ServiceEntry it cuts only that upstream at S&V's egress. Without one (the
 # in-lab scratch tier) it denies everything into <namespace> while the check
@@ -79,7 +84,7 @@ secret_grant() {  # secret_grant add|remove <name>
 ORIG=$(idc | jq -c '{tiers: .spec.tiers, failback: .spec.failback}')
 BASE=$(active)
 cleanup() {
-  heal "$T" "$TNS"; heal auth0 sv-egress
+  heal "$T" "$TNS"; [ -n "$UP" ] && heal "$UP" sv-egress
   K patch idc "$IC" -n "$NS" --type merge -p "{\"spec\": $ORIG}" >/dev/null 2>&1
   K delete secret continuity-verify -n "$NS" --ignore-not-found >/dev/null
   secret_grant remove continuity-verify 2>/dev/null
@@ -94,15 +99,15 @@ expect 'continuity-controller-' "leader holds Lease continuity.lab.solo.io" \
   "$(K get lease continuity.lab.solo.io -n "$NS" -o jsonpath='{.spec.holderIdentity}' 2>&1)"
 expect '^True$' "IdentityContinuity $IC Ready" \
   "$(K get idc "$IC" -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')"
-if ! has_auth0; then
-  expect '^keycloak$' "no auth0 tier (AUTH0_ISSUER unset): active is local" "$(active)"
-  skipped "auth0 upstream checks: set AUTH0_ISSUER in .env and re-run make layer-47"
-elif [ "$(tier auth0 configured)" = true ]; then
-  expect '^auth0 \(Healthy\)$' "auth0 configured and healthy: it is active" "$(active) ($(tier auth0 reason))"
+if ! has_up; then
+  expect '^keycloak$' "no upstream tier (no issuer for any upstream in ENTERPRISE_IDP): active is local" "$(active)"
+  skipped "upstream checks: set an upstream's issuer and client (e.g. AUTH0_*) in .env and re-run make layer-47"
+elif [ "$(tier "$UP" configured)" = true ]; then
+  expect "^$UP \\(Healthy\\)\$" "$UP configured and healthy: it is active" "$(active) ($(tier "$UP" reason))"
 else
-  expect '^keycloak ' "auth0 NotConfigured (no upstream-auth0 secret): active is local" "$(active) (auth0: $(tier auth0 reason))"
+  expect '^keycloak ' "$UP NotConfigured (no upstream-$UP secret): active is local" "$(active) ($UP: $(tier "$UP" reason))"
 fi
-has_auth0 && expect '(Healthy|NotConfigured.*probe: Healthy)' "auth0 upstream answers discovery + JWKS from S&V" "$(tier auth0 reason): $(tier auth0 message)"
+has_up && expect '(Healthy|NotConfigured.*probe: Healthy)' "$UP upstream answers discovery + JWKS from S&V" "$(tier "$UP" reason): $(tier "$UP" message)"
 tok=$(user_token "$NS" sterling-vance kagent "$(lab_secret SV_KAGENT_CLIENT_SECRET)" bob bob-demo)
 expect "^$BOB_ID\$" "password grant unchanged: Bob's S&V user id" "$(echo "$tok" | jq -rR 'split(".")[1] | gsub("-";"+") | gsub("_";"/") | @base64d | fromjson | .sub' 2>/dev/null)"
 unset tok
@@ -156,28 +161,28 @@ K patch idc "$IC" -n "$NS" --type merge -p "{\"spec\": $ORIG}" >/dev/null
 expect "^[0-9]+s\$" "active returns to $BASE" "$(within 15 is_active "$BASE")"
 expect '^[0-9]+s$' "Keycloak IdP $T deleted" "$(within 15 idp_gone "$T")"
 
-step "External upstream: auth0 through S&V's egress waypoint"
+step "External upstream: ${UP:-none} through S&V's egress waypoint"
 # a NotConfigured tier (no credentials) is still probed: its outcome is in the
 # message ("...; probe: <result>")
-if ! has_auth0; then
-  skipped "no auth0 tier: external upstream checks skipped"
+if ! has_up; then
+  skipped "no upstream tier: external upstream checks skipped"
 elif K get gateway egress-waypoint -n sv-egress >/dev/null 2>&1; then
-  expect '^egress-waypoint$' "ServiceEntry continuity-auth0 bound to the egress waypoint" \
-    "$(K get serviceentry continuity-auth0 -n sv-egress -o jsonpath='{.metadata.labels.istio\.io/use-waypoint}' 2>&1)"
-  partition auth0 sv-egress continuity-auth0
-  expect '^[0-9]+s$' "partition on the ServiceEntry: auth0 probes fail" \
-    "$(within 25 sh -c "kubectl --context $KCTX get idc $IC -n $NS -o json | jq -e '.status.tiers[]|select(.name==\"auth0\")|(.partitioned and ((.reason|test(\"Unreachable|ServerError\")) or (.message|test(\"probe: (Unreachable|ServerError)\"))))'")"
-  heal auth0 sv-egress
-  expect '^[0-9]+s$' "healed: auth0 probes pass again" \
-    "$(within 35 sh -c "kubectl --context $KCTX get idc $IC -n $NS -o json | jq -e '.status.tiers[]|select(.name==\"auth0\")|(.message|test(\"discovery and jwks ok|probe: Healthy\"))'")"
+  expect '^egress-waypoint$' "ServiceEntry continuity-$UP bound to the egress waypoint" \
+    "$(K get serviceentry "continuity-$UP" -n sv-egress -o jsonpath='{.metadata.labels.istio\.io/use-waypoint}' 2>&1)"
+  partition "$UP" sv-egress "continuity-$UP"
+  expect '^[0-9]+s$' "partition on the ServiceEntry: $UP probes fail" \
+    "$(within 25 sh -c "kubectl --context $KCTX get idc $IC -n $NS -o json | jq -e '.status.tiers[]|select(.name==\"$UP\")|(.partitioned and ((.reason|test(\"Unreachable|ServerError\")) or (.message|test(\"probe: (Unreachable|ServerError)\"))))'")"
+  heal "$UP" sv-egress
+  expect '^[0-9]+s$' "healed: $UP probes pass again" \
+    "$(within 35 sh -c "kubectl --context $KCTX get idc $IC -n $NS -o json | jq -e '.status.tiers[]|select(.name==\"$UP\")|(.message|test(\"discovery and jwks ok|probe: Healthy\"))'")"
 else
   skipped "no sv-egress/egress-waypoint: external upstream checks skipped"
 fi
-if has_auth0 && [ "$(tier auth0 configured)" = true ] && [ "$(active)" = auth0 ]; then
-  expect "^${AUTH0_ISSUER}authorize\?.*broker%2Fauth0%2Fendpoint" "browser sign-in goes to Auth0, back to /broker/auth0/endpoint" "$(login_lands)"
-  skipped "Bob's Auth0 sign-in itself is interactive: https://kagent.$SV_DOMAIN (lands on user $BOB_ID)"
+if has_up && [ "$(tier "$UP" configured)" = true ] && [ "$(active)" = "$UP" ]; then
+  expect "^${UP_AUTHZ}\\?.*broker%2F$UP%2Fendpoint" "browser sign-in goes to $UP, back to /broker/$UP/endpoint" "$(login_lands)"
+  skipped "Bob's $UP sign-in itself is interactive: https://kagent.$SV_DOMAIN (lands on user $BOB_ID)"
 else
-  skipped "brokered sign-in via Auth0: set AUTH0_CLIENT_ID/AUTH0_CLIENT_SECRET in .env and re-run make layer-47"
+  skipped "brokered sign-in via the upstream: set its client credentials in .env and re-run make layer-47"
 fi
 
 echo; [ $fail -eq 0 ] && ok "continuity: $pass/$((pass+fail)) checks passed${skip:+, $skip skipped}" || die "continuity: $fail of $((pass+fail)) checks failed"

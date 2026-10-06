@@ -88,7 +88,9 @@
       "attributes": {
         "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "https://kagent.${SV_DOMAIN}/*",
-        "standard.token.exchange.enabled": "true"
+        "standard.token.exchange.enabled": "true",
+        "external.token.enabled": "true",
+        "external.token.idp": "${XAA_UPSTREAMS}"
       },
       "protocolMappers": [
         {
@@ -204,7 +206,7 @@
       "serviceAccountsEnabled": false
     },
     {
-      "clientId": "https://idp.${LEDGERLINE_DOMAIN}/realms/ledgerline",
+      "clientId": "${LEDGERLINE_AS_ISSUER}",
       "name": "Ledgerline Research (resource authorization server)",
       "description": "Target of Cross App Access. Its clientId is the resource AS issuer, which becomes the ID-JAG audience.",
       "enabled": true,
@@ -212,10 +214,7 @@
       "bearerOnly": true,
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": false,
-      "redirectUris": [
-        "https://idp.${LEDGERLINE_DOMAIN}/*"
-      ]
+      "serviceAccountsEnabled": false
     },
     {
       "clientId": "agentregistry",
@@ -1093,7 +1092,7 @@
           "protocol": "openid-connect",
           "protocolMapper": "oidc-audience-mapper",
           "config": {
-            "included.client.audience": "https://idp.${LEDGERLINE_DOMAIN}/realms/ledgerline",
+            "included.client.audience": "${LEDGERLINE_AS_ISSUER}",
             "access.token.claim": "true",
             "id.token.claim": "false",
             "introspection.token.claim": "false"
