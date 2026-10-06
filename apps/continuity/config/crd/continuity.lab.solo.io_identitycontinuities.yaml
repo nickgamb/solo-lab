@@ -159,14 +159,14 @@ spec:
                 type: object
               profile:
                 description: |-
-                  S&V's unified user profile: the attributes every tier's claims map
-                  into, kept on the broker's users and carried in tokens. Optional.
+                  S&V's standard user profile on the broker: the attributes the
+                  directory sync maps every IdP's profile into. Optional.
                 properties:
                   attributes:
                     description: |-
                       Attributes beyond the built-in username, email, firstName and lastName,
                       added to the realm's user profile. Users can view but not edit them:
-                      their values come from the upstreams.
+                      their values come from the primary IdP.
                     items:
                       properties:
                         displayName:
@@ -174,8 +174,7 @@ spec:
                         multivalued:
                           type: boolean
                         name:
-                          description: The Keycloak attribute name, and the claim
-                            name in tokens.
+                          description: The attribute's name in the broker's user profile.
                           maxLength: 64
                           pattern: ^[a-zA-Z][a-zA-Z0-9_.-]*$
                           type: string
@@ -187,18 +186,11 @@ spec:
                     x-kubernetes-list-map-keys:
                     - name
                     x-kubernetes-list-type: map
-                  tokenClients:
-                    description: |-
-                      Clients whose tokens carry the profile (client scope "<instance>-profile"
-                      as a default scope). Others never see it.
-                    items:
-                      type: string
-                    type: array
                 type: object
               sync:
                 description: |-
-                  The scheduled out-of-band sync of profile attributes from each tier's
-                  directory into the broker. Optional.
+                  The scheduled directory sync: the primary IdP's profile into the
+                  broker, then the broker's out to every failover IdP. Optional.
                 properties:
                   credentialsRef:
                     default:
@@ -226,39 +218,42 @@ spec:
                 description: 'Ordered: the first eligible, healthy tier is active.'
                 items:
                   properties:
-                    claims:
+                    attributes:
                       description: |-
-                        This tier's claims, mapped into the unified profile: at sign-in
-                        (Keycloak IdP mappers, updated on every login) and in the scheduled
-                        sync. oidc tiers only.
+                        This IdP's attributes, paired with the broker's profile for the
+                        directory sync. oidc tiers only.
                       items:
-                        description: ClaimMapping maps one upstream claim to one profile
-                          attribute.
+                        description: |-
+                          AttributeMapping pairs a broker profile attribute with the IdP's own
+                          attribute. The primary IdP's is read into the broker's; a failover's is
+                          written from it.
                         properties:
                           attribute:
-                            description: The profile attribute it fills (built-in
+                            description: The broker's profile attribute (built-in
                               or spec.profile.attributes).
                             minLength: 1
                             type: string
-                          claim:
-                            description: The claim in the upstream's ID token or userinfo,
-                              at sign-in.
-                            minLength: 1
-                            type: string
-                          directoryPath:
+                          path:
                             description: |-
-                              Where the same value is in the directory's user record, when it isn't
-                              the claim's standard place there (e.g. "user_metadata.department").
+                              The attribute in the IdP's user record: a dot path ("name.givenName",
+                              "user_metadata.department"), a SCIM extension attribute by its schema
+                              URN ("urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:department"),
+                              or a SCIM filtered value ("phoneNumbers[type eq \"work\"].value").
+                            minLength: 1
                             type: string
                         required:
                         - attribute
-                        - claim
+                        - path
                         type: object
                       maxItems: 64
                       type: array
+                      x-kubernetes-list-map-keys:
+                      - attribute
+                      x-kubernetes-list-type: map
                     directory:
-                      description: Where the scheduled sync reads this tier's users.
-                        oidc tiers only.
+                      description: |-
+                        Where the directory sync reads and writes this IdP's users. oidc
+                        tiers only.
                       properties:
                         audience:
                           type: string
@@ -268,7 +263,7 @@ spec:
                           description: |-
                             A Secret with client-secret (and client-id, unless clientID is set):
                             an OAuth client allowed the client_credentials grant at the tier's
-                            token endpoint, with read-only access to users.
+                            token endpoint, allowed to read users and, for a failover, update them.
                           properties:
                             name:
                               type: string
@@ -276,7 +271,9 @@ spec:
                           - name
                           type: object
                         scopes:
-                          description: Scopes to request (e.g. "https://jans.io/scim/users.read").
+                          description: |-
+                            Scopes to request (e.g. "https://jans.io/scim/users.read
+                            https://jans.io/scim/users.write").
                           items:
                             type: string
                           type: array
@@ -527,6 +524,9 @@ spec:
               sync:
                 description: SyncStatus records the scheduled sync's last run.
                 properties:
+                  created:
+                    format: int32
+                    type: integer
                   cronJob:
                     description: The CronJob that runs it.
                     type: string
@@ -545,20 +545,18 @@ spec:
                     format: int32
                     type: integer
                   users:
-                    description: Users read, users whose profile changed, and failures,
-                      in the last run.
+                    description: |-
+                      In the last run: users read, users whose broker profile changed,
+                      failover accounts written and created, and failures.
+                    format: int32
+                    type: integer
+                  written:
                     format: int32
                     type: integer
                 type: object
               tiers:
                 items:
                   properties:
-                    claimsSupported:
-                      description: The claims the upstream says it can return (discovery
-                        claims_supported).
-                      items:
-                        type: string
-                      type: array
                     configured:
                       description: Credentials present (always true for local tiers).
                       type: boolean

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	v1 "github.com/nickgamb/solo-lab/apps/continuity/api/v1alpha1"
 	"github.com/nickgamb/solo-lab/apps/continuity/internal/keycloak"
@@ -12,137 +13,213 @@ import (
 
 // Broker is the slice of the broker's admin API the sync uses.
 type Broker interface {
-	LinkedUsers(ctx context.Context, alias string, first, max int) ([]keycloak.User, error)
+	Users(ctx context.Context, first, max int) ([]keycloak.User, error)
 	FederatedIdentity(ctx context.Context, userID, alias string) (string, error)
 	HasRealmRole(ctx context.Context, userID, role string) (bool, error)
 	UpdateUser(ctx context.Context, u keycloak.User) error
 }
 
-// Tier is one upstream in chain order, with its directory and claim mappings.
-type Tier struct {
-	Name   string
-	Claims []v1.ClaimMapping
-	Dir    Directory
+// IdP is one IdP in the chain with a directory, and its attribute mapping.
+type IdP struct {
+	Name       string
+	Attributes []v1.AttributeMapping
+	Dir        Directory
 }
 
-// Result counts one run. Errors hold attribute and tier names, never values.
+// Result counts one run. Errors and notes name users by id and IdPs and
+// attributes by name, never values.
 type Result struct {
-	Users, Updated, Failed int
-	Errors                 []string
+	Users, Updated, Written, Created, Failed int
+	Errors                                   []string
+	// Notes: users created without a credential enrollment sent; they can't
+	// sign in at that IdP until they get one.
+	Notes []string
 }
 
 const (
 	pageSize = 100
-	// LocalOnlyRole marks accounts never linked to, or filled from, an upstream.
+	// LocalOnlyRole marks accounts never linked to, or synced with, an IdP.
 	LocalOnlyRole = "local-only"
 )
 
-// Run syncs every user linked to a tier with a directory. writable are the
-// attributes the sync may write (the profile's and the built-in names);
-// identity keys never are.
-func Run(ctx context.Context, b Broker, tiers []Tier, writable []string, logf func(string, ...any)) Result {
+// Run syncs every employee the broker has: the primary's record into the
+// broker's profile (nil primary: none to read), then the broker's profile out
+// to each failover, creating the user there if the primary has them and the
+// failover doesn't. writable are the
+// broker attributes a mapping may carry; username never is.
+func Run(ctx context.Context, b Broker, primary *IdP, failovers []IdP, writable []string, logf func(string, ...any)) Result {
 	var res Result
-	order := []string{}
-	users := map[string]keycloak.User{}
-	for _, t := range tiers {
-		if t.Dir == nil {
-			continue
+	for first := 0; ; first += pageSize {
+		page, err := b.Users(ctx, first, pageSize)
+		if err != nil {
+			res.Errors = append(res.Errors, fmt.Sprintf("listing the broker's users: %v", err))
+			return res
 		}
-		for first := 0; ; first += pageSize {
-			page, err := b.LinkedUsers(ctx, t.Name, first, pageSize)
-			if err != nil {
-				res.Errors = append(res.Errors, fmt.Sprintf("listing users linked to %s: %v", t.Name, err))
-				break
-			}
-			for _, u := range page {
-				id, _ := u["id"].(string)
-				if _, seen := users[id]; !seen && id != "" {
-					users[id], order = u, append(order, id)
-				}
-			}
-			if len(page) < pageSize {
-				break
-			}
+		for _, u := range page {
+			syncUser(ctx, b, u, primary, failovers, writable, logf, &res)
+		}
+		if len(page) < pageSize {
+			return res
 		}
 	}
-	for _, id := range order {
-		u := users[id]
-		if local, err := b.HasRealmRole(ctx, id, LocalOnlyRole); err != nil || local {
-			if err != nil {
-				res.Failed++
-				res.Errors = append(res.Errors, fmt.Sprintf("user %s: roles: %v", id, err))
-			}
-			continue
-		}
-		res.Users++
-		values, failed := merge(ctx, b, id, tiers, writable, &res)
-		if failed {
+}
+
+func syncUser(ctx context.Context, b Broker, u keycloak.User, primary *IdP, failovers []IdP, writable []string, logf func(string, ...any), res *Result) {
+	id, _ := u["id"].(string)
+	if id == "" || u["serviceAccountClientId"] != nil {
+		return
+	}
+	fail := func(format string, a ...any) {
+		res.Errors = append(res.Errors, fmt.Sprintf("user %s: ", id)+fmt.Sprintf(format, a...))
+	}
+	before := len(res.Errors)
+	defer func() {
+		if len(res.Errors) > before {
 			res.Failed++
 		}
-		if changed := apply(u, values); changed {
-			if err := b.UpdateUser(ctx, u); err != nil {
-				res.Failed++
-				res.Errors = append(res.Errors, fmt.Sprintf("user %s: update: %v", id, err))
-				continue
-			}
-			res.Updated++
-			logf("updated", "user", id, "attributes", keys(values))
-		}
-	}
-	return res
-}
-
-// merge reads the user's record from each tier in chain order: the first tier
-// with a value for an attribute wins. A tier that can't be read decides its
-// attributes as "keep": a lower tier never overwrites the primary's value
-// because the primary was briefly unreachable.
-func merge(ctx context.Context, b Broker, userID string, tiers []Tier, writable []string, res *Result) (map[string][]string, bool) {
-	values := map[string][]string{}
-	decided := map[string]bool{}
-	failed := false
-	for _, t := range tiers {
-		if t.Dir == nil {
-			continue
-		}
-		sub, err := b.FederatedIdentity(ctx, userID, t.Name)
-		if errors.Is(err, keycloak.ErrNotFound) {
-			continue // no account there
-		}
-		var rec map[string]any
-		if err == nil {
-			rec, err = t.Dir.User(ctx, sub)
-		}
-		if errors.Is(err, ErrNoUser) {
-			continue
-		}
+	}()
+	if local, err := b.HasRealmRole(ctx, id, LocalOnlyRole); err != nil || local {
 		if err != nil {
-			failed = true
-			res.Errors = append(res.Errors, fmt.Sprintf("user %s: %s: %v", userID, t.Name, err))
-			for _, m := range t.Claims {
-				decided[m.Attribute] = true
-			}
-			continue
+			fail("roles: %v", err)
 		}
-		for _, m := range t.Claims {
-			a := m.Attribute
-			if decided[a] || !slices.Contains(writable, a) || slices.Contains(keycloak.IdentityKeys, a) {
-				continue
+		return
+	}
+	res.Users++
+
+	// 1. the primary, into the broker
+	inPrimary := false
+	if primary != nil {
+		if pid, err := locate(ctx, b, id, email(u), *primary); err == nil {
+			rec, err := primary.Dir.User(ctx, pid)
+			inPrimary = err == nil
+			if err != nil {
+				fail("%s: %v", primary.Name, err)
+			} else if values := read(rec, primary.Attributes, writable); apply(u, values) {
+				if err := b.UpdateUser(ctx, u); err != nil {
+					fail("broker update: %v", err)
+				} else {
+					res.Updated++
+					logf("broker profile updated", "user", id, "attributes", sortedKeys(values))
+				}
 			}
-			path := m.DirectoryPath
-			if path == "" {
-				path = m.Claim
-			}
-			if v := Values(Lookup(rec, path)); len(v) > 0 {
-				values[a], decided[a] = v, true
-			}
+		} else if !errors.Is(err, ErrNoUser) {
+			fail("%s: %v", primary.Name, err)
 		}
 	}
-	return values, failed
+
+	// 2. the broker, out to each failover
+	mail := email(u)
+	for _, f := range failovers {
+		want := map[string][]string{} // path -> values, from the broker's profile
+		for _, m := range f.Attributes {
+			if slices.Contains(writable, m.Attribute) && m.Attribute != "username" {
+				if v := brokerValue(u, m.Attribute); len(v) > 0 {
+					want[m.Path] = v
+				}
+			}
+		}
+		fid, err := locate(ctx, b, id, mail, f)
+		switch {
+		case errors.Is(err, ErrNoUser) && mail != "" && inPrimary: // only users the primary has
+			fid, err = f.Dir.Create(ctx, mail, want)
+			if errors.Is(err, ErrNoCreate) {
+				fail("%s: no account there, and it can't create one without a password", f.Name)
+				continue
+			}
+			if err != nil {
+				fail("%s: create: %v", f.Name, err)
+				continue
+			}
+			res.Created++
+			logf("created at failover", "user", id, "idp", f.Name)
+			verify(ctx, f, fid, want, fail)
+			if err := f.Dir.Enroll(ctx, fid); err != nil {
+				res.Notes = append(res.Notes, fmt.Sprintf("user %s: created at %s, no credential enrollment sent: %v", id, f.Name, err))
+			}
+			continue
+		case errors.Is(err, ErrNoUser):
+			continue // not there, and not created: not in the primary, or no email
+		case err != nil:
+			fail("%s: %v", f.Name, err)
+			continue
+		}
+		rec, err := f.Dir.User(ctx, fid)
+		if err != nil {
+			fail("%s: %v", f.Name, err)
+			continue
+		}
+		set := map[string][]string{}
+		for p, v := range want {
+			if !slices.Equal(Values(Lookup(rec, p)), v) {
+				set[p] = v
+			}
+		}
+		if len(set) == 0 {
+			continue
+		}
+		if err := f.Dir.Update(ctx, fid, set); err != nil {
+			fail("%s: update: %v", f.Name, err)
+			continue
+		}
+		res.Written++
+		logf("failover written", "user", id, "idp", f.Name, "attributes", sortedKeys(set))
+		verify(ctx, f, fid, set, fail)
+	}
 }
 
-// apply writes values into the user's representation; firstName and
-// lastName are top-level fields, everything else an attribute. Reports
-// whether anything changed.
+// locate is the user's id at an IdP: the broker's link to it, else the one
+// user there with the same email.
+func locate(ctx context.Context, b Broker, userID, mail string, p IdP) (string, error) {
+	sub, err := b.FederatedIdentity(ctx, userID, p.Name)
+	if err == nil {
+		return sub, nil
+	}
+	if !errors.Is(err, keycloak.ErrNotFound) {
+		return "", err
+	}
+	if mail == "" {
+		return "", ErrNoUser
+	}
+	return p.Dir.Find(ctx, mail)
+}
+
+// verify reads the record back: a directory that drops an attribute it
+// doesn't know (a Keycloak realm without it in its user profile) is reported,
+// not assumed written.
+func verify(ctx context.Context, f IdP, id string, set map[string][]string, fail func(string, ...any)) {
+	rec, err := f.Dir.User(ctx, id)
+	if err != nil {
+		fail("%s: reading back: %v", f.Name, err)
+		return
+	}
+	var lost []string
+	for _, p := range sortedKeys(set) {
+		if !slices.Equal(Values(Lookup(rec, p)), set[p]) {
+			lost = append(lost, p)
+		}
+	}
+	if len(lost) > 0 {
+		fail("%s: didn't keep %s (not in its user schema?)", f.Name, strings.Join(lost, ", "))
+	}
+}
+
+// read maps the primary's record onto broker attributes.
+func read(rec map[string]any, ms []v1.AttributeMapping, writable []string) map[string][]string {
+	values := map[string][]string{}
+	for _, m := range ms {
+		if !slices.Contains(writable, m.Attribute) || m.Attribute == "username" {
+			continue
+		}
+		if v := Values(Lookup(rec, m.Path)); len(v) > 0 {
+			values[m.Attribute] = v
+		}
+	}
+	return values
+}
+
+// apply writes values into the broker user's representation; email,
+// firstName and lastName are top-level fields, everything else an attribute.
+// Reports whether anything changed.
 func apply(u keycloak.User, values map[string][]string) bool {
 	changed := false
 	attrs, _ := u["attributes"].(map[string]any)
@@ -151,12 +228,15 @@ func apply(u keycloak.User, values map[string][]string) bool {
 	}
 	for a, v := range values {
 		switch a {
-		case "firstName", "lastName":
+		case "email", "firstName", "lastName":
 			if cur, _ := u[a].(string); cur != v[0] {
 				u[a], changed = v[0], true
+				if a == "email" {
+					u["emailVerified"] = true // the primary verified it
+				}
 			}
 		default:
-			if !sameValues(attrs[a], v) {
+			if !slices.Equal(Values(attrs[a]), v) {
 				l := make([]any, len(v))
 				for i, s := range v {
 					l[i] = s
@@ -171,24 +251,13 @@ func apply(u keycloak.User, values map[string][]string) bool {
 	return changed
 }
 
-func sameValues(cur any, v []string) bool {
-	l, _ := cur.([]any)
-	if len(l) != len(v) {
-		return false
+func brokerValue(u keycloak.User, attr string) []string {
+	switch attr {
+	case "email", "firstName", "lastName", "username":
+		return Values(u[attr])
 	}
-	for i := range l {
-		if fmt.Sprint(l[i]) != v[i] {
-			return false
-		}
-	}
-	return true
+	attrs, _ := u["attributes"].(map[string]any)
+	return Values(attrs[attr])
 }
 
-func keys(m map[string][]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	slices.Sort(out)
-	return out
-}
+func email(u keycloak.User) string { s, _ := u["email"].(string); return s }

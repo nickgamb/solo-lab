@@ -23,8 +23,9 @@ import (
 	"github.com/nickgamb/solo-lab/apps/continuity/internal/keycloak"
 )
 
-// profileEvery: how often the profile is put back unchanged in the spec
-// (a realm re-import, a hand edit); a spec change applies on the next pass.
+// profileEvery: how often the profile is put back while the spec is
+// unchanged (a realm re-import, a hand edit); a spec change applies on the
+// next pass.
 const profileEvery = time.Minute
 
 type profileMark struct {
@@ -34,9 +35,6 @@ type profileMark struct {
 }
 
 const noSchedule = "0 0 1 1 *"
-
-// ProfileScope is the client scope that carries the profile in tokens.
-func ProfileScope(ic *v1.IdentityContinuity) string { return ic.Name + "-profile" }
 
 // SyncJobName is the CronJob that runs the scheduled profile sync.
 func SyncJobName(ic *v1.IdentityContinuity) string { return ic.Name + "-profile-sync" }
@@ -52,8 +50,8 @@ func profileAttrs(ic *v1.IdentityContinuity) []keycloak.Attr {
 	return out
 }
 
-// Writable are the attributes a mapping may fill: the profile's and the
-// built-in names (identity keys only at first sign-in).
+// Writable are the broker attributes a mapping may name: the profile's and
+// the built-in ones. The sync never writes the identity keys.
 func Writable(ic *v1.IdentityContinuity) []string {
 	out := slices.Clone(keycloak.Builtin)
 	for _, a := range profileAttrs(ic) {
@@ -62,12 +60,11 @@ func Writable(ic *v1.IdentityContinuity) []string {
 	return out
 }
 
-// reconcileProfile keeps the realm's user profile, each tier's claim mappers
-// and the profile client scope matching the spec. idps are the tiers whose
-// IdP exists in Keycloak now.
-func (r *Reconciler) reconcileProfile(ctx context.Context, ic *v1.IdentityContinuity, kc *keycloak.Client, idps map[string]bool) error {
+// reconcileProfile keeps the realm's user profile matching spec.profile and
+// reports attribute mappings that name an attribute the profile lacks.
+func (r *Reconciler) reconcileProfile(ctx context.Context, ic *v1.IdentityContinuity, kc *keycloak.Client) error {
 	owner := client.ObjectKeyFromObject(ic).String()
-	b, _ := json.Marshal([]any{ic.Spec.Profile, ic.Spec.Tiers, idps})
+	b, _ := json.Marshal([]any{ic.Spec.Profile, ic.Spec.Tiers})
 	sum := sha256.Sum256(b)
 	hash := fmt.Sprintf("%x", sum[:8])
 	r.mu.Lock()
@@ -76,60 +73,33 @@ func (r *Reconciler) reconcileProfile(ctx context.Context, ic *v1.IdentityContin
 	if last.hash == hash && time.Since(last.at) < profileEvery {
 		return last.invalid
 	}
-
-	var errs, invalid []error
-	attrs := profileAttrs(ic)
-	if _, err := kc.EnsureProfile(ctx, owner, attrs); err != nil {
-		return err // mappers into attributes the profile lacks would be dropped
+	if _, err := kc.EnsureProfile(ctx, owner, profileAttrs(ic)); err != nil {
+		return err // retried on the next pass
 	}
+	var invalid []error
 	writable := Writable(ic)
-	first := true
 	for _, t := range ic.Spec.Tiers {
-		if t.Type != "oidc" {
-			continue
-		}
-		follow := first // the chain's first upstream wins at sign-in
-		first = false
-		if !idps[t.Name] {
-			continue
-		}
-		var ms []keycloak.ClaimMapper
-		for _, m := range t.Claims {
-			if !slices.Contains(writable, m.Attribute) {
-				invalid = append(invalid, fmt.Errorf("tier %s: claim %s maps to %q, not in the profile", t.Name, m.Claim, m.Attribute))
-				continue
+		for _, m := range t.Attributes {
+			switch {
+			case !slices.Contains(writable, m.Attribute):
+				invalid = append(invalid, fmt.Errorf("IdP %s: %s maps to %q, not in the profile", t.Name, m.Path, m.Attribute))
+			case slices.Contains(keycloak.NeverSynced, m.Attribute):
+				invalid = append(invalid, fmt.Errorf("IdP %s: %q is never synced", t.Name, m.Attribute))
 			}
-			ms = append(ms, keycloak.ClaimMapper{Claim: m.Claim, Attribute: m.Attribute})
 		}
-		if _, err := kc.SyncClaimMappers(ctx, t.Name, ms, follow); err != nil {
-			errs = append(errs, fmt.Errorf("tier %s mappers: %w", t.Name, err))
-		}
-	}
-	var clients []string
-	if ic.Spec.Profile != nil {
-		clients = ic.Spec.Profile.TokenClients
-	}
-	if len(attrs) == 0 || len(clients) == 0 {
-		errs = append(errs, kc.DeleteProfileScope(ctx, owner, ProfileScope(ic)))
-	} else {
-		errs = append(errs, kc.EnsureProfileScope(ctx, owner, ProfileScope(ic), attrs, clients))
 	}
 	inv := errors.Join(invalid...)
-	if err := errors.Join(errs...); err != nil {
-		return errors.Join(err, inv) // Keycloak errors: retried on the next pass
-	}
 	r.mu.Lock()
 	r.profiles[client.ObjectKeyFromObject(ic)] = profileMark{hash: hash, at: time.Now(), invalid: inv}
 	r.mu.Unlock()
 	return inv
 }
 
-// cleanupProfile removes this instance's profile attributes and scope (the
-// claim mappers go with the IdPs). Users keep their values.
+// cleanupProfile removes this instance's profile attributes. Users keep
+// their values.
 func cleanupProfile(ctx context.Context, ic *v1.IdentityContinuity, kc *keycloak.Client) error {
-	owner := client.ObjectKeyFromObject(ic).String()
-	_, err := kc.EnsureProfile(ctx, owner, nil)
-	return errors.Join(err, kc.DeleteProfileScope(ctx, owner, ProfileScope(ic)))
+	_, err := kc.EnsureProfile(ctx, client.ObjectKeyFromObject(ic).String(), nil)
+	return err
 }
 
 func hasDirectory(ic *v1.IdentityContinuity) bool {

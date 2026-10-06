@@ -71,20 +71,23 @@ func runSync(args []string) int {
 		st = &v1.SyncStatus{CronJob: controller.SyncJobName(&ic)}
 	}
 	st.LastRun = &started
-	st.Users, st.Updated, st.Failed = int32(res.Users), int32(res.Updated), int32(res.Failed)
+	st.Users, st.Updated, st.Written, st.Created, st.Failed = int32(res.Users), int32(res.Updated), int32(res.Written), int32(res.Created), int32(res.Failed)
 	switch {
 	case err != nil:
 		st.Message = err.Error()
 	case res.Failed > 0 || len(res.Errors) > 0:
 		st.Message = summarize(res.Errors)
 	default:
-		st.LastSuccess, st.Message = &started, fmt.Sprintf("%d users read, %d updated", res.Users, res.Updated)
+		st.LastSuccess, st.Message = &started, fmt.Sprintf("%d users: %d broker profiles updated, %d failover accounts written, %d created", res.Users, res.Updated, res.Written, res.Created)
+		if len(res.Notes) > 0 {
+			st.Message += "; " + summarize(res.Notes)
+		}
 	}
 	ic.Status.Sync = st
 	if perr := c.Status().Patch(ctx, &ic, client.MergeFrom(orig)); perr != nil {
 		log.Error("status", "err", perr.Error())
 	}
-	log.Info("sync finished", "users", res.Users, "updated", res.Updated, "failed", res.Failed, "message", st.Message)
+	log.Info("sync finished", "users", res.Users, "updated", res.Updated, "written", res.Written, "created", res.Created, "failed", res.Failed, "message", st.Message)
 	if err != nil || res.Failed > 0 || len(res.Errors) > 0 {
 		return 1
 	}
@@ -112,24 +115,37 @@ func syncOnce(ctx context.Context, c client.Client, ic *v1.IdentityContinuity, c
 	}
 	hc := prober.HTTPClient(20 * time.Second)
 
-	var ts []profilesync.Tier
+	// The chain's first IdP is the primary: read. Every other IdP with a
+	// directory is a failover: written.
+	var primary *profilesync.IdP
+	var failovers []profilesync.IdP
+	first := true
 	for _, t := range ic.Spec.Tiers {
-		if t.Type != "oidc" || t.OIDC == nil || t.Directory == nil || len(t.Claims) == 0 {
+		if t.Type != "oidc" || t.OIDC == nil {
+			continue
+		}
+		isPrimary := first
+		first = false
+		if t.Directory == nil || len(t.Attributes) == 0 {
 			continue
 		}
 		dir, err := directory(ctx, c, ic.Namespace, t, prober, hc)
 		if err != nil {
-			// The tier's attributes are kept as they are this run: a lower
-			// tier never fills them because this one couldn't be read.
-			log.Warn("directory unavailable", "tier", t.Name, "err", err.Error())
+			// nothing is read from or written to it this run
+			log.Warn("directory unavailable", "idp", t.Name, "err", err.Error())
 			dir = failed{err}
 		}
-		ts = append(ts, profilesync.Tier{Name: t.Name, Claims: t.Claims, Dir: dir})
+		p := profilesync.IdP{Name: t.Name, Attributes: t.Attributes, Dir: dir}
+		if isPrimary {
+			primary = &p
+		} else {
+			failovers = append(failovers, p)
+		}
 	}
-	if len(ts) == 0 {
-		return profilesync.Result{}, errors.New("no tier has both a directory and claim mappings")
+	if primary == nil && len(failovers) == 0 {
+		return profilesync.Result{}, errors.New("no IdP has both a directory and an attribute mapping")
 	}
-	return profilesync.Run(ctx, kc, ts, controller.Writable(ic), func(msg string, kv ...any) { log.Info(msg, kv...) }), nil
+	return profilesync.Run(ctx, kc, primary, failovers, controller.Writable(ic), func(msg string, kv ...any) { log.Info(msg, kv...) }), nil
 }
 
 // testDirectory checks one tier's directory along the sync's own path and
@@ -137,14 +153,15 @@ func syncOnce(ctx context.Context, c client.Client, ic *v1.IdentityContinuity, c
 // message, for whoever started the test.
 func testDirectory(ctx context.Context, c client.Client, ic *v1.IdentityContinuity, tier, caFile string, log *slog.Logger) int {
 	res := struct {
-		OK      bool   `json:"ok"`
-		Users   int    `json:"users"`
-		Message string `json:"message"`
+		OK         bool     `json:"ok"`
+		Users      int      `json:"users"`
+		Attributes []string `json:"attributes,omitempty"` // the directory's user schema
+		Message    string   `json:"message"`
 	}{}
 	err := func() error {
 		i := slices.IndexFunc(ic.Spec.Tiers, func(t v1.Tier) bool { return t.Name == tier })
 		if i < 0 || ic.Spec.Tiers[i].Type != "oidc" || ic.Spec.Tiers[i].Directory == nil {
-			return fmt.Errorf("tier %s has no directory", tier)
+			return fmt.Errorf("IdP %s has no directory", tier)
 		}
 		prober, err := probe.New(caFile)
 		if err != nil {
@@ -154,12 +171,11 @@ func testDirectory(ctx context.Context, c client.Client, ic *v1.IdentityContinui
 		if err != nil {
 			return err
 		}
-		ck, ok := d.(profilesync.Checker)
-		if !ok {
-			return errors.New("this directory type can't be tested")
+		if res.Users, err = d.Check(ctx); err != nil {
+			return err
 		}
-		res.Users, err = ck.Check(ctx)
-		return err
+		res.Attributes, _ = d.Schema(ctx) // optional: a directory may not publish one
+		return nil
 	}()
 	if err != nil {
 		res.Message = err.Error()
@@ -168,7 +184,7 @@ func testDirectory(ctx context.Context, c client.Client, ic *v1.IdentityContinui
 	}
 	b, _ := json.Marshal(res)
 	_ = os.WriteFile("/dev/termination-log", b, 0o644)
-	log.Info("directory test", "tier", tier, "ok", res.OK, "users", res.Users, "message", res.Message)
+	log.Info("directory test", "idp", tier, "ok", res.OK, "users", res.Users, "message", res.Message)
 	if !res.OK {
 		return 1
 	}
@@ -209,7 +225,18 @@ func readCredentials(ctx context.Context, c client.Client, ns, name, id string) 
 
 type failed struct{ err error }
 
+// failed is a directory that couldn't be set up: every call says why.
 func (f failed) User(context.Context, string) (map[string]any, error) { return nil, f.err }
+func (f failed) Find(context.Context, string) (string, error)         { return "", f.err }
+func (f failed) Update(context.Context, string, map[string][]string) error {
+	return f.err
+}
+func (f failed) Create(context.Context, string, map[string][]string) (string, error) {
+	return "", f.err
+}
+func (f failed) Enroll(context.Context, string) error     { return f.err }
+func (f failed) Check(context.Context) (int, error)       { return 0, f.err }
+func (f failed) Schema(context.Context) ([]string, error) { return nil, f.err }
 
 // summarize keeps status short: the first few errors and a count.
 func summarize(errs []string) string {

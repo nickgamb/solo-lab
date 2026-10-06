@@ -47,30 +47,27 @@ type IdentityContinuitySpec struct {
 	// +kubebuilder:validation:Enum=Automatic;Manual
 	// +kubebuilder:default=Automatic
 	Failback string `json:"failback,omitempty"`
-	// S&V's unified user profile: the attributes every tier's claims map
-	// into, kept on the broker's users and carried in tokens. Optional.
+	// S&V's standard user profile on the broker: the attributes the
+	// directory sync maps every IdP's profile into. Optional.
 	Profile *Profile `json:"profile,omitempty"`
-	// The scheduled out-of-band sync of profile attributes from each tier's
-	// directory into the broker. Optional.
+	// The scheduled directory sync: the primary IdP's profile into the
+	// broker, then the broker's out to every failover IdP. Optional.
 	Sync *Sync `json:"sync,omitempty"`
 }
 
-// Profile is the broker's unified user profile.
+// Profile is the broker's standard user profile.
 type Profile struct {
 	// Attributes beyond the built-in username, email, firstName and lastName,
 	// added to the realm's user profile. Users can view but not edit them:
-	// their values come from the upstreams.
+	// their values come from the primary IdP.
 	// +listType=map
 	// +listMapKey=name
 	// +kubebuilder:validation:MaxItems=64
 	Attributes []ProfileAttribute `json:"attributes,omitempty"`
-	// Clients whose tokens carry the profile (client scope "<instance>-profile"
-	// as a default scope). Others never see it.
-	TokenClients []string `json:"tokenClients,omitempty"`
 }
 
 type ProfileAttribute struct {
-	// The Keycloak attribute name, and the claim name in tokens.
+	// The attribute's name in the broker's user profile.
 	// +kubebuilder:validation:Pattern=`^[a-zA-Z][a-zA-Z0-9_.-]*$`
 	// +kubebuilder:validation:MaxLength=64
 	Name        string `json:"name"`
@@ -78,10 +75,12 @@ type ProfileAttribute struct {
 	Multivalued bool   `json:"multivalued,omitempty"`
 }
 
-// Sync schedules reads of each linked user's record from each tier's
-// directory into the broker's profile. Tiers earlier in the chain win.
-// Passwords and credentials are never read or written; neither are the
-// identity keys username and email.
+// Sync schedules the directory sync. For each user linked at the broker:
+// the primary IdP's profile (the chain's first tier) is read into the
+// broker's, then the broker's is written to each failover IdP that has the
+// user, through each tier's attribute mapping. Passwords and credentials are
+// never read or written; neither are the identity keys username and email;
+// no user is created or deleted.
 type Sync struct {
 	// Standard cron, in UTC (e.g. "0 2 * * *" daily at 02:00).
 	// +kubebuilder:validation:MinLength=9
@@ -93,21 +92,22 @@ type Sync struct {
 	CredentialsRef LocalRef `json:"credentialsRef,omitempty"`
 }
 
-// ClaimMapping maps one upstream claim to one profile attribute.
-type ClaimMapping struct {
-	// The claim in the upstream's ID token or userinfo, at sign-in.
-	// +kubebuilder:validation:MinLength=1
-	Claim string `json:"claim"`
-	// The profile attribute it fills (built-in or spec.profile.attributes).
+// AttributeMapping pairs a broker profile attribute with the IdP's own
+// attribute. The primary IdP's is read into the broker's; a failover's is
+// written from it.
+type AttributeMapping struct {
+	// The broker's profile attribute (built-in or spec.profile.attributes).
 	// +kubebuilder:validation:MinLength=1
 	Attribute string `json:"attribute"`
-	// Where the same value is in the directory's user record, when it isn't
-	// the claim's standard place there (e.g. "user_metadata.department").
-	DirectoryPath string `json:"directoryPath,omitempty"`
+	// The attribute in the IdP's user record: a dot path ("name.givenName",
+	// "user_metadata.department"), a SCIM extension attribute by its schema
+	// URN ("urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:department"),
+	// or a SCIM filtered value ("phoneNumbers[type eq \"work\"].value").
+	// +kubebuilder:validation:MinLength=1
+	Path string `json:"path"`
 }
 
-// Directory is where the scheduled sync reads an upstream's users, with
-// read-only client credentials.
+// Directory is where the sync reads and writes an IdP's users.
 // +kubebuilder:validation:XValidation:rule="self.type != 'auth0' || has(self.audience)",message="an auth0 directory needs audience (the Management API identifier)"
 type Directory struct {
 	// scim (SCIM 2.0: Gluu, and most enterprise IdPs), auth0 (Management
@@ -122,10 +122,11 @@ type Directory struct {
 	URL string `json:"url"`
 	// A Secret with client-secret (and client-id, unless clientID is set):
 	// an OAuth client allowed the client_credentials grant at the tier's
-	// token endpoint, with read-only access to users.
+	// token endpoint, allowed to read users and, for a failover, update them.
 	CredentialsRef LocalRef `json:"credentialsRef"`
 	ClientID       string   `json:"clientID,omitempty"`
-	// Scopes to request (e.g. "https://jans.io/scim/users.read").
+	// Scopes to request (e.g. "https://jans.io/scim/users.read
+	// https://jans.io/scim/users.write").
 	Scopes   []string `json:"scopes,omitempty"`
 	Audience string   `json:"audience,omitempty"`
 }
@@ -180,12 +181,14 @@ type Tier struct {
 	Drain bool `json:"drain,omitempty"`
 	// +optional
 	OIDC *OIDCUpstream `json:"oidc,omitempty"`
-	// This tier's claims, mapped into the unified profile: at sign-in
-	// (Keycloak IdP mappers, updated on every login) and in the scheduled
-	// sync. oidc tiers only.
+	// This IdP's attributes, paired with the broker's profile for the
+	// directory sync. oidc tiers only.
+	// +listType=map
+	// +listMapKey=attribute
 	// +kubebuilder:validation:MaxItems=64
-	Claims []ClaimMapping `json:"claims,omitempty"`
-	// Where the scheduled sync reads this tier's users. oidc tiers only.
+	Attributes []AttributeMapping `json:"attributes,omitempty"`
+	// Where the directory sync reads and writes this IdP's users. oidc
+	// tiers only.
 	Directory *Directory `json:"directory,omitempty"`
 	// +kubebuilder:default={}
 	FailoverWhen FailoverRules `json:"failoverWhen,omitempty"`
@@ -312,8 +315,6 @@ type TierStatus struct {
 	Message              string       `json:"message,omitempty"`
 	ConsecutiveFailures  int32        `json:"consecutiveFailures,omitempty"`
 	ConsecutiveSuccesses int32        `json:"consecutiveSuccesses,omitempty"`
-	// The claims the upstream says it can return (discovery claims_supported).
-	ClaimsSupported []string `json:"claimsSupported,omitempty"`
 }
 
 type Transition struct {
@@ -333,9 +334,12 @@ type SyncStatus struct {
 	CronJob     string       `json:"cronJob,omitempty"`
 	LastRun     *metav1.Time `json:"lastRun,omitempty"`
 	LastSuccess *metav1.Time `json:"lastSuccess,omitempty"`
-	// Users read, users whose profile changed, and failures, in the last run.
+	// In the last run: users read, users whose broker profile changed,
+	// failover accounts written and created, and failures.
 	Users   int32  `json:"users,omitempty"`
 	Updated int32  `json:"updated,omitempty"`
+	Written int32  `json:"written,omitempty"`
+	Created int32  `json:"created,omitempty"`
 	Failed  int32  `json:"failed,omitempty"`
 	Message string `json:"message,omitempty"`
 }

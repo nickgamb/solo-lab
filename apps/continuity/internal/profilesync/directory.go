@@ -1,10 +1,13 @@
-// Package profilesync reads linked users' records from each tier's directory
-// and writes the mapped profile attributes into the broker. Tiers earlier in
-// the chain win. It never reads or writes passwords or credentials, and never
-// writes the identity keys (username, email).
+// Package profilesync is the directory sync: for each employee the broker
+// knows, the primary IdP's user record is read into the broker's profile,
+// then the broker's profile is written to each failover IdP (the user is
+// created there if missing), through each IdP's attribute mapping. It never
+// reads or writes a password or other credential, never writes the username,
+// and never deletes a user.
 package profilesync
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,33 +15,45 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-// ErrNoUser: the directory has no record for that subject.
-var ErrNoUser = errors.New("no such user in the directory")
+var (
+	// ErrNoUser: the directory has no such user.
+	ErrNoUser = errors.New("no such user in the directory")
+	// ErrNoCreate: the directory can't create a user without a credential.
+	ErrNoCreate = errors.New("this directory can't create a user without a password")
+	// ErrNoEnroll: the directory has no way to have a new user set their
+	// own credential.
+	ErrNoEnroll = errors.New("this directory can't send a credential enrollment")
+)
 
-// Directory reads one user's record, as claims (OIDC claim names where the
-// directory has a standard field; its own nested fields otherwise).
+// Directory is one IdP's user store, by the IdP's own attribute paths.
 type Directory interface {
-	User(ctx context.Context, sub string) (map[string]any, error)
-}
-
-// Checker tests a directory: a token, then a read of its users. It returns
-// how many users the directory reports, never their records.
-type Checker interface {
+	// User is the user's record.
+	User(ctx context.Context, id string) (map[string]any, error)
+	// Find is the id of the user with that email, or ErrNoUser.
+	Find(ctx context.Context, email string) (string, error)
+	// Update sets attributes (path -> values) on the user.
+	Update(ctx context.Context, id string, set map[string][]string) error
+	// Create creates the user (no credential) with those attributes and
+	// returns its id, or ErrNoCreate.
+	Create(ctx context.Context, email string, set map[string][]string) (string, error)
+	// Enroll has the directory ask a new user to set their own credential
+	// there (an email from the IdP), or ErrNoEnroll. The sync never sees it.
+	Enroll(ctx context.Context, id string) error
+	// Check gets a token and reads the users' count, never their records.
 	Check(ctx context.Context) (int, error)
+	// Schema lists the attribute paths the directory knows.
+	Schema(ctx context.Context) ([]string, error)
 }
 
-func count(v any) int {
-	n, _ := v.(float64)
-	return int(n)
-}
-
-// Credentials are the client_credentials the sync uses at the tier's token
-// endpoint: read-only access to the directory's users.
+// Credentials are the client_credentials the sync uses at the IdP's token
+// endpoint.
 type Credentials struct {
 	TokenURL, ClientID, ClientSecret, Audience string
 	Scopes                                     []string
@@ -94,33 +109,52 @@ func (t *tokenSource) token(ctx context.Context) (string, error) {
 	return t.tok, nil
 }
 
-func getJSON(ctx context.Context, hc *http.Client, ts *tokenSource, u string, accept string) (map[string]any, error) {
-	tok, err := ts.token(ctx)
+// api is one directory's HTTP API, authenticated with the token source.
+type api struct {
+	base, accept, ctype string
+	hc                  *http.Client
+	ts                  *tokenSource
+}
+
+// call sends method to path with body (JSON) and decodes the answer into out.
+// A 404 is ErrNoUser; any other answer outside 2xx an error with its status.
+func (a *api) call(ctx context.Context, method, path string, body, out any) error {
+	tok, err := a.ts.token(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	var rd io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		rd = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, a.base+path, rd)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
-	req.Header.Set("Accept", accept)
-	resp, err := hc.Do(req)
+	req.Header.Set("Accept", a.accept)
+	if body != nil {
+		req.Header.Set("Content-Type", a.ctype)
+	}
+	resp, err := a.hc.Do(req)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer resp.Body.Close()
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
-		return nil, ErrNoUser
-	case resp.StatusCode != http.StatusOK:
-		return nil, fmt.Errorf("directory: HTTP %d", resp.StatusCode)
+		return ErrNoUser
+	case resp.StatusCode < 200 || resp.StatusCode > 299:
+		return fmt.Errorf("directory: %s %s: HTTP %d", method, strings.SplitN(path, "?", 2)[0], resp.StatusCode)
 	}
-	var out map[string]any
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
-		return nil, err
+	if out == nil || resp.StatusCode == http.StatusNoContent {
+		return nil
 	}
-	return out, nil
+	return json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out)
 }
 
 // New returns the directory for type typ at base.
@@ -129,149 +163,227 @@ func New(typ, base string, c Credentials, hc *http.Client) (Directory, error) {
 	base = strings.TrimSuffix(base, "/")
 	switch typ {
 	case "scim":
-		return &scim{base: base, hc: hc, ts: ts}, nil
+		return &scim{api{base: base, accept: "application/scim+json, application/json", ctype: "application/scim+json", hc: hc, ts: ts}}, nil
 	case "auth0":
-		return &auth0{base: base, hc: hc, ts: ts}, nil
+		return &auth0{api{base: base, accept: "application/json", ctype: "application/json", hc: hc, ts: ts}}, nil
 	case "keycloak":
-		return &keycloakDir{base: base, hc: hc, ts: ts}, nil
+		return &keycloakDir{api{base: base, accept: "application/json", ctype: "application/json", hc: hc, ts: ts}}, nil
 	}
 	return nil, fmt.Errorf("directory type %q: scim, auth0 or keycloak", typ)
 }
 
-// scim is a SCIM 2.0 directory (RFC 7643/7644). The upstream's sub is the
-// SCIM id (Gluu: the user's inum).
-type scim struct {
-	base string
-	hc   *http.Client
-	ts   *tokenSource
+func one(v []string) any {
+	if len(v) == 1 {
+		return v[0]
+	}
+	return v
 }
 
-func (d *scim) User(ctx context.Context, sub string) (map[string]any, error) {
-	r, err := getJSON(ctx, d.hc, d.ts, d.base+"/Users/"+url.PathEscape(sub), "application/scim+json, application/json")
-	if err != nil {
-		return nil, err
-	}
-	return fromSCIM(r), nil
+// ---- SCIM 2.0 (RFC 7643/7644): Gluu, Ping, most enterprise IdPs. The id is
+// the SCIM id (Gluu: the user's inum, which is also its sub).
+
+type scim struct{ api }
+
+const (
+	scimCore  = "urn:ietf:params:scim:schemas:core:2.0:User"
+	scimPatch = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
+)
+
+func (d *scim) User(ctx context.Context, id string) (map[string]any, error) {
+	var r map[string]any
+	return r, d.call(ctx, http.MethodGet, "/Users/"+url.PathEscape(id), nil, &r)
 }
+
+func (d *scim) Find(ctx context.Context, email string) (string, error) {
+	var r struct {
+		Resources []struct {
+			ID string `json:"id"`
+		} `json:"Resources"`
+	}
+	filter := `emails.value eq ` + strconv.Quote(email)
+	if err := d.call(ctx, http.MethodGet, "/Users?count=2&attributes=id&filter="+url.QueryEscape(filter), nil, &r); err != nil {
+		return "", err
+	}
+	if len(r.Resources) != 1 {
+		return "", ErrNoUser // none, or not one user: never guess
+	}
+	return r.Resources[0].ID, nil
+}
+
+func (d *scim) Update(ctx context.Context, id string, set map[string][]string) error {
+	var ops []any
+	for _, p := range sortedKeys(set) {
+		ops = append(ops, map[string]any{"op": "replace", "path": p, "value": one(set[p])})
+	}
+	return d.call(ctx, http.MethodPatch, "/Users/"+url.PathEscape(id), map[string]any{"schemas": []string{scimPatch}, "Operations": ops}, nil)
+}
+
+func (d *scim) Create(ctx context.Context, email string, set map[string][]string) (string, error) {
+	u := map[string]any{"schemas": []string{scimCore}, "userName": email, "active": true,
+		"emails": []any{map[string]any{"value": email, "primary": true}}}
+	for _, p := range sortedKeys(set) {
+		if err := setPath(u, p, one(set[p])); err != nil {
+			return "", err
+		}
+	}
+	var out struct {
+		ID string `json:"id"`
+	}
+	if err := d.call(ctx, http.MethodPost, "/Users", u, &out); err != nil {
+		return "", err
+	}
+	return out.ID, nil
+}
+
+func (d *scim) Enroll(context.Context, string) error { return ErrNoEnroll }
 
 func (d *scim) Check(ctx context.Context) (int, error) {
-	r, err := getJSON(ctx, d.hc, d.ts, d.base+"/Users?count=1&attributes=id", "application/scim+json, application/json")
+	var r struct {
+		Total int `json:"totalResults"`
+	}
+	err := d.call(ctx, http.MethodGet, "/Users?count=1&attributes=id", nil, &r)
 	if errors.Is(err, ErrNoUser) {
-		return 0, fmt.Errorf("directory: HTTP 404 at %s/Users", d.base)
+		err = fmt.Errorf("directory: HTTP 404 at %s/Users", d.base)
 	}
-	return count(r["totalResults"]), err
+	return r.Total, err
 }
 
-// fromSCIM puts SCIM core fields under their OIDC claim names; the record's
-// other fields (extensions by their schema URN) stay as they are.
-func fromSCIM(r map[string]any) map[string]any {
-	out := map[string]any{}
-	for k, v := range r {
-		out[k] = v
+// Schema lists the User schema's and its extensions' writable attributes:
+// "name.givenName", and "<extension URN>:<attribute>".
+func (d *scim) Schema(ctx context.Context) ([]string, error) {
+	var r struct {
+		Resources []struct {
+			ID         string     `json:"id"`
+			Attributes []scimAttr `json:"attributes"`
+		} `json:"Resources"`
 	}
-	if n, ok := r["name"].(map[string]any); ok {
-		set(out, "given_name", n["givenName"])
-		set(out, "family_name", n["familyName"])
-		set(out, "middle_name", n["middleName"])
-		if f, _ := n["formatted"].(string); f != "" {
-			out["name"] = f
-		} else {
-			delete(out, "name")
-		}
+	if err := d.call(ctx, http.MethodGet, "/Schemas", nil, &r); err != nil {
+		return nil, err
 	}
-	set(out, "preferred_username", r["userName"])
-	set(out, "nickname", r["nickName"])
-	set(out, "locale", r["locale"])
-	set(out, "zoneinfo", r["timezone"])
-	set(out, "website", r["profileUrl"])
-	if d, _ := r["displayName"].(string); d != "" && out["name"] == nil {
-		out["name"] = d
-	}
-	set(out, "email", primary(r["emails"]))
-	set(out, "phone_number", primary(r["phoneNumbers"]))
-	set(out, "picture", primary(r["photos"]))
-	if gs, ok := r["groups"].([]any); ok {
-		var names []any
-		for _, g := range gs {
-			if m, ok := g.(map[string]any); ok && m["display"] != nil {
-				names = append(names, m["display"])
-			}
-		}
-		out["groups"] = names
-	}
-	return out
-}
-
-func set(m map[string]any, k string, v any) {
-	if v != nil && v != "" {
-		m[k] = v
-	}
-}
-
-// primary is the value of a SCIM multi-valued attribute's primary entry, or
-// its first.
-func primary(v any) any {
-	l, _ := v.([]any)
-	var first any
-	for _, x := range l {
-		m, _ := x.(map[string]any)
-		if m == nil {
+	var out []string
+	for _, s := range r.Resources {
+		prefix := ""
+		switch {
+		case s.ID == scimCore:
+		case strings.HasPrefix(s.ID, "urn:") && strings.Contains(s.ID, ":extension:") && strings.HasSuffix(s.ID, ":User"):
+			prefix = s.ID + ":"
+		default:
 			continue
 		}
-		if first == nil {
-			first = m["value"]
-		}
-		if p, _ := m["primary"].(bool); p {
-			return m["value"]
+		for _, a := range s.Attributes {
+			if a.Mutability == "readOnly" || a.Name == "password" || a.Name == "userName" || a.MultiValued {
+				continue
+			}
+			if a.Type == "complex" {
+				for _, sa := range a.SubAttributes {
+					if sa.Mutability != "readOnly" && !sa.MultiValued {
+						out = append(out, prefix+a.Name+"."+sa.Name)
+					}
+				}
+				continue
+			}
+			out = append(out, prefix+a.Name)
 		}
 	}
-	return first
+	return out, nil
 }
 
-// auth0 is the Auth0 Management API v2: a user's fields are already OIDC
-// claim names (given_name, family_name, ...), plus user_metadata and
-// app_metadata.
-type auth0 struct {
-	base string
-	hc   *http.Client
-	ts   *tokenSource
+type scimAttr struct {
+	Name          string     `json:"name"`
+	Type          string     `json:"type"`
+	MultiValued   bool       `json:"multiValued"`
+	Mutability    string     `json:"mutability"`
+	SubAttributes []scimAttr `json:"subAttributes"`
 }
 
-func (d *auth0) User(ctx context.Context, sub string) (map[string]any, error) {
-	return getJSON(ctx, d.hc, d.ts, d.base+"/users/"+url.PathEscape(sub), "application/json")
+// ---- Auth0 Management API v2. The id is the user_id (the sub).
+
+type auth0 struct{ api }
+
+// the root attributes of an Auth0 user the sync may write
+var auth0Root = []string{"email", "given_name", "family_name", "name", "nickname", "picture"}
+
+func (d *auth0) User(ctx context.Context, id string) (map[string]any, error) {
+	var r map[string]any
+	return r, d.call(ctx, http.MethodGet, "/users/"+url.PathEscape(id), nil, &r)
 }
+
+func (d *auth0) Find(ctx context.Context, email string) (string, error) {
+	var r []struct {
+		ID string `json:"user_id"`
+	}
+	if err := d.call(ctx, http.MethodGet, "/users-by-email?fields=user_id&email="+url.QueryEscape(email), nil, &r); err != nil {
+		return "", err
+	}
+	if len(r) != 1 {
+		return "", ErrNoUser
+	}
+	return r[0].ID, nil
+}
+
+func (d *auth0) Update(ctx context.Context, id string, set map[string][]string) error {
+	body := map[string]any{}
+	for _, p := range sortedKeys(set) {
+		root := strings.SplitN(p, ".", 2)[0]
+		if !slices.Contains(auth0Root, p) && root != "user_metadata" && root != "app_metadata" {
+			return fmt.Errorf("auth0: %s is not writable (a root profile field, user_metadata.* or app_metadata.*)", p)
+		}
+		if err := setPath(body, p, one(set[p])); err != nil {
+			return err
+		}
+		if p == "email" {
+			body["email_verified"] = true // the primary verified it
+		}
+	}
+	return d.call(ctx, http.MethodPatch, "/users/"+url.PathEscape(id), body, nil)
+}
+
+func (d *auth0) Create(context.Context, string, map[string][]string) (string, error) {
+	return "", ErrNoCreate // a database connection requires a password
+}
+
+func (d *auth0) Enroll(context.Context, string) error { return ErrNoEnroll }
 
 func (d *auth0) Check(ctx context.Context) (int, error) {
-	r, err := getJSON(ctx, d.hc, d.ts, d.base+"/users?per_page=1&include_totals=true&fields=user_id", "application/json")
-	if errors.Is(err, ErrNoUser) {
-		return 0, fmt.Errorf("directory: HTTP 404 at %s/users", d.base)
+	var r struct {
+		Total int `json:"total"`
 	}
-	return count(r["total"]), err
+	err := d.call(ctx, http.MethodGet, "/users?per_page=1&include_totals=true&fields=user_id", nil, &r)
+	if errors.Is(err, ErrNoUser) {
+		err = fmt.Errorf("directory: HTTP 404 at %s/users", d.base)
+	}
+	return r.Total, err
 }
 
-// keycloakDir is one Keycloak realm's admin API (base .../admin/realms/<realm>):
-// the sub is the user id.
-type keycloakDir struct {
-	base string
-	hc   *http.Client
-	ts   *tokenSource
+// Schema: Auth0 has no schema API; its root profile fields, and metadata by
+// path (user_metadata.<key>, app_metadata.<key>).
+func (d *auth0) Schema(context.Context) ([]string, error) {
+	return slices.Clone(auth0Root), nil
 }
 
-func (d *keycloakDir) User(ctx context.Context, sub string) (map[string]any, error) {
-	r, err := getJSON(ctx, d.hc, d.ts, d.base+"/users/"+url.PathEscape(sub), "application/json")
-	if err != nil {
+// ---- Keycloak admin API, one realm (base .../admin/realms/<realm>). The id
+// is the user id (the sub).
+
+type keycloakDir struct{ api }
+
+var keycloakRoot = []string{"username", "email", "firstName", "lastName"}
+
+// User flattens the representation: the root fields and each attribute by
+// name, as Lookup reads them.
+func (d *keycloakDir) User(ctx context.Context, id string) (map[string]any, error) {
+	var r map[string]any
+	if err := d.call(ctx, http.MethodGet, "/users/"+url.PathEscape(id), nil, &r); err != nil {
 		return nil, err
 	}
 	out := map[string]any{}
-	set(out, "given_name", r["firstName"])
-	set(out, "family_name", r["lastName"])
-	set(out, "email", r["email"])
-	set(out, "preferred_username", r["username"])
+	for _, k := range keycloakRoot {
+		if v, ok := r[k]; ok {
+			out[k] = v
+		}
+	}
 	if a, ok := r["attributes"].(map[string]any); ok {
 		for k, v := range a {
-			if l, ok := v.([]any); ok && len(l) == 1 {
-				out[k] = l[0]
-			} else {
+			if _, root := out[k]; !root {
 				out[k] = v
 			}
 		}
@@ -279,31 +391,103 @@ func (d *keycloakDir) User(ctx context.Context, sub string) (map[string]any, err
 	return out, nil
 }
 
-func (d *keycloakDir) Check(ctx context.Context) (int, error) {
-	tok, err := d.ts.token(ctx)
-	if err != nil {
-		return 0, err
+func (d *keycloakDir) Find(ctx context.Context, email string) (string, error) {
+	var r []struct {
+		ID string `json:"id"`
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.base+"/users/count", nil)
-	if err != nil {
-		return 0, err
+	if err := d.call(ctx, http.MethodGet, "/users?exact=true&briefRepresentation=true&email="+url.QueryEscape(email), nil, &r); err != nil {
+		return "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+tok)
-	resp, err := d.hc.Do(req)
-	if err != nil {
-		return 0, err
+	if len(r) != 1 {
+		return "", ErrNoUser
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("directory: HTTP %d", resp.StatusCode)
-	}
-	var n int
-	return n, json.NewDecoder(io.LimitReader(resp.Body, 64)).Decode(&n)
+	return r[0].ID, nil
 }
 
-// Lookup reads path in a record: a dot path ("user_metadata.department"), or
-// a SCIM extension attribute by its schema URN
-// ("urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:department").
+func (d *keycloakDir) Update(ctx context.Context, id string, set map[string][]string) error {
+	var r map[string]any // the whole representation goes back: Keycloak drops what's left out
+	if err := d.call(ctx, http.MethodGet, "/users/"+url.PathEscape(id), nil, &r); err != nil {
+		return err
+	}
+	if err := keycloakApply(r, set); err != nil {
+		return err
+	}
+	return d.call(ctx, http.MethodPut, "/users/"+url.PathEscape(id), r, nil)
+}
+
+func keycloakApply(r map[string]any, set map[string][]string) error {
+	attrs, _ := r["attributes"].(map[string]any)
+	if attrs == nil {
+		attrs = map[string]any{}
+	}
+	for p, v := range set {
+		switch p {
+		case "username":
+			return errors.New("keycloak: username is never written")
+		case "email", "firstName", "lastName":
+			r[p] = v[0]
+			if p == "email" {
+				r["emailVerified"] = true // the primary verified it
+			}
+		default:
+			l := make([]any, len(v))
+			for i, s := range v {
+				l[i] = s
+			}
+			attrs[p] = l
+		}
+	}
+	r["attributes"] = attrs
+	return nil
+}
+
+func (d *keycloakDir) Create(ctx context.Context, email string, set map[string][]string) (string, error) {
+	r := map[string]any{"username": email, "email": email, "emailVerified": true, "enabled": true}
+	if err := keycloakApply(r, set); err != nil {
+		return "", err
+	}
+	if err := d.call(ctx, http.MethodPost, "/users", r, nil); err != nil {
+		return "", err
+	}
+	return d.Find(ctx, email)
+}
+
+// Enroll: the realm emails the user a link to set their password (valid a
+// week). Needs the realm's SMTP settings.
+func (d *keycloakDir) Enroll(ctx context.Context, id string) error {
+	return d.call(ctx, http.MethodPut, "/users/"+url.PathEscape(id)+"/execute-actions-email?lifespan=604800", []string{"UPDATE_PASSWORD"}, nil)
+}
+
+func (d *keycloakDir) Check(ctx context.Context) (int, error) {
+	var n int
+	return n, d.call(ctx, http.MethodGet, "/users/count", nil, &n)
+}
+
+// Schema: the realm's user profile attributes.
+func (d *keycloakDir) Schema(ctx context.Context) ([]string, error) {
+	var r struct {
+		Attributes []struct {
+			Name string `json:"name"`
+		} `json:"attributes"`
+	}
+	if err := d.call(ctx, http.MethodGet, "/users/profile/metadata", nil, &r); err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, a := range r.Attributes {
+		if a.Name != "username" {
+			out = append(out, a.Name)
+		}
+	}
+	return out, nil
+}
+
+// ---- paths
+
+// Lookup reads path in a record: a dot path ("user_metadata.department"), a
+// SCIM extension attribute by its schema URN
+// ("urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:department"),
+// or a SCIM filtered value ("emails[primary eq true].value").
 func Lookup(r map[string]any, path string) any {
 	if strings.HasPrefix(path, "urn:") {
 		i := strings.LastIndex(path, ":")
@@ -313,14 +497,93 @@ func Lookup(r map[string]any, path string) any {
 		return nil
 	}
 	var cur any = r
-	for _, p := range strings.Split(path, ".") {
+	for _, seg := range strings.Split(path, ".") {
+		name, key, val, filtered := filterOf(seg)
 		m, ok := cur.(map[string]any)
 		if !ok {
 			return nil
 		}
-		cur = m[p]
+		cur = m[name]
+		if filtered {
+			l, _ := cur.([]any)
+			cur = nil
+			for _, x := range l {
+				if e, ok := x.(map[string]any); ok && fmt.Sprint(e[key]) == val {
+					cur = e
+					break
+				}
+			}
+		}
 	}
 	return cur
+}
+
+// filterOf splits `emails[primary eq true]` into emails, primary, true.
+func filterOf(seg string) (name, key, val string, ok bool) {
+	i := strings.Index(seg, "[")
+	if i < 0 || !strings.HasSuffix(seg, "]") {
+		return seg, "", "", false
+	}
+	f := strings.Fields(seg[i+1 : len(seg)-1])
+	if len(f) != 3 || f[1] != "eq" {
+		return seg, "", "", false
+	}
+	return seg[:i], f[0], strings.Trim(f[2], `"`), true
+}
+
+// setPath writes value at path into a JSON object, creating what's missing
+// (a filtered segment becomes a list entry carrying the filter's key).
+func setPath(obj map[string]any, path string, value any) error {
+	if strings.HasPrefix(path, "urn:") {
+		i := strings.LastIndex(path, ":")
+		ext, _ := obj[path[:i]].(map[string]any)
+		if ext == nil {
+			ext = map[string]any{}
+			obj[path[:i]] = ext
+		}
+		return setPath(ext, path[i+1:], value)
+	}
+	segs := strings.Split(path, ".")
+	cur := obj
+	for i, seg := range segs {
+		name, key, val, filtered := filterOf(seg)
+		last := i == len(segs)-1
+		switch {
+		case filtered:
+			l, _ := cur[name].([]any)
+			var entry map[string]any
+			for _, x := range l {
+				if e, ok := x.(map[string]any); ok && fmt.Sprint(e[key]) == val {
+					entry = e
+				}
+			}
+			if entry == nil {
+				entry = map[string]any{key: parseScalar(val)}
+				cur[name] = append(l, entry)
+			}
+			if last {
+				return fmt.Errorf("%s: a filtered path needs a sub-attribute", path)
+			}
+			cur = entry
+		case last:
+			cur[name] = value
+		default:
+			next, _ := cur[name].(map[string]any)
+			if next == nil {
+				next = map[string]any{}
+				cur[name] = next
+			}
+			cur = next
+		}
+	}
+	return nil
+}
+
+func parseScalar(s string) any {
+	if b, err := strconv.ParseBool(s); err == nil {
+		return b
+	}
+	return s
 }
 
 // Values turns a record value into attribute values (nil when absent).
@@ -344,4 +607,13 @@ func Values(v any) []string {
 	default:
 		return []string{fmt.Sprint(x)}
 	}
+}
+
+func sortedKeys(m map[string][]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
 }

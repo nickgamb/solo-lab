@@ -129,10 +129,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	case broker.Kind != tiers.Healthy:
 		kcErr = fmt.Errorf("broker unreachable: %s", broker.Message)
 	default:
-		effective, applied, idps, err := r.reconcileKeycloak(ctx, &ic, kc, creds, byName, active)
+		effective, applied, _, err := r.reconcileKeycloak(ctx, &ic, kc, creds, byName, active)
 		kcErr = err
 		// after the failover path, and never holding it up
-		profileErr = errors.Join(profileErr, r.reconcileProfile(ctx, &ic, kc, idps))
+		profileErr = errors.Join(profileErr, r.reconcileProfile(ctx, &ic, kc))
 		if applied {
 			if effective != active {
 				why = fmt.Sprintf("%s; %q could not be set up in Keycloak", why, active)
@@ -302,13 +302,6 @@ func (r *Reconciler) probeAll(ctx context.Context, ic *v1.IdentityContinuity, cr
 		if t.Type == "oidc" && ic.Status.Broker != nil {
 			st.RedirectURI = ic.Status.Broker.Issuer + "/broker/" + t.Name + "/endpoint"
 		}
-		if t.Type == "oidc" {
-			if d := r.cachedDiscovery(ic, t); d != nil {
-				st.ClaimsSupported = d.ClaimsSupported
-			} else if p != nil {
-				st.ClaimsSupported = p.ClaimsSupported
-			}
-		}
 		switch {
 		case res.Kind == tiers.Healthy && failed:
 			st.Reason, st.Message = tiers.SlowResponse, fmt.Sprintf("%dms is above latencyAboveMs %d", st.LatencyMs, *t.FailoverWhen.LatencyAboveMs)
@@ -440,23 +433,23 @@ func (r *Reconciler) setConditions(ic *v1.IdentityContinuity, st map[string]*v1.
 	}
 }
 
-// setProfileCondition reports the profile, its mappers and the sync's
-// CronJob: separate from Ready, which is about where sign-ins go.
+// setProfileCondition reports the profile, the attribute mappings and the
+// sync's CronJob: separate from Ready, which is about where sign-ins go.
 func (r *Reconciler) setProfileCondition(ic *v1.IdentityContinuity, err error) {
 	c := metav1.Condition{Type: "ProfileApplied", Status: metav1.ConditionTrue, Reason: "Applied", ObservedGeneration: ic.Generation,
-		Message: "the profile, claim mappings and sync schedule are in place"}
+		Message: "the profile, attribute mappings and sync schedule are in place"}
 	switch {
 	case err != nil:
 		c.Status, c.Reason, c.Message = metav1.ConditionFalse, "Failed", err.Error()
-	case ic.Spec.Profile == nil && ic.Spec.Sync == nil && !hasClaims(ic):
-		c.Reason, c.Message = "NotConfigured", "no profile, claim mappings or sync"
+	case ic.Spec.Profile == nil && ic.Spec.Sync == nil && !hasMappings(ic):
+		c.Reason, c.Message = "NotConfigured", "no profile, attribute mappings or sync"
 	}
 	meta.SetStatusCondition(&ic.Status.Conditions, c)
 }
 
-func hasClaims(ic *v1.IdentityContinuity) bool {
+func hasMappings(ic *v1.IdentityContinuity) bool {
 	for _, t := range ic.Spec.Tiers {
-		if len(t.Claims) > 0 {
+		if len(t.Attributes) > 0 {
 			return true
 		}
 	}
