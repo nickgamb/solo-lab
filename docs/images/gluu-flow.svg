@@ -302,5 +302,4 @@
 <path d="M1125.0,1735.0 L1340,1735.0" stroke="#bcdb2c" stroke-width="1.3" stroke-dasharray="5 4" fill="none"/>
 <circle cx="1125.0" cy="1735.0" r="4.5" fill="#bcdb2c"/>
 <circle cx="1340" cy="1735.0" r="3.5" fill="#1e1e1e" stroke="#bcdb2c" stroke-width="1.5"/>
-<text x="40" y="1910" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" fill="#757b83">solo-lab · docs/GLUU.md · example values; issuers per .env</text>
 </svg>

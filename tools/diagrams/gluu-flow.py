@@ -259,8 +259,6 @@ panel("4", PX, 1406, PW, "ledgerline.json", "Ledgerline redeems it, then answers
     "}",
 ], [anchors[7], anchors[9]])
 
-add(f'<text x="40" y="{H - 10}" font-family="{MONO}" font-size="11" fill="{C["dim"]}">solo-lab · docs/GLUU.md · '
-    'example values; issuers per .env</text>')
 add('</svg>')
 open(OUT, "w").write("\n".join(out))
 print(OUT)
