@@ -7,10 +7,12 @@
 #                                 egress's key (idtoken-exchange, xaa-relay)
 #   sv-ras-client.jwks.json       S&V's client at Ledgerline's AS
 #                                 (sterling-vance-kagent)
-#   sv-idp.jwks.json              S&V's Keycloak token-signing keys, issuer
+#   sv-idp.jwks.json              S&V's broker's token-signing keys, issuer
 #                                 https://idp.sterling.lab/realms/sterling-vance,
 #                                 for an AS trusting its ID-JAGs (that issuer is
 #                                 not reachable from the internet)
+#   sv-workforce.jwks.json        S&V's own Keycloak's token-signing keys,
+#                                 issuer https://login.sterling.lab/realms/workforce
 #   ledgerline-sso-client.jwks.json  Ledgerline's SSO client ("ledgerline") at
 #                                 S&V's IdPs
 . "$(dirname "$0")/lib.sh"
@@ -18,12 +20,14 @@
 need_cluster
 out="$LAB_STATE/xaa/keys"; mkdir -p "$out"
 for k in sv-xaa-client sv-egress-client; do realm_signing_key "$k"; done
+sv_upstream_client_jwks >"$out/sv-upstream-client.jwks.json"
 lp=$(free_port); port_forward sv-identity keycloak "$lp" 80
 certs=$(curl -sf "http://127.0.0.1:$lp/realms/sterling-vance/protocol/openid-connect/certs") || die "no JWKS from S&V's Keycloak"
-echo "$certs" | jq --argjson egress "$(jwks_of "$LAB_STATE/keys/sv-egress-client.crt")" \
-  '{keys: ([.keys[] | select(.use == "sig" and .alg == "PS256")] + $egress.keys)}' >"$out/sv-upstream-client.jwks.json"
 xaa_client_jwks >"$out/sv-ras-client.jwks.json"
 echo "$certs" | jq '{keys: [.keys[] | select(.use == "sig" and .alg == "RS256")]}' >"$out/sv-idp.jwks.json"
+curl -sf --cacert "$LAB_CA_DIR/ca.crt" "https://login.$SV_DOMAIN/realms/workforce/protocol/openid-connect/certs" \
+  | jq '{keys: [.keys[] | select(.use == "sig" and .alg == "RS256")]}' >"$out/sv-workforce.jwks.json" \
+  || die "no JWKS from S&V's own Keycloak"
 lp=$(free_port); port_forward ledgerline-identity keycloak "$lp" 80
 curl -sf "http://127.0.0.1:$lp/realms/ledgerline/protocol/openid-connect/certs" \
   | jq '{keys: [.keys[] | select(.use == "sig" and .alg == "PS256")]}' >"$out/ledgerline-sso-client.jwks.json" \
