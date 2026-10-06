@@ -6,6 +6,7 @@ from an ID-JAG (Cross App Access); the ledgerline waypoint has verified its
 signature. Tool listing is a public catalog; every tool call needs the token.
 """
 import contextvars
+import functools
 import json
 import os
 import time
@@ -16,6 +17,10 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 AUDIENCE = os.environ.get("RESEARCH_AUDIENCE", "ledgerline-research")
+# what a token must carry: the scope for these tools, and a client Ledgerline
+# registered (S&V's agent platform)
+SCOPE = os.environ.get("RESEARCH_SCOPE", "research:read")
+CLIENTS = set(os.environ.get("RESEARCH_CLIENTS", "sterling-vance-kagent").split())
 ISSUER = os.environ["RESEARCH_ISSUER"]
 JWKS = jwt.PyJWKClient(os.environ["RESEARCH_JWKS_URL"], cache_keys=True, lifespan=300)
 # asymmetric algorithms only: the key comes from the AS's published JWKS
@@ -48,16 +53,32 @@ def _claims() -> dict:
     except jwt.PyJWTError as e:
         print(json.dumps({"event": "token refused", "error": str(e)}), flush=True)
         raise ToolError(f"refused: {e}")
+    claims = {k: c.get(k) for k in ("iss", "sub", "aud", "azp", "client_id", "scope", "jti", "iat", "exp")}
+    if SCOPE not in str(c.get("scope", "")).split():
+        print(json.dumps({"event": "token refused", "error": f"no scope {SCOPE}", **claims}), flush=True)
+        raise ToolError(f"refused: the token lacks scope {SCOPE}")
+    if (c.get("azp") or c.get("client_id")) not in CLIENTS:
+        print(json.dumps({"event": "token refused", "error": "client not registered", **claims}), flush=True)
+        raise ToolError("refused: client not registered with Ledgerline")
     # the access token's claims, never the token: the resource server's trail
-    print(json.dumps({"event": "token accepted", **{k: c.get(k) for k in
-                      ("iss", "sub", "aud", "azp", "client_id", "scope", "jti", "iat", "exp")}}), flush=True)
+    print(json.dumps({"event": "token accepted", **claims}), flush=True)
     return c
 
 
 mcp = MCPServer("ledgerline-research")
 
 
-@mcp.tool()
+def tool(fn):
+    """A tool that runs only for a valid Ledgerline token: checked here, once
+    for every tool, not left to each tool's body."""
+    @functools.wraps(fn)
+    def checked(*args, **kwargs):
+        _claims()
+        return fn(*args, **kwargs)
+    return mcp.tool()(checked)
+
+
+@tool
 def account_info() -> dict:
     """Show which Ledgerline account and client this call arrives as."""
     c = _claims()
@@ -68,20 +89,18 @@ def account_info() -> dict:
             "expires_in_s": c.get("exp", 0) - int(time.time())}
 
 
-@mcp.tool()
+@tool
 def sector_outlook(sector: str) -> dict:
     """Ledgerline's current view on a sector (technology, energy, financials, healthcare)."""
-    _claims()
     o = OUTLOOK.get(sector.lower())
     if not o:
         raise ToolError(f"no Ledgerline coverage for sector {sector!r}; covered: {sorted(OUTLOOK)}")
     return {"sector": sector.lower(), **o, "source": "Ledgerline Research"}
 
 
-@mcp.tool()
+@tool
 def research_note(symbol: str) -> dict:
     """Ledgerline's latest research note on a ticker (e.g. AAPL, NVDA, MSFT)."""
-    _claims()
     n = NOTES.get(symbol.upper())
     if not n:
         raise ToolError(f"no Ledgerline note for {symbol.upper()}; covered: {sorted(NOTES)}")
@@ -92,6 +111,8 @@ def _with_auth(app):
     async def wrapped(scope, receive, send):
         if scope["type"] == "http":
             h = dict((k.decode().lower(), v.decode()) for k, v in scope.get("headers", []))
+            if "x-id-token" in h:  # an ID token is never Ledgerline's to see
+                print(json.dumps({"event": "unexpected credential header", "header": "x-id-token"}), flush=True)
             t = _auth.set(h.get("authorization", ""))
             try:
                 return await app(scope, receive, send)
