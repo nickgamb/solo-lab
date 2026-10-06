@@ -1,15 +1,18 @@
 # Identity continuity
 
-Sterling & Vance's Keycloak (`https://idp.sterling.lab`, realm `sterling-vance`)
-brokers workforce sign-in to an ordered chain of upstream IdPs
-(`ENTERPRISE_IDP`) and falls back to its own accounts. S&V's own services
-trust only Keycloak. When an upstream goes down, new sign-ins move to the next
-healthy tier and nothing downstream changes: same issuer, same `sub`, same
-groups. An upstream that issues ID-JAGs (Gluu) also vouches for its users to
-other companies (Cross App Access), with the same fallback
+Sterling & Vance's broker (Keycloak at `https://idp.sterling.lab`, realm
+`sterling-vance`) routes workforce sign-in to an ordered chain of the firm's
+IdPs (`ENTERPRISE_IDP`: Okta, Auth0, Gluu, or the Keycloak S&V runs itself)
+and maps each into one profile. The broker is not an IdP for the workforce:
+it holds no employee passwords, only break-glass accounts for platform admins.
+S&V's own services trust only the broker. When an IdP goes down, new sign-ins
+move to the next healthy one and nothing downstream changes: same issuer,
+same `sub`, same groups. An IdP that issues ID-JAGs (Gluu, S&V's Keycloak)
+also vouches for its users to other companies (Cross App Access),
+with the same failover
 ([IDENTITY-FLOWS.md](IDENTITY-FLOWS.md#2-cross-app-access-id-jag-to-a-saas)).
 
-[![Identity continuity at 4x speed: the upstream IdP signing people in, a simulated outage at the firm's egress, failover to S&V's own accounts, and failback](videos/identity-continuity.gif)](videos/identity-continuity.mp4)
+[![Identity continuity at 4x speed: the upstream IdP signing people in, a simulated outage at the firm's egress, failover to the next IdP, and failback](videos/identity-continuity.gif)](videos/identity-continuity.mp4)
 
 - API and controller: `apps/continuity` (`IdentityContinuity`, `continuity.lab.solo.io/v1alpha1`)
 - Install: `platform/47-continuity` (`make layer-47`, after `45-identity`)
@@ -23,16 +26,27 @@ kubectl --context kind-solo-lab get idc -n sv-identity
 ## The resource
 
 The tiers come from `ENTERPRISE_IDP` in `config/lab.env` (default
-`auth0,keycloak`): each upstream in order, then `keycloak`, S&V's own
-accounts, always last. An upstream without `<NAME>_ISSUER` in `.env` is left
-out, so with no Auth0 tenant the lab runs on local accounts only. Failback is
-automatic (`platform/47-continuity/identitycontinuity.yaml`).
+`auth0,keycloak`), in any order, then `break-glass`, the broker's own
+accounts for platform admins. An IdP without `<NAME>_ISSUER` in `.env` is
+left out, so with no Auth0 tenant the lab signs people in through S&V's own
+Keycloak. Failback is automatic
+(`platform/47-continuity/identitycontinuity.yaml`).
+
+| IdP | Where | Vouches for its users (ID-JAG) |
+| --- | --- | --- |
+| `okta` | `OKTA_ISSUER`, `OKTA_CLIENT_ID` | no: the broker vouches for those sign-ins |
+| `auth0` | `AUTH0_ISSUER`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | no: the broker vouches for those sign-ins |
+| `gluu` | `GLUU_ISSUER`, `GLUU_CLIENT_ID` ([GLUU.md](GLUU.md)) | yes |
+| `keycloak` | S&V's own Keycloak: `https://login.sterling.lab`, realm `workforce`, namespace `sv-workforce` (layer 45), or `KEYCLOAK_ISSUER` | yes |
 
 Every IdP in the chain is trusted for S&V's workforce: a user who signs in
-through it is linked to the S&V account with the same verified email. Chain
+through it is linked to the S&V account with the same verified email. The
+broker has an account for each employee, without a password, and never
+creates one at sign-in. Chain
 only IdPs that are authoritative for S&V's users. Accounts with role
 `local-only` (the `platform-admins` group: break-glass and platform admins)
-are never linked to an upstream. Only the active tier's IdP is enabled in
+are never linked to an upstream; with every IdP down they are the only ones
+who can sign in. Only the active tier's IdP is enabled in
 Keycloak; the others keep their users' links but can't sign anyone in, not
 even by `kc_idp_hint`.
 
@@ -55,10 +69,11 @@ or by hand) is kept.
 
 | `ENTERPRISE_IDP` | Sign-in |
 | --- | --- |
-| `keycloak` | S&V's own accounts |
-| `auth0,keycloak` (default) | Auth0, else S&V's own accounts |
-| `gluu,keycloak` | Gluu, else S&V's own accounts; Gluu also vouches for Bob in Cross App Access ([GLUU.md](GLUU.md)) |
-| `gluu,auth0,keycloak` | any order; `keycloak` last |
+| `keycloak` | S&V's own Keycloak |
+| `auth0,keycloak` (default) | Auth0, else S&V's own Keycloak |
+| `okta,auth0,keycloak` | Okta, else Auth0, else S&V's own Keycloak |
+| `keycloak,auth0` | S&V's own Keycloak, else Auth0 |
+| `gluu,keycloak` | Gluu, else S&V's own Keycloak ([GLUU.md](GLUU.md)) |
 
 ### What the broker realm must already have
 
@@ -94,7 +109,7 @@ doesn't create flows or roles, so the realm needs them first
 | `tiers[]` | ordered; the first eligible, healthy tier is active |
 | `tiers[].name` | also the Keycloak IdP alias |
 | `tiers[].displayName` | shown on the login page and in the Observatory |
-| `tiers[].type` | `oidc` (an upstream) or `local` (the broker's own accounts) |
+| `tiers[].type` | `oidc` (an IdP) or `local` (the broker's own accounts: break-glass) |
 | `tiers[].enabled` | `false`: never active, Keycloak IdP disabled |
 | `tiers[].drain` | out of rotation; sessions in flight keep working |
 | `tiers[].oidc.issuer` | exactly as the upstream publishes it (Auth0's ends in `/`) |
@@ -147,7 +162,8 @@ Every `health.intervalSeconds`, two replicas, one leader (Lease
      missing its IdP stays (hidden), so users' links to it survive; only
      removing the tier from the spec deletes it;
    - the `continuity-browser` flow's IdP redirector set to the active tier,
-     or cleared when the active tier is `local`, so S&V's own form shows.
+     or cleared when the active tier is `local`, so the broker's own form
+     shows (platform admins only).
 4. **Keep the egress path:** a ServiceEntry `sv-egress/continuity-<tier>` for
    each external upstream, bound to `sv-egress/egress-waypoint`, so the
    back-channel (probes, token, JWKS, userinfo) leaves the lab under S&V
@@ -272,7 +288,7 @@ failover takes about 10 s after the cut and failback about 15 s after the heal.
 
 ![Connected: Auth0 signing people in, through the S&V egress](images/observatory-continuity-connected.jpg)
 
-![Failover: the network to Auth0 cut at the egress, sign-in on S&V's own accounts](images/observatory-continuity-failover.jpg)
+![Failover: the network to Auth0 cut at the egress, sign-in through the next IdP](images/observatory-continuity-failover.jpg)
 
 - **Map:** every app that signs people in through the broker (found from the
   edge's SSO configuration), the broker, the egress gateway, and the tiers in
@@ -298,7 +314,7 @@ failover takes about 10 s after the cut and failback about 15 s after the heal.
 - **Claims mapping** (from the rule builder): a canvas with a node per
   tier in chain order on the left and the S&V profile on the right. Each upstream
   lists its claims (from discovery, protocol claims left out, or added with
-  **+**); drag a claim onto a profile attribute to map it. The local tier
+  **+**); drag a claim onto a profile attribute to map it. The break-glass tier
   shows in its place in the chain with nothing to map. The profile node
   sets which clients' tokens carry it. Each upstream's directory has
   **Test connection** (the saved settings, run as the sync). **Code** edits
@@ -360,9 +376,33 @@ Bob's groups come from his S&V account, not from Auth0.
 
 Gluu as S&V's enterprise IdP: [GLUU.md](GLUU.md#sv-enterprise-idp-gluu).
 
+## S&V's own Keycloak
+
+`keycloak` in `ENTERPRISE_IDP` is a Keycloak S&V runs itself, apart from the
+broker: layer 45 installs one in `sv-workforce` at
+`https://login.sterling.lab`, realm `workforce`, with the employees
+(`bob` / `bob-demo`, `carol` / `carol-demo`). It is an upstream like the
+others: S&V's client there (`sterling-vance-broker`) authenticates with the
+broker's key and the egress's key (`private_key_jwt`), it issues ID-JAGs for
+the broker's sign-ins, and the profile sync reads its users with
+`continuity-directory` (`view-users`) over its admin API, which only the
+sync reaches. To use another Keycloak, set `KEYCLOAK_ISSUER` and
+`KEYCLOAK_CLIENT_ID` in `.env` and register the callback and keys as for any
+upstream.
+
+## Okta setup
+
+`OKTA_ISSUER` (your org's authorization server, e.g.
+`https://<org>.okta.com`) and `OKTA_CLIENT_ID` in `.env`, `okta` in
+`ENTERPRISE_IDP`. An OIDC web app integration: sign-in redirect URI
+`https://idp.sterling.lab/realms/sterling-vance/broker/okta/endpoint`,
+client authentication with a public key (the JWKS from `make xaa-keys`,
+`sv-upstream-client.jwks.json`), grant type Authorization Code, PKCE
+required. In Cross App Access the broker vouches for Okta sign-ins.
+
 ## Another upstream IdP
 
-Any OIDC provider works (Okta, Entra ID, Ping, a second Keycloak). In the
+Any OIDC provider works (Entra ID, Ping, another Keycloak). In the
 rule builder, **Add OIDC tier**: name, display name, issuer, client ID and
 secret. Register `<broker issuer>/broker/<name>/endpoint` as the app's
 callback (shown in the form and in `status.tiers[].redirectURI`), allow

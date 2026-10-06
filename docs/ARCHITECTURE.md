@@ -116,9 +116,11 @@ Delegation at the MCP waypoint (RFC 8693), Cross App Access to Ledgerline
 ## Identity continuity
 
 `IdentityContinuity` (`kubectl get idc -n sv-identity`) is an ordered chain
-of upstream IdPs for S&V's Keycloak, ending in its own accounts. The
-continuity controller probes every tier and points Keycloak's login at the
-first healthy one; Keycloak stays the issuer everything trusts, and brokered
+of S&V's IdPs (Okta, Auth0, Gluu, or the Keycloak S&V runs itself in
+`sv-workforce`) for S&V's broker, ending in the broker's break-glass
+accounts for platform admins. The continuity controller probes every tier
+and points the broker's login at the first healthy one; the broker stays the
+issuer everything trusts and maps every IdP into one profile, and brokered
 users are linked to their S&V user by verified email, so `sub` never changes.
 External upstreams are reached through `sv-egress/egress-waypoint` (one
 ServiceEntry per tier, exported to every S&V namespace that calls them),

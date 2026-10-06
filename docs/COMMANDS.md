@@ -82,15 +82,15 @@ with `--token <jwt>` and `--header name=value`.
 | --- | --- |
 | `curl -s https://idp.sterling.lab/realms/sterling-vance/.well-known/openid-configuration \| jq` | S&V's issuer and endpoints (same for `idp.alice.lab/realms/alice`, `idp.ledgerline.lab/realms/ledgerline`, `idp.ops.lab/realms/ops`) |
 | `grep -E 'KC_ADMIN_PASSWORD' .lab/secrets.env` | each Keycloak's admin password (user `admin`) |
-| `kubectl --context kind-solo-lab -n sv-identity port-forward svc/keycloak 18080:80` | S&V Keycloak's admin console at http://127.0.0.1:18080/admin (the edge publishes only the realm; same for `ops-identity`, `alice-identity`, `ledgerline-identity`) |
+| `kubectl --context kind-solo-lab -n sv-identity port-forward svc/keycloak 18080:80` | S&V broker's admin console at http://127.0.0.1:18080/admin (the edge publishes only the realm; same for `sv-workforce`, `ops-identity`, `alice-identity`, `ledgerline-identity`) |
 | `kubectl --context kind-solo-lab -n sv-identity logs deploy/keycloak --since=10m \| grep -i -E "claim\|IDENTITY_PROVIDER\|error"` | sign-in and broker errors (it names the claim or step that failed) |
 
-**Get Bob's tokens** (the password grant the checks use, over a port-forward,
-with the client secret and password on stdin rather than a command line; lab
-test accounts only):
+**Get Bob's tokens** (the scripted browser sign-in the checks use: kagent's
+SSO through the broker to S&V's workforce IdP, which must be the active IdP;
+lab test accounts only):
 
 ```bash
-bash -c '. scripts/lib.sh; kc_token sv-identity sterling-vance kagent "$(lab_secret SV_KAGENT_CLIENT_SECRET)" bob bob-demo' > /tmp/bob.json
+bash -c '. scripts/lib.sh; sso_token bob bob-demo' > /tmp/bob.json
 ```
 
 **Decode a token's claims** (no verification; to see what it carries):

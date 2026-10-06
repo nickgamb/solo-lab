@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2090 1920" width="2090" height="1920" role="img" aria-labelledby="t d">
 <title id="t">Gluu: Cross App Access, end to end</title>
-<desc id="d">Bob signs in with a passkey at S&amp;V's Gluu; S&amp;V's Keycloak keeps his Gluu tokens. His agent calls Ledgerline through S&amp;V's egress gateway with only his S&amp;V access token. The egress gets his Gluu ID token, S&amp;V's Gluu issues an ID-JAG, the egress checks it, Ledgerline's Gluu redeems it for a Ledgerline token, and Ledgerline answers as its own account for Bob.</desc>
+<desc id="d">Bob signs in with a passkey at S&amp;V's Gluu; S&amp;V's broker keeps his Gluu tokens. His agent calls Ledgerline through S&amp;V's egress gateway with only his S&amp;V access token. The egress gets his Gluu ID token, S&amp;V's Gluu issues an ID-JAG, the egress checks it, Ledgerline's Gluu redeems it for a Ledgerline token, and Ledgerline answers as its own account for Bob.</desc>
 <defs><style>@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap");</style>
 <marker id="arr-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4a4e57"/></marker>
 <marker id="arr-k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#bcdb2c"/></marker>
@@ -8,7 +8,7 @@
 <rect width="2090" height="1920" fill="#0a0b0d"/>
 <text x="40" y="62" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="32" font-weight="700" fill="#ffffff" letter-spacing="-0.4">Gluu · Cross App Access, end to end</text>
 <text x="40" y="96" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="15.5" fill="#a9aeb6">Bob signs in with a passkey at S&amp;V's Gluu. His agent reaches Ledgerline as him: S&amp;V's Gluu vouches (ID-JAG), Ledgerline's Gluu redeems it.</text>
-<text x="40" y="118" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="15.5" fill="#a9aeb6">The agent only ever holds Bob's S&amp;V access token. Gluu unreachable: S&amp;V's Keycloak vouches instead. Gluu refuses: the call is refused.</text>
+<text x="40" y="118" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="15.5" fill="#a9aeb6">The agent only ever holds Bob's S&amp;V access token. Gluu unreachable: Bob signs in through the next IdP, which vouches. Gluu refuses: the call is refused.</text>
 <rect x="40" y="140" width="12" height="12" rx="2" fill="#8cc2d4"/>
 <text x="60" y="151" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="600" fill="#a9aeb6" letter-spacing="1.2">BOB</text>
 <rect x="121.6" y="140" width="12" height="12" rx="2" fill="#bcdb2c"/>
@@ -84,7 +84,7 @@
 <text x="308.0" y="566.5" text-anchor="middle" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="600" fill="#b7bcc5">3</text>
 <text x="328.0" y="586" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10.5" font-weight="600" fill="#b7bcc5" letter-spacing="1.3">KEYCLOAK · S&amp;V'S BROKER</text>
 <text x="328.0" y="609" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="16" font-weight="600" fill="#ffffff">Links Bob, keeps his Gluu tokens</text>
-<text x="328.0" y="630" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13.5" fill="#a9aeb6">ID + refresh token (storeTokens);</text>
+<text x="328.0" y="630" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13.5" fill="#a9aeb6">Gluu tokens (storeTokens), renewed here;</text>
 <text x="328.0" y="648" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13.5" fill="#a9aeb6">S&amp;V session for kagent at the edge</text>
 </g>
 <g><rect x="58.0" y="712" width="214" height="96" rx="8" fill="#14161b" stroke="#2a2d34"/>
@@ -168,7 +168,7 @@
 <text x="2038" y="458.5" text-anchor="middle" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="700" fill="#0a0b0d">1</text>
 <text x="2016" y="459" text-anchor="end" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13" font-weight="500" fill="#a9aeb6">Bob's Gluu ID token, kept by S&amp;V's broker</text>
 <text x="1376" y="500.625" text-anchor="end" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#858585">1</text>
-<text x="1390" y="500.625" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13" xml:space="preserve"><tspan fill="#6a9955">// Gluu → S&amp;V's Keycloak: OIDC code flow, PKCE S256, offline_access</tspan></text>
+<text x="1390" y="500.625" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13" xml:space="preserve"><tspan fill="#6a9955">// Gluu → S&amp;V's broker: OIDC code flow, PKCE S256</tspan></text>
 <text x="1376" y="520.125" text-anchor="end" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#858585">2</text>
 <text x="1390" y="520.125" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13" xml:space="preserve"><tspan fill="#d4d4d4">{</tspan></text>
 <text x="1376" y="539.625" text-anchor="end" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#858585">3</text>
@@ -184,7 +184,7 @@
 <text x="1376" y="637.125" text-anchor="end" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#858585">8</text>
 <text x="1390" y="637.125" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13" xml:space="preserve"><tspan fill="#d4d4d4">}</tspan></text>
 <text x="1376" y="656.625" text-anchor="end" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#858585">9</text>
-<text x="1390" y="656.625" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13" xml:space="preserve"><tspan fill="#6a9955">// + refresh_token: read later by the egress only (kagent, API v2)</tspan></text>
+<text x="1390" y="656.625" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13" xml:space="preserve"><tspan fill="#6a9955">// refresh token stays in the broker; the egress gets the access token (API v2)</tspan></text>
 </g>
 <path d="M825.0,535.0 L1340,535.0" stroke="#bcdb2c" stroke-width="1.3" stroke-dasharray="5 4" fill="none"/>
 <circle cx="825.0" cy="535.0" r="4.5" fill="#bcdb2c"/>
