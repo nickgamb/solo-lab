@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -56,7 +57,8 @@ func keycloakOK(t *testing.T, calls *int32) *httptest.Server {
 
 func newExchanger(keycloakURL string, upstreams ...op) *exchanger {
 	return &exchanger{keycloak: op{Name: "keycloak", TokenURL: keycloakURL, ClientID: "kagent", secret: "s3cret"},
-		upstreams: upstreams, hc: http.DefaultClient, now: time.Now, cache: map[[32]byte]cached{}, refresh: map[string]string{}}
+		upstreams: upstreams, hc: http.DefaultClient, now: time.Now, cache: map[[32]byte]cached{}, refresh: map[string]string{},
+		active: "keycloak"}
 }
 
 func check(x *exchanger, subject string) *httptest.ResponseRecorder {
@@ -184,6 +186,7 @@ func gluu(t *testing.T, calls *int32, status int, rotate string, seen *[]string)
 func withUpstream(keycloakURL, brokerURL, gluuURL string) *exchanger {
 	x := newExchanger(keycloakURL, op{Name: "gluu", TokenURL: gluuURL, ClientID: "sv-at-gluu", secret: "g-secret"})
 	x.brokerURL = brokerURL
+	x.active = "gluu"
 	return x
 }
 
@@ -210,16 +213,88 @@ func TestNoAccountAtTheUpstreamFallsToKeycloak(t *testing.T) {
 	}
 }
 
-func TestUnavailableUpstreamFallsToKeycloak(t *testing.T) {
+func TestActiveUpstreamUnavailableFailsUntilFailover(t *testing.T) {
+	// the controller decides failover; until it does, the call fails
 	var kc, b, g int32
 	x := withUpstream(keycloakOK(t, &kc).URL, broker(t, &b, 200, stored).URL, gluu(t, &g, 503, "", nil).URL)
-	if w := check(x, jwtWithExp(time.Now().Add(5*time.Minute))); w.Code != 200 || w.Header().Get("x-id-token") != keycloakIDToken {
-		t.Fatalf("503 upstream: got %d, want Keycloak's ID token", w.Code)
+	at := jwtWithExp(time.Now().Add(5 * time.Minute))
+	if w := check(x, at); w.Code != 503 || kc != 0 {
+		t.Fatalf("503 upstream: got %d, keycloak calls %d; want 503 and no fallback", w.Code, kc)
 	}
-	x = withUpstream(keycloakOK(t, &kc).URL, broker(t, &b, 200, stored).URL, "http://127.0.0.1:1")
-	if w := check(x, jwtWithExp(time.Now().Add(5*time.Minute))); w.Code != 200 || w.Header().Get("x-id-token") != keycloakIDToken {
-		t.Fatalf("unreachable upstream: got %d, want Keycloak's ID token", w.Code)
+	x.setActive("keycloak")
+	b, g = 0, 0
+	if w := check(x, at); w.Code != 200 || w.Header().Get("x-id-token") != keycloakIDToken || b != 0 || g != 0 {
+		t.Fatalf("after failover: %d, broker %d, gluu %d; want Keycloak's ID token and Gluu untouched", w.Code, b, g)
 	}
+}
+
+func TestInactiveUpstreamIsNeverCalled(t *testing.T) {
+	var kc, b, g int32
+	x := withUpstream(keycloakOK(t, &kc).URL, broker(t, &b, 200, stored).URL, gluu(t, &g, 200, "", nil).URL)
+	x.setActive("auth0") // an upstream that doesn't issue ID-JAGs: S&V's Keycloak vouches
+	if w := check(x, jwtWithExp(time.Now().Add(5*time.Minute))); w.Code != 200 || w.Header().Get("x-id-token") != keycloakIDToken || b+g != 0 {
+		t.Fatalf("got %d, broker %d, gluu %d; want Keycloak's ID token only", w.Code, b, g)
+	}
+}
+
+func TestFailoverDropsCachedUpstreamTokens(t *testing.T) {
+	var kc, b, g int32
+	x := withUpstream(keycloakOK(t, &kc).URL, broker(t, &b, 200, stored).URL, gluu(t, &g, 200, "", nil).URL)
+	at := jwtWithExp(time.Now().Add(5 * time.Minute))
+	if w := check(x, at); payload(w.Header().Get("x-id-token")).Iss != gluuIss {
+		t.Fatal("want Gluu's ID token while gluu is active")
+	}
+	x.setActive("keycloak")
+	if w := check(x, at); w.Header().Get("x-id-token") != keycloakIDToken {
+		t.Fatalf("after failover got iss %q, want Keycloak's (cache dropped)", payload(w.Header().Get("x-id-token")).Iss)
+	}
+}
+
+func TestUnknownActiveTierFailsClosed(t *testing.T) {
+	var kc int32
+	x := newExchanger(keycloakOK(t, &kc).URL)
+	x.active = ""
+	if w := check(x, jwtWithExp(time.Now().Add(time.Minute))); w.Code != 503 || kc != 0 {
+		t.Fatalf("got %d, keycloak calls %d; want 503", w.Code, kc)
+	}
+}
+
+func TestWatchActiveReadsTheControllersDecision(t *testing.T) {
+	var active atomic.Value
+	active.Store("gluu")
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/apis/continuity.lab.solo.io/v1alpha1/namespaces/sv-identity/identitycontinuities/sterling-vance" ||
+			r.Header.Get("Authorization") != "Bearer sa-token" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		fmt.Fprintf(w, `{"status":{"active":%q}}`, active.Load())
+	}))
+	defer api.Close()
+	tok := t.TempDir() + "/token"
+	if err := writeFile(tok, "sa-token\n"); err != nil {
+		t.Fatal(err)
+	}
+	x := newExchanger("http://unused")
+	x.active = ""
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go x.watchActive(ctx, api.Client(), api.URL, tok, "sv-identity/sterling-vance", 10*time.Millisecond)
+	waitFor := func(want string) {
+		for i := 0; i < 200; i++ {
+			x.mu.Lock()
+			got := x.active
+			x.mu.Unlock()
+			if got == want {
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		t.Fatalf("active never became %q", want)
+	}
+	waitFor("gluu")
+	active.Store("keycloak")
+	waitFor("keycloak")
 }
 
 func TestUpstreamRefusalIsFinal(t *testing.T) {

@@ -10,8 +10,12 @@
 // while RFC 8693 (2.2.1) has an IdP return N_A for a token that isn't an
 // access token, as Keycloak does for an ID token.
 //
-// Which IdP (OPS, scripts/idp.sh xaa_env): the upstream OpenID Providers that
-// issue ID-JAGs, in S&V's failover order, then S&V's Keycloak.
+// Which IdP: the one S&V's identity continuity has active (CONTINUITY, the
+// IdentityContinuity's status.active), when it is an upstream that issues
+// ID-JAGs (OPS, scripts/idp.sh xaa_env); otherwise S&V's Keycloak. The
+// controller alone decides failover: an upstream that isn't active is never
+// called, and an active one that fails fails the call until the controller
+// moves on.
 //
 //	upstream  S&V's Keycloak brokers the user's sign-in there and keeps their
 //	          upstream tokens. They are read through Keycloak's Identity
@@ -19,9 +23,8 @@
 //	          that upstream only) with the user's own access token, and the
 //	          ID token is renewed at the upstream with the refresh token, so
 //	          the upstream decides on every renewal. A user with no account
-//	          there skips it; an upstream that is unreachable is skipped for
-//	          the next; an upstream that refuses (revoked, disabled) refuses
-//	          the call.
+//	          there gets S&V's Keycloak; an upstream that refuses (revoked,
+//	          disabled) refuses the call.
 //	keycloak  RFC 8693 at S&V's Keycloak, as the requesting app:
 //	            subject_token=<access token>  subject_token_type=...:access_token
 //	            requested_token_type=...:id_token  scope=openid
@@ -32,6 +35,8 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -79,8 +84,9 @@ type exchanger struct {
 	hc        *http.Client
 	now       func() time.Time
 
-	mu    sync.Mutex
-	cache map[[32]byte]cached
+	mu     sync.Mutex
+	active string // the active tier; "" until known
+	cache  map[[32]byte]cached
 	// the newest refresh token per upstream user, for upstreams that rotate
 	// them (the broker keeps only the one from sign-in)
 	refresh map[string]string
@@ -99,12 +105,32 @@ var (
 	errNotLinked = errors.New("no account at the upstream")
 	// errUnavailable: the upstream didn't answer, or answered 5xx.
 	errUnavailable = errors.New("upstream unavailable")
+	// errNoActive: the active tier isn't known yet.
+	errNoActive = errors.New("active tier unknown")
 )
+
+// setActive records the active tier; a change drops every cached ID token,
+// so nothing from the previous IdP is handed out after failover.
+func (x *exchanger) setActive(tier string) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	if tier == x.active {
+		return
+	}
+	slog.Info("active tier", "from", x.active, "to", tier)
+	x.active = tier
+	x.cache = map[[32]byte]cached{}
+}
 
 func (x *exchanger) idToken(ctx context.Context, accessToken string) (id, source string, err error) {
 	key := sha256.Sum256([]byte(accessToken))
 	now := x.now()
 	x.mu.Lock()
+	active := x.active
+	if active == "" {
+		x.mu.Unlock()
+		return "", "", errNoActive
+	}
 	if c, ok := x.cache[key]; ok && now.Before(c.exp) {
 		x.mu.Unlock()
 		return c.idToken, payload(c.idToken).Iss, nil
@@ -118,19 +144,17 @@ func (x *exchanger) idToken(ctx context.Context, accessToken string) (id, source
 
 	source, ttl := x.keycloak.Name, time.Duration(0)
 	for _, u := range x.upstreams {
+		if u.Name != active {
+			continue
+		}
 		id, err = x.fromUpstream(ctx, accessToken, u)
 		switch {
 		case err == nil:
 			source, ttl = u.Name, upstreamTTL
-		case errors.Is(err, errNotLinked):
-			continue
-		case errors.Is(err, errUnavailable):
-			slog.Warn("upstream unavailable, next in the chain", "upstream", u.Name, "err", err)
-			continue
+		case errors.Is(err, errNotLinked): // no account there: S&V's Keycloak
 		default:
 			return "", u.Name, err
 		}
-		break
 	}
 	if id == "" {
 		if id, err = x.exchange(ctx, accessToken); err != nil {
@@ -145,7 +169,9 @@ func (x *exchanger) idToken(ctx context.Context, accessToken string) (id, source
 	}
 	if exp.After(now) {
 		x.mu.Lock()
-		x.cache[key] = cached{idToken: id, exp: exp}
+		if x.active == active { // not if failover happened meanwhile
+			x.cache[key] = cached{idToken: id, exp: exp}
+		}
 		x.mu.Unlock()
 	}
 	return id, source, nil
@@ -329,6 +355,10 @@ func (x *exchanger) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	id, source, err := x.idToken(r.Context(), tok)
 	switch {
+	case errors.Is(err, errNoActive):
+		slog.Warn("failed", "err", err)
+		http.Error(w, "exchange failed", http.StatusServiceUnavailable)
+		return
 	case errors.Is(err, errRefused):
 		slog.Info("refused", "idp", source, "err", err)
 		http.Error(w, "refused", http.StatusForbidden)
@@ -344,6 +374,68 @@ func (x *exchanger) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"exp", time.Unix(c.Exp, 0).UTC().Format(time.RFC3339), "request_id", r.Header.Get("x-request-id"))
 	w.Header().Set("x-id-token", id)
 	w.WriteHeader(http.StatusOK)
+}
+
+// watchActive polls the IdentityContinuity (CONTINUITY, "<namespace>/<name>")
+// through the Kubernetes API with the pod's service account, and records
+// status.active. Polling keeps it to one read-only GET.
+func (x *exchanger) watchActive(ctx context.Context, api *http.Client, base, token, ic string, every time.Duration) {
+	ns, name, _ := strings.Cut(ic, "/")
+	u := base + "/apis/continuity.lab.solo.io/v1alpha1/namespaces/" + url.PathEscape(ns) + "/identitycontinuities/" + url.PathEscape(name)
+	for {
+		if tier, err := readActive(ctx, api, u, token); err != nil {
+			slog.Warn("identity continuity", "err", err)
+		} else if tier != "" {
+			x.setActive(tier)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(every):
+		}
+	}
+}
+
+func readActive(ctx context.Context, api *http.Client, u, tokenFile string) (string, error) {
+	tok, err := os.ReadFile(tokenFile) // re-read: projected tokens rotate
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(tok)))
+	resp, err := api.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GET identitycontinuity: HTTP %d", resp.StatusCode)
+	}
+	var ic struct {
+		Status struct {
+			Active string `json:"active"`
+		} `json:"status"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&ic); err != nil {
+		return "", err
+	}
+	return ic.Status.Active, nil
+}
+
+// kubeClient trusts the cluster CA from the pod's service account.
+func kubeClient(caFile string) (*http.Client, error) {
+	pem, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("no certificates in %s", caFile)
+	}
+	return &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}}, nil
 }
 
 // loadOPs reads OPS (JSON, the last entry S&V's Keycloak) and each client
@@ -387,8 +479,25 @@ func main() {
 	for _, u := range upstreams {
 		names = append(names, u.Name)
 	}
+	sa := env("SA_DIR", "/var/run/secrets/kubernetes.io/serviceaccount")
+	api, err := kubeClient(sa + "/ca.crt")
+	if err != nil {
+		slog.Error("kubernetes client", "err", err)
+		os.Exit(1)
+	}
+	base := "https://" + os.Getenv("KUBERNETES_SERVICE_HOST") + ":" + env("KUBERNETES_SERVICE_PORT", "443")
+	go x.watchActive(ctx, api, base, sa+"/token", env("CONTINUITY", "sv-identity/sterling-vance"), 2*time.Second)
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		x.mu.Lock()
+		known := x.active != ""
+		x.mu.Unlock()
+		if !known { // not ready until it knows which IdP vouches
+			http.Error(w, "active tier unknown", http.StatusServiceUnavailable)
+			return
+		}
+		w.Write([]byte("ok"))
+	})
 	mux.Handle("/", x)
 	srv := &http.Server{Addr: env("LISTEN", ":8080"), Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() {

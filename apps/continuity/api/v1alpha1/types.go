@@ -74,6 +74,11 @@ type Egress struct {
 	// Hosts under these domains are in-cluster names and need no ServiceEntry.
 	// +kubebuilder:default={lab,svc,cluster.local}
 	InternalDomains []string `json:"internalDomains,omitempty"`
+	// Other namespaces whose workloads call the upstreams on the broker's
+	// behalf (e.g. the gateway that has an upstream vouch for its users):
+	// the ServiceEntries are exported to them too, so their calls leave
+	// through the same waypoint and a partition cuts them as well.
+	ExportTo []string `json:"exportTo,omitempty"`
 }
 
 // +kubebuilder:validation:XValidation:rule="self.type != 'oidc' || has(self.oidc)",message="oidc tiers need spec.oidc"

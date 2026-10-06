@@ -45,9 +45,11 @@ if [ "$RESOURCE_AS" = gluu ]; then
   ACCOUNT="issuer[\\\"]*: [\\\"]*$ISS.*ledgerline_account[\\\"]*: [\\\"]*bob|ledgerline_account[\\\"]*: [\\\"]*bob.*issuer[\\\"]*: [\\\"]*$ISS"
   CHAT='bob'
 fi
-# the enterprise IdP that should vouch for Bob: the first upstream that issues
-# ID-JAGs (ENTERPRISE_IDP), else S&V's Keycloak
-VOUCHER=$(idp_xaa_upstreams | awk '{print $1}'); VOUCHER=${VOUCHER:-keycloak}
+# the enterprise IdP that should vouch for Bob: S&V's active tier when it
+# issues ID-JAGs (gluu), else S&V's Keycloak
+ACTIVE=$(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}' 2>/dev/null)
+VOUCHER=keycloak
+case " $(idp_xaa_upstreams) " in *" $ACTIVE "*) VOUCHER=$ACTIVE ;; esac
 step "Cross App Access: Bob's agent -> Ledgerline Research (ID-JAG)"
 check "$ACCOUNT"                                "account_info: Ledgerline's own account for Bob"  $AGENT $XAA call account_info '{}' --token "$BOB"
 # xaa-relay's record of the last ID-JAG it accepted (the gateway caches

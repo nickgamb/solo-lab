@@ -679,7 +679,7 @@ func serviceEntry(e *v1.Egress, callerNS, instance, tier string, hosts []string)
 	se := &unstructured.Unstructured{Object: map[string]any{
 		"spec": map[string]any{
 			"hosts":      toAny(hosts),
-			"exportTo":   []any{".", callerNS},
+			"exportTo":   toAny(append([]string{".", callerNS}, e.ExportTo...)),
 			"location":   "MESH_EXTERNAL",
 			"resolution": "DNS",
 			"ports":      []any{map[string]any{"number": int64(443), "name": "tls", "protocol": "TLS"}},

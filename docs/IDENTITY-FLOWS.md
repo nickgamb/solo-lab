@@ -129,11 +129,15 @@ Two settings in `config/lab.env` (`scripts/idp.sh`):
 | `ENTERPRISE_IDP` | `auth0,keycloak` (default), `gluu,keycloak`, ...; `keycloak` last | who signs Bob in, in failover order ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md)), and who vouches for him |
 | `RESOURCE_AS` | `keycloak` (default), `gluu` with `RESOURCE_AS_ISSUER` | Ledgerline's authorization server |
 
-Who vouches: the first upstream in `ENTERPRISE_IDP` that issues ID-JAGs
-(Gluu) and where Bob has an account, while it answers. Otherwise S&V's
-Keycloak, for whoever signed in (Auth0 doesn't issue ID-JAGs). An upstream
-that refuses (revoked, disabled) refuses the call; there is no fallback past
-a refusal.
+Who vouches: S&V's active sign-in tier (the IdentityContinuity's
+`status.active`) when it issues ID-JAGs (Gluu) and Bob has an account there.
+Otherwise S&V's Keycloak, for whoever signed in (Auth0 doesn't issue
+ID-JAGs; local accounts are Keycloak's own). Failover is the continuity
+controller's decision alone: an upstream that isn't active is never called,
+cached ID tokens from it are dropped, and every S&V call to an upstream
+(Keycloak, the controller, idtoken-exchange, xaa-relay) leaves through
+`sv-egress`, so cutting an upstream there cuts all of them. An active
+upstream that refuses (revoked, disabled) refuses the call.
 
 ```mermaid
 sequenceDiagram
@@ -181,6 +185,8 @@ by RFC 8693 instead (`subject_token` = the access token,
       Keycloak allows `kagent` for the upstreams in `ENTERPRISE_IDP` that
       vouch, nothing else may read them) and renews the ID token at the
       upstream, at most once a minute per user.
+    - It reads the active tier from IdentityContinuity `sv-identity/sterling-vance`
+      (Role: `get` on that object only) and isn't ready until it knows it.
     - Why ext-auth and not the agent or the gateway's own exchange: kagent
       passes agents the access token, not the ID token, on either edition,
       and agentgateway's `oauthTokenExchange` requires `token_type: Bearer`

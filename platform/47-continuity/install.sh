@@ -78,6 +78,12 @@ else
   merged=$(jq -nc --argjson d "$desired" --argjson c "$cur" '$d | map(. as $t
     | ([$c[] | select(.name == $t.name)][0]) as $old
     | if $old == null then $t else $old * ($t | del(.displayName, .failoverWhen)) end)')
+  # every S&V caller of an upstream goes through the egress waypoint
+  egress=$(render "$D/identitycontinuity.yaml" | yq -o json -I0 '.spec.egress')
+  if [ "$(K get idc sterling-vance -n sv-identity -o json | jq -cS '.spec.egress | del(.internalDomains)')" != "$(echo "$egress" | jq -cS .)" ]; then
+    K patch idc sterling-vance -n sv-identity --type merge -p "{\"spec\":{\"egress\":$egress}}" >/dev/null
+    ok "egress: $(echo "$egress" | jq -c .)"
+  fi
   if [ "$(echo "$cur" | jq -cS .)" != "$(echo "$merged" | jq -cS .)" ]; then
     K patch idc sterling-vance -n sv-identity --type merge -p "{\"spec\":{\"tiers\":$merged}}" >/dev/null
     ok "tiers: $(echo "$cur" | jq -r 'map(.name) | join(" -> ")') => $(echo "$merged" | jq -r 'map(.name) | join(" -> ")')"

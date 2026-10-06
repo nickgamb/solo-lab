@@ -97,6 +97,15 @@ spec:
                   Egress, when set, sends back-channel calls to upstreams outside
                   internalDomains through an egress waypoint (one ServiceEntry per tier).
                 properties:
+                  exportTo:
+                    description: |-
+                      Other namespaces whose workloads call the upstreams on the broker's
+                      behalf (e.g. the gateway that has an upstream vouch for its users):
+                      the ServiceEntries are exported to them too, so their calls leave
+                      through the same waypoint and a partition cuts them as well.
+                    items:
+                      type: string
+                    type: array
                   internalDomains:
                     default:
                     - lab

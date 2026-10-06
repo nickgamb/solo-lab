@@ -104,7 +104,6 @@ Not built. Each item, with what it needs.
 | OAuth MCP flow (401 + `WWW-Authenticate` to OPRM) | MCP server on a public HTTPS host; agentgateway serving Protected Resource Metadata and the challenge for `/mcp` |
 | ID-JAG checks and redacted token-request logs inside agentgateway | crossAppAccess validating `typ`/`iss`/`aud`/signature and logging both legs; then xaa-relay goes |
 | Broker client at Gluu with `private_key_jwt` | IdentityContinuity `oidc.clientAuthMethod` and Keycloak IdP "JWT signed with private key" in the controller |
-| S&V's egress calls to an upstream IdP through `sv-egress` | idtoken-exchange and xaa-relay reaching the upstream by its continuity ServiceEntry (exported to `agentgateway-system`, callers in `egress-callers`), so a partition of that upstream covers Cross App Access too |
 | Shared refresh-token state for idtoken-exchange | a store shared by replicas (or one replica) for upstreams that rotate refresh tokens with reuse detection |
 | Token status list / revocation at the RS | Ledgerline's server checking `status` (Gluu `status_list_endpoint`) per call |
 | AuthZEN policy decision at the egress | ext-auth adapter calling the PDP's `/access/v1/evaluation` (subject Bob, action tool call, resource tool) before the XAA exchange |

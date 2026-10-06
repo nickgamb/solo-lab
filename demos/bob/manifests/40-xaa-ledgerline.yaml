@@ -156,13 +156,30 @@ spec:
         - 'source.identity.namespace == "kagent" && source.identity.serviceAccount == "kagent-controller"'
 ---
 # ---- idtoken-exchange: ai-gateway's ext-auth step (apps/idtoken-exchange) ------
-# The enterprise IdPs that may vouch for Bob, in order, S&V's Keycloak last
-# (OPS, scripts/idp.sh xaa_env), and S&V's client secret at each. It reads
-# Bob's stored upstream tokens from S&V's Keycloak as kagent, which Keycloak
-# allows for those upstreams only (Identity Brokering API v2).
+# The enterprise IdPs that may vouch for Bob (OPS, scripts/idp.sh xaa_env),
+# S&V's client at each, and S&V's identity continuity: only its active tier
+# vouches, S&V's Keycloak when that tier can't. It reads Bob's stored upstream
+# tokens from S&V's Keycloak as kagent, which Keycloak allows for those
+# upstreams only (Identity Brokering API v2).
 apiVersion: v1
 kind: ServiceAccount
 metadata: {name: idtoken-exchange, namespace: agentgateway-system}
+---
+# read the continuity decision, nothing else
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: idtoken-exchange-continuity, namespace: sv-identity}
+rules:
+- apiGroups: [continuity.lab.solo.io]
+  resources: [identitycontinuities]
+  resourceNames: [sterling-vance]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: idtoken-exchange-continuity, namespace: sv-identity}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: idtoken-exchange-continuity}
+subjects: [{kind: ServiceAccount, name: idtoken-exchange, namespace: agentgateway-system}]
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -175,7 +192,7 @@ spec:
       labels: {app: idtoken-exchange}
     spec:
       serviceAccountName: idtoken-exchange
-      automountServiceAccountToken: false
+      automountServiceAccountToken: true     # the continuity read above
       securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
       topologySpreadConstraints:
       - maxSkew: 1
@@ -187,6 +204,7 @@ spec:
         image: ${IDTOKEN_EXCHANGE_IMAGE}
         env:
         - {name: OPS, value: '${XAA_OPS}'}
+        - {name: CONTINUITY, value: sv-identity/sterling-vance}
         ports: [{name: http, containerPort: 8080}]
         readinessProbe: {httpGet: {path: /healthz, port: http}}
         resources:

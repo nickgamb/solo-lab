@@ -28,6 +28,12 @@ accounts, always last. An upstream without `<NAME>_ISSUER` in `.env` is left
 out, so with no Auth0 tenant the lab runs on local accounts only. Failback is
 automatic (`platform/47-continuity/identitycontinuity.yaml`).
 
+Each upstream's ServiceEntry is exported to `sv-identity` and to the
+namespaces in `spec.egress.exportTo` (`agentgateway-system`, where S&V's
+egress has upstreams vouch for users), so every S&V call to an upstream
+leaves through `sv-egress/egress-waypoint`, and a partition there cuts all
+of them. Cross App Access follows `status.active` the same way sign-in does.
+
 Re-running the layer applies `ENTERPRISE_IDP` and `.env` (which tiers, their
 order, issuers, client secrets, token settings). What operators set on a tier
 (display name, enabled, failover rules, through the Observatory rule builder
