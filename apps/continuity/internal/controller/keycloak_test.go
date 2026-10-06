@@ -55,6 +55,24 @@ func TestSameIdP(t *testing.T) {
 	}
 }
 
+func TestStoreTokens(t *testing.T) {
+	ic := &v1.IdentityContinuity{}
+	d := &probe.Discovery{AuthorizationEndpoint: "https://op.example/authorize", TokenEndpoint: "https://op.example/token", JWKSURI: "https://op.example/jwks"}
+	tier := v1.Tier{Name: "gluu", Type: "oidc", OIDC: &v1.OIDCUpstream{Issuer: "https://op.example"}}
+	off := desiredIdP(ic, tier, credential{id: "c", secret: "s"}, d, "o", false, true)
+	if off["storeToken"] != false {
+		t.Fatalf("storeToken = %v, want false by default", off["storeToken"])
+	}
+	tier.OIDC.StoreTokens = true
+	on := desiredIdP(ic, tier, credential{id: "c", secret: "s"}, d, "o", false, true)
+	if on["storeToken"] != true {
+		t.Fatalf("storeToken = %v, want true", on["storeToken"])
+	}
+	if sameIdP(fromKeycloak(off), on) {
+		t.Error("turning storeTokens on must update the IdP")
+	}
+}
+
 // adminAPI is a small in-memory Keycloak admin API: identity providers, their
 // mappers, and one browser flow with a redirector.
 type adminAPI struct {

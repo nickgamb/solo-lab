@@ -108,6 +108,11 @@ type OIDCUpstream struct {
 	ClientSecretRef SecretKeyRef `json:"clientSecretRef"`
 	// +kubebuilder:default={openid,email,profile}
 	Scopes []string `json:"scopes,omitempty"`
+	// Keep the upstream's tokens on each user's broker link, readable by the
+	// user's own tokens (role broker/read-token): the gateway then uses the
+	// upstream as the OpenID Provider for Cross App Access. Add
+	// offline_access to scopes for a refresh token.
+	StoreTokens bool `json:"storeTokens,omitempty"`
 }
 
 // FailoverRules: which probe failures count against a tier.
