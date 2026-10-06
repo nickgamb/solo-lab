@@ -37,6 +37,10 @@ reset: ## rewind every demo to a first run (grants, terms, agent key, follow-ups
 ## ---- day to day -------------------------------------------------------------
 llm: ## switch the LLM backend: make llm LLM_PROVIDER=ollama|anthropic|openai
 	@./scripts/llm.sh
+interop-logs: ## Cross App Access trail for an interop submission, tokens redacted: make interop-logs SINCE=2h
+	@./scripts/interop-logs.sh --since $(or $(SINCE),1h)
+interop-keys: ## public keys a partner AS needs from S&V: its client key (private_key_jwt) and its IdP's signing keys
+	@./scripts/interop-keys.sh
 status: ## what's running, where, and the URLs
 	@./scripts/status.sh
 preflight: ## check tools and Docker resources
