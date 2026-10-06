@@ -3,11 +3,16 @@
 //
 //	POST /op/token    ID token -> ID-JAG (RFC 8693) at the enterprise IdP
 //	                  that issued the subject token (OPS, by issuer), as S&V's
-//	                  client there: the gateway names the requesting app and
-//	                  holds no IdP credential. The ID-JAG is checked before
+//	                  client there (private_key_jwt with the egress's own key,
+//	                  or a client secret): the gateway names the requesting
+//	                  app and holds no IdP credential. The ID-JAG is checked before
 //	                  the gateway uses it: typ oauth-id-jag+jwt, signature
 //	                  (that IdP's JWKS), iss, aud the requested audience, sub,
 //	                  client_id, exp. A failed check is a 502 to the gateway.
+//	                  Only that exchange, for this connection (AUDIENCE,
+//	                  SCOPES), is relayed; the ID-JAG must also name S&V's
+//	                  client at the resource AS (RAS_CLIENT_ID), the subject
+//	                  token's sub, and live at most 300 s.
 //	POST /ras/token   ID-JAG -> access token (RFC 7523) at Ledgerline's
 //	                  authorization server (RAS_TOKEN_URL), relayed as sent:
 //	                  the gateway authenticates with private_key_jwt.
@@ -66,7 +71,9 @@ type op struct {
 	TokenURL string `json:"token_url"`
 	JWKSURL  string `json:"jwks_url"`
 	ClientID string `json:"client_id"`
+	Auth     string `json:"auth"` // private_key_jwt, client_secret_post or client_secret_basic
 	secret   string
+	key      *clientKey
 	keys     *jwks
 }
 
@@ -74,7 +81,38 @@ type relay struct {
 	client      *http.Client
 	ops         []*op
 	rasTokenURL string
-	now         func() time.Time
+	// the one connection this relay makes requests for: the resource AS
+	// (the ID-JAG's audience), S&V's client there (its client_id claim), and
+	// the scopes S&V may ask for
+	audience, rasClientID string
+	scopes                map[string]bool
+	now                   func() time.Time
+}
+
+const (
+	typeIDToken  = "urn:ietf:params:oauth:token-type:id_token"
+	maxIDJAGLife = 300 // seconds, the ID-JAG draft's ceiling
+)
+
+// opRequest admits only the token request crossAppAccess makes for this
+// connection: anything else never reaches an IdP with S&V's credentials.
+func (x *relay) opRequest(form url.Values) error {
+	switch {
+	case form.Get("grant_type") != tokenExchange:
+		return fmt.Errorf("grant_type %q", form.Get("grant_type"))
+	case form.Get("requested_token_type") != requestedIDJAG:
+		return fmt.Errorf("requested_token_type %q", form.Get("requested_token_type"))
+	case form.Get("subject_token_type") != typeIDToken:
+		return fmt.Errorf("subject_token_type %q", form.Get("subject_token_type"))
+	case form.Get("audience") != x.audience:
+		return fmt.Errorf("audience %q, not the resource AS", form.Get("audience"))
+	}
+	for _, sc := range strings.Fields(form.Get("scope")) {
+		if !x.scopes[sc] {
+			return fmt.Errorf("scope %q not allowed", sc)
+		}
+	}
+	return nil
 }
 
 // opFor is the IdP that issued the subject token (matched by issuer).
@@ -120,17 +158,24 @@ func readForm(w http.ResponseWriter, r *http.Request) (url.Values, bool) {
 }
 
 // forward POSTs form to upstream. With o, it authenticates as S&V's client at
-// o (client_secret_basic) in place of whatever the caller sent; without, the
-// caller's client authentication passes through. It returns the response
-// status and body.
+// o (private_key_jwt, or client_secret_basic) in place of whatever the caller
+// sent; without, the caller's client authentication passes through. It
+// returns the response status and body.
 func (x *relay) forward(w http.ResponseWriter, r *http.Request, upstream string, form url.Values, o *op) (int, []byte, bool) {
 	send := url.Values{}
 	for k, v := range form {
 		send[k] = v
 	}
+	var user, pass string
 	if o != nil {
 		for _, k := range []string{"client_id", "client_secret", "client_assertion", "client_assertion_type"} {
 			send.Del(k)
+		}
+		var err error
+		if user, pass, err = o.authenticate(send, x.now()); err != nil {
+			slog.Error("client authentication", "idp", o.Name, "err", err)
+			writeErr(w, http.StatusInternalServerError, "server_error", "client authentication")
+			return 0, nil, false
 		}
 	}
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, upstream, strings.NewReader(send.Encode()))
@@ -144,9 +189,9 @@ func (x *relay) forward(w http.ResponseWriter, r *http.Request, upstream string,
 			req.Header.Set(h, v)
 		}
 	}
-	if o != nil {
-		req.SetBasicAuth(url.QueryEscape(o.ClientID), url.QueryEscape(o.secret))
-	} else if v := r.Header.Get("Authorization"); v != "" {
+	if user != "" {
+		req.SetBasicAuth(user, pass)
+	} else if v := r.Header.Get("Authorization"); o == nil && v != "" {
 		req.Header.Set("Authorization", v)
 	}
 	resp, err := x.client.Do(req)
@@ -170,6 +215,11 @@ func (x *relay) op(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if err := x.opRequest(form); err != nil {
+		slog.Warn("token request refused", "leg", "op", "params", redact(form), "reason", err.Error())
+		writeErr(w, http.StatusBadRequest, "invalid_request", "not the request this connection makes")
+		return
+	}
 	o := x.opFor(form.Get("subject_token"))
 	if o == nil {
 		slog.Warn("token request refused", "leg", "op", "params", redact(form), "reason", "subject token not from an enterprise IdP")
@@ -180,7 +230,11 @@ func (x *relay) op(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	attrs := []any{"leg", "op", "idp", o.Name, "url", o.TokenURL, "client", map[string]string{"client_id": o.ClientID, "method": "client_secret_basic"},
+	method := "client_secret_basic"
+	if o.key != nil {
+		method = "private_key_jwt"
+	}
+	attrs := []any{"leg", "op", "idp", o.Name, "url", o.TokenURL, "client", map[string]string{"client_id": o.ClientID, "method": method},
 		"params", redact(form), "status", status}
 	if status != http.StatusOK {
 		slog.Warn("token request refused", append(attrs, "error", oauthError(body))...)
@@ -199,18 +253,15 @@ func (x *relay) op(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	attrs = append(attrs, "issued_token_type", tr.IssuedTokenType, "token_type", tr.TokenType, "expires_in", tr.ExpiresIn)
-	if form.Get("grant_type") == tokenExchange && form.Get("requested_token_type") == requestedIDJAG {
-		h, c, err := x.checkIDJAG(r.Context(), o, tr.AccessToken, form.Get("audience"))
-		attrs = append(attrs, "header", h, "claims", c)
-		if err != nil {
-			slog.Warn("id-jag rejected", append(attrs, "reason", err.Error())...)
-			writeErr(w, http.StatusBadGateway, "invalid_response", "ID-JAG failed verification")
-			return
-		}
-		slog.Info("id-jag accepted", attrs...)
-	} else {
-		slog.Info("token issued", attrs...)
+	_, subj := split(form.Get("subject_token"))
+	h, c, err := x.checkIDJAG(r.Context(), o, tr.AccessToken, subj["sub"])
+	attrs = append(attrs, "header", h, "claims", c)
+	if err != nil {
+		slog.Warn("id-jag rejected", append(attrs, "reason", err.Error())...)
+		writeErr(w, http.StatusBadGateway, "invalid_response", "ID-JAG failed verification")
+		return
 	}
+	slog.Info("id-jag accepted", attrs...)
 	pass(w, status, body)
 }
 
@@ -218,6 +269,11 @@ func (x *relay) op(w http.ResponseWriter, r *http.Request) {
 func (x *relay) ras(w http.ResponseWriter, r *http.Request) {
 	form, ok := readForm(w, r)
 	if !ok {
+		return
+	}
+	if form.Get("grant_type") != jwtBearer || form.Get("assertion") == "" {
+		slog.Warn("token request refused", "leg", "ras", "params", redact(form), "reason", "not a JWT authorization grant")
+		writeErr(w, http.StatusBadRequest, "invalid_request", "not the request this connection makes")
 		return
 	}
 	status, body, ok := x.forward(w, r, x.rasTokenURL, form, nil)
@@ -250,7 +306,7 @@ func (x *relay) ras(w http.ResponseWriter, r *http.Request) {
 // checkIDJAG verifies an ID-JAG from o as the requesting side (ID-JAG
 // draft): typ, signature, iss, aud, sub, client_id, exp. It returns the header and claims
 // for the log either way.
-func (x *relay) checkIDJAG(ctx context.Context, o *op, tok, audience string) (map[string]any, map[string]any, error) {
+func (x *relay) checkIDJAG(ctx context.Context, o *op, tok string, subject any) (map[string]any, map[string]any, error) {
 	h, c := split(tok)
 	hc := pick(h, "typ", "alg", "kid")
 	cc := pick(c, "iss", "sub", "aud", "client_id", "jti", "iat", "exp", "scope", "resource", "auth_time", "acr", "amr")
@@ -266,18 +322,24 @@ func (x *relay) checkIDJAG(ctx context.Context, o *op, tok, audience string) (ma
 	if iss, _ := c["iss"].(string); iss != o.Issuer {
 		return hc, cc, fmt.Errorf("iss %q, want %q", iss, o.Issuer)
 	}
-	if audience != "" && !hasAud(c["aud"], audience) {
-		return hc, cc, fmt.Errorf("aud %v, want %q", c["aud"], audience)
+	if !hasAud(c["aud"], x.audience) {
+		return hc, cc, fmt.Errorf("aud %v, want %q", c["aud"], x.audience)
 	}
-	if sub, _ := c["sub"].(string); sub == "" {
-		return hc, cc, errors.New("no sub")
+	if sub, _ := c["sub"].(string); sub == "" || subject == nil || sub != subject {
+		return hc, cc, fmt.Errorf("sub %v, want the subject token's %v", c["sub"], subject)
 	}
-	if cid, _ := c["client_id"].(string); cid == "" {
-		return hc, cc, errors.New("no client_id")
+	if cid, _ := c["client_id"].(string); cid != x.rasClientID {
+		return hc, cc, fmt.Errorf("client_id %q, want %q", cid, x.rasClientID)
 	}
 	exp, _ := c["exp"].(float64)
-	if exp == 0 || x.now().After(time.Unix(int64(exp), 0).Add(5*time.Second)) {
+	iat, _ := c["iat"].(float64)
+	switch {
+	case exp == 0 || x.now().After(time.Unix(int64(exp), 0).Add(5*time.Second)):
 		return hc, cc, errors.New("expired")
+	case iat == 0 || exp-iat > maxIDJAGLife:
+		return hc, cc, fmt.Errorf("lifetime %ds, at most %d", int64(exp-iat), maxIDJAGLife)
+	case x.now().Add(5 * time.Second).Before(time.Unix(int64(iat), 0)):
+		return hc, cc, errors.New("issued in the future")
 	}
 	return hc, cc, nil
 }
@@ -541,11 +603,9 @@ func loadOPs(raw, dir string, client *http.Client) ([]*op, error) {
 		if o.Name == "" || o.Issuer == "" || o.TokenURL == "" || o.JWKSURL == "" || o.ClientID == "" {
 			return nil, fmt.Errorf("OPS[%d]: name, issuer, token_url, jwks_url and client_id are required", i)
 		}
-		s, err := os.ReadFile(dir + "/" + o.Name)
-		if err != nil {
-			return nil, fmt.Errorf("client secret for %s: %w", o.Name, err)
+		if err := o.loadCredential(dir); err != nil {
+			return nil, err
 		}
-		o.secret = strings.TrimSpace(string(s))
 		o.keys = &jwks{client: client, url: o.JWKSURL}
 	}
 	return ops, nil
@@ -586,9 +646,13 @@ func main() {
 		slog.Error("config", "err", err)
 		os.Exit(2)
 	}
-	x := &relay{client: client, ops: ops, rasTokenURL: os.Getenv("RAS_TOKEN_URL"), now: time.Now}
-	if x.rasTokenURL == "" {
-		slog.Error("RAS_TOKEN_URL is required")
+	x := &relay{client: client, ops: ops, rasTokenURL: os.Getenv("RAS_TOKEN_URL"), audience: os.Getenv("AUDIENCE"),
+		rasClientID: os.Getenv("RAS_CLIENT_ID"), scopes: map[string]bool{}, now: time.Now}
+	for _, sc := range strings.Fields(os.Getenv("SCOPES")) {
+		x.scopes[sc] = true
+	}
+	if x.rasTokenURL == "" || x.audience == "" || x.rasClientID == "" {
+		slog.Error("RAS_TOKEN_URL, AUDIENCE and RAS_CLIENT_ID are required")
 		os.Exit(2)
 	}
 	srv := &http.Server{Addr: env("LISTEN", ":8080"), Handler: x.routes(), ReadHeaderTimeout: 5 * time.Second}

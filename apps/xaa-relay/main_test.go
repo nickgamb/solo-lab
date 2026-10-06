@@ -111,7 +111,8 @@ func newRelay(ops []*op, ras string) *relay {
 	for _, o := range ops {
 		o.keys = &jwks{client: http.DefaultClient, url: o.JWKSURL}
 	}
-	return &relay{client: http.DefaultClient, ops: ops, rasTokenURL: ras, now: func() time.Time { return now }}
+	return &relay{client: http.DefaultClient, ops: ops, rasTokenURL: ras, audience: rasIssue, rasClientID: "sv-at-ras",
+		scopes: map[string]bool{"openid": true, "research:read": true}, now: func() time.Time { return now }}
 }
 
 // opOf is S&V's client at the fake OP f, with issuer iss
@@ -123,7 +124,7 @@ func opOf(f *fakeOP, name, iss string) *op {
 // relay's to check: the OP verifies it)
 func idToken(iss, jti string) string {
 	hb, _ := json.Marshal(map[string]any{"alg": "RS256", "typ": "JWT"})
-	cb, _ := json.Marshal(map[string]any{"iss": iss, "sub": "bob", "jti": jti})
+	cb, _ := json.Marshal(map[string]any{"iss": iss, "sub": "bob-sub", "jti": jti})
 	return b64(hb) + "." + b64(cb) + ".c2ln"
 }
 
@@ -327,5 +328,76 @@ func TestRASLegRelaysClientAuthAndLogs(t *testing.T) {
 		if strings.Contains(out, strings.Split(tok, ".")[2]) {
 			t.Fatalf("log leaks a token: %s", out)
 		}
+	}
+}
+
+func TestOPLegWithPrivateKeyJWT(t *testing.T) {
+	f := newFakeOP(t)
+	k, _ := rsa.GenerateKey(rand.Reader, 2048)
+	o := opOf(f, "gluu", issuer)
+	o.secret, o.Auth, o.key = "", "private_key_jwt", &clientKey{key: k, kid: thumbprint(&k.PublicKey)}
+	if w := post(newRelay([]*op{o}, "").routes(), "/op/token", idjagRequest(idToken(issuer, "t")), false); w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	a := f.form.Get("client_assertion")
+	if f.user != "" || f.form.Get("client_id") != "sv-at-gluu" || f.form.Get("client_assertion_type") != assertionType || a == "" {
+		t.Fatalf("basic %q, form %v", f.user, f.form)
+	}
+	h, c := split(a)
+	if h["kid"] != o.key.kid || c["iss"] != "sv-at-gluu" || c["aud"] != o.Issuer {
+		t.Fatalf("assertion header %v claims %v", h, c)
+	}
+}
+
+func TestOnlyThisConnectionsRequestIsRelayed(t *testing.T) {
+	cases := map[string]func(url.Values){
+		"another grant":        func(f url.Values) { f.Set("grant_type", "refresh_token") },
+		"another token type":   func(f url.Values) { f.Set("requested_token_type", "urn:ietf:params:oauth:token-type:access_token") },
+		"access token subject": func(f url.Values) { f.Set("subject_token_type", "urn:ietf:params:oauth:token-type:access_token") },
+		"another audience":     func(f url.Values) { f.Set("audience", "https://elsewhere.example") },
+		"no audience":          func(f url.Values) { f.Del("audience") },
+		"a scope not allowed":  func(f url.Values) { f.Set("scope", "openid admin") },
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFakeOP(t)
+			req := idjagRequest(idToken(issuer, "t"))
+			change(req)
+			if w := post(newRelay([]*op{opOf(f, "gluu", issuer)}, "").routes(), "/op/token", req, false); w.Code != http.StatusBadRequest || f.form != nil {
+				t.Fatalf("status %d, reached the IdP %v", w.Code, f.form != nil)
+			}
+		})
+	}
+}
+
+func TestIDJAGMustMatchSubjectClientAndLifetime(t *testing.T) {
+	cases := map[string]func(map[string]any){
+		"another subject":   func(c map[string]any) { c["sub"] = "mallory" },
+		"another client_id": func(c map[string]any) { c["client_id"] = "someone-else" },
+		"too long-lived":    func(c map[string]any) { c["exp"] = now.Add(time.Hour).Unix() },
+		"no iat":            func(c map[string]any) { delete(c, "iat") },
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newFakeOP(t)
+			f.mint = func() string {
+				c := idjagClaims()
+				change(c)
+				return signRS(t, f.rsa, map[string]any{"alg": "RS256", "kid": "r1", "typ": typIDJAG}, c)
+			}
+			if w := post(newRelay([]*op{opOf(f, "gluu", issuer)}, "").routes(), "/op/token", idjagRequest(idToken(issuer, "t")), false); w.Code != http.StatusBadGateway {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+		})
+	}
+}
+
+func TestRASLegOnlyJWTGrant(t *testing.T) {
+	called := false
+	ras := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	defer ras.Close()
+	w := post(newRelay(nil, ras.URL).routes(), "/ras/token", url.Values{"grant_type": {"client_credentials"}}, false)
+	if w.Code != http.StatusBadRequest || called {
+		t.Fatalf("status %d, forwarded %v", w.Code, called)
 	}
 }
