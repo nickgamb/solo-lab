@@ -18,7 +18,8 @@
     "html-to-image": "1.11.11",
     "monaco-editor": "^0.57.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",

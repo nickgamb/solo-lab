@@ -35,14 +35,33 @@ export type Substrate = {
   actorTemplates: { namespace: string; name: string; phase: string; harnessName?: string }[]
   actors: SubActor[]; workers: SubWorker[]
 }
+// Mirrors apps/continuity/api/v1alpha1 (IdentityContinuity).
+export type ClaimMapping = { claim: string; attribute: string; directoryPath?: string }
+export type Directory = {
+  type: 'scim' | 'auth0' | 'keycloak'; url: string; credentialsRef: { name: string }
+  scopes?: string[]; audience?: string; clientID?: string
+}
+export type ProfileAttribute = { name: string; displayName?: string; multivalued?: boolean }
+export type Profile = { attributes?: ProfileAttribute[]; tokenClients?: string[] }
+export type Sync = { schedule: string; suspend?: boolean; credentialsRef?: { name: string } }
+export type SyncStatus = {
+  cronJob?: string; lastRun?: string; lastSuccess?: string; users?: number; updated?: number; failed?: number; message?: string
+}
+// the broker's built-in profile attributes: always in the unified schema
+export const BUILTIN_ATTRIBUTES = ['username', 'email', 'firstName', 'lastName'] as const
+// identity keys: never written by the scheduled sync
+export const IDENTITY_KEYS = ['username', 'email'] as const
 export type Tier = {
   name: string; displayName?: string; type: 'oidc' | 'local'; enabled?: boolean; drain?: boolean
-  oidc?: { issuer: string; clientID: string; clientSecretRef?: { name: string; key?: string } }
+  oidc?: { issuer: string; clientID: string; clientAuth?: string; clientSecretRef?: { name: string; key?: string } }
   failoverWhen?: { unreachable?: boolean; serverError?: boolean; invalidDiscovery?: boolean; latencyAboveMs?: number }
+  claims?: ClaimMapping[]
+  directory?: Directory
 }
 export type TierStatus = {
   name: string; type?: string; healthy?: boolean; configured?: boolean; partitioned?: boolean; latencyMs?: number
   lastProbe?: string; reason?: string; message?: string; redirectURI?: string; consecutiveFailures?: number; consecutiveSuccesses?: number
+  claimsSupported?: string[]
 }
 export type ContinuitySpec = {
   broker?: { keycloak?: { url?: string; realm?: string; credentialsRef?: { name: string } } }
@@ -50,11 +69,13 @@ export type ContinuitySpec = {
   tiers: Tier[]
   health?: { intervalSeconds?: number; timeoutSeconds?: number; unhealthyThreshold?: number; healthyThreshold?: number }
   failback?: 'Automatic' | 'Manual'
+  profile?: Profile
+  sync?: Sync
 }
 export type IdentityContinuity = {
   metadata: { name: string; namespace: string }
   spec: ContinuitySpec
-  status?: { active?: string; activeSince?: string; broker?: { issuer?: string }; tiers?: TierStatus[]; transitions?: { time: string; from: string; to: string; reason: string }[] }
+  status?: { active?: string; activeSince?: string; broker?: { issuer?: string }; tiers?: TierStatus[]; transitions?: { time: string; from: string; to: string; reason: string }[]; sync?: SyncStatus }
 }
 export type SignInPath = { instance: string; name: string; hosts: string[]; entry?: string; broker: string; app: string; after: string[][] }
 export type ContinuityView = { items: IdentityContinuity[]; partitions: { tier: string; namespace: string; name: string; since?: string; by?: string; path?: string }[]; paths: SignInPath[] }

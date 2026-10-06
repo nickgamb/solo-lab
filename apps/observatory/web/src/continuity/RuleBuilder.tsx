@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type ContinuitySpec, type IdentityContinuity, type Tier } from '../api'
+import { ClaimsMapping } from './ClaimsMapping'
+import { claimsSummary } from './mapping'
 
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v))
 const DNS = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
@@ -14,6 +16,7 @@ export function RuleBuilder({ ic, broker }: { ic: IdentityContinuity; broker: st
   const [adding, setAdding] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string }>()
   const [busy, setBusy] = useState(false)
+  const [mapping, setMapping] = useState(false)
   const dirty = JSON.stringify(spec) !== base
 
   // follow the live object unless there are local edits
@@ -94,6 +97,14 @@ export function RuleBuilder({ ic, broker }: { ic: IdentityContinuity; broker: st
       {adding ? <AddTier ns={ic.metadata.namespace} brokerIssuer={ic.status?.broker?.issuer} existing={tiers.map(t => t.name)} onCancel={() => setAdding(false)}
         onAdd={t => { setSpec(s => ({ ...s, tiers: [...s.tiers, t] })); setAdding(false) }} />
         : <button className="btn small" onClick={() => setAdding(true)}>+ Add OIDC tier</button>}
+
+      {/* the window saves the live spec, so unsaved rule edits would be lost behind it */}
+      <div className="cm-open">
+        <button className="btn small" disabled={dirty} onClick={() => setMapping(true)}
+          title={dirty ? 'Save or reset the rule changes first' : 'Map IdP claims to the unified profile and schedule the directory sync'}>Claims mapping</button>
+        <span className="subtle small">{claimsSummary(ic.spec)}</span>
+      </div>
+      {mapping && <ClaimsMapping ic={ic} onClose={() => setMapping(false)} />}
 
       <div className="label" style={{ marginTop: 18 }}>Health checks</div>
       <div className="grid2">
