@@ -39,7 +39,7 @@ llm: ## switch the LLM backend: make llm LLM_PROVIDER=ollama|anthropic|openai
 	@./scripts/llm.sh
 xaa-logs: ## Cross App Access trail (both token requests, claims, checks), tokens redacted: make xaa-logs SINCE=2h
 	@./scripts/xaa-logs.sh --since $(or $(SINCE),1h)
-xaa-keys: ## public keys a resource AS registers for S&V: its client key (private_key_jwt) and its IdP's signing keys
+xaa-keys: ## public keys other parties register: S&V clients (private_key_jwt), S&V IdP, Ledgerline SSO client
 	@./scripts/xaa-keys.sh
 status: ## what's running, where, and the URLs
 	@./scripts/status.sh
