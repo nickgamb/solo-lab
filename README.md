@@ -161,7 +161,7 @@ See [docs/OBSERVATORY.md](docs/OBSERVATORY.md).
 | `ENTERPRISE_IDP` | S&V's IdPs in failover order, `keycloak` last (default `auth0,keycloak`): who signs Bob in and vouches for him to Ledgerline |
 | `RESOURCE_AS`, `RESOURCE_AS_ISSUER` | Ledgerline's authorization server: `keycloak` (default) or `gluu` |
 | `AUTH0_ISSUER`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | the auth0 IdP (your Auth0 tenant); left out without an issuer |
-| `GLUU_ISSUER`, `GLUU_CLIENT_ID`, `GLUU_CLIENT_SECRET` | the gluu IdP ([GLUU.md](docs/GLUU.md)) |
+| `GLUU_ISSUER`, `GLUU_CLIENT_ID` | the gluu IdP, authenticated with S&V's keys ([GLUU.md](docs/GLUU.md)) |
 | `EDITION`, `<PRODUCT>_EDITION`, `SOLO_LICENSE_KEY` | Solo Enterprise, all products or one at a time |
 
 `config/lab.env` holds the lab's shape: cluster name, node image, worker
@@ -184,7 +184,7 @@ count, host ports, party domains, registry port; `config/oss.env` and
 | `reset` | rewind the demos (grants, terms, agent key, follow-ups) |
 | `llm` | switch the model: `make llm LLM_PROVIDER=anthropic` |
 | `xaa-logs` | the Cross App Access trail (both token requests, claims, checks), tokens redacted: `make xaa-logs SINCE=2h` |
-| `xaa-keys` | the public keys a resource authorization server registers for S&V |
+| `xaa-keys` | the public keys other parties register: S&V's clients at upstream IdPs and at Ledgerline, S&V's IdP, Ledgerline's SSO client |
 | `status` | pods, the active sign-in tier, URLs |
 | `preflight` | tools, Docker resources, Ollama |
 | `help` | every target, with its one-line description |

@@ -121,9 +121,29 @@ continuity controller probes every tier and points Keycloak's login at the
 first healthy one; Keycloak stays the issuer everything trusts, and brokered
 users are linked to their S&V user by verified email, so `sub` never changes.
 External upstreams are reached through `sv-egress/egress-waypoint` (one
-ServiceEntry per tier), which is also where an outage is simulated: a DENY
-policy on that ServiceEntry. Details, the API and Auth0 setup:
-[IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md).
+ServiceEntry per tier, exported to every S&V namespace that calls them),
+which is also where an outage is simulated: a DENY policy on that
+ServiceEntry. Cross App Access follows the same active tier. Details, the
+API and Auth0 setup: [IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md).
+
+## Scaling the design
+
+The lab is one cluster. In production the same shapes run across clusters,
+and Solo Enterprise for Istio adds what that needs:
+
+- **Global services.** The broker (Keycloak), the egress gateway and the
+  apps run in each cluster; a service marked global is reachable by one
+  name everywhere, so HTTPRoutes and policies are written once and applied
+  the same way in every cluster.
+- **Cross-cluster failover.** After sign-in at the IdP, requests fail over
+  to the same service in another cluster when the local one is unhealthy,
+  with no change to routes or clients. IdP continuity (which IdP signs
+  people in) and service failover (where the service runs) are independent
+  and compose.
+- **Multi-cluster graph.** One view of every cluster's services, the
+  traffic between them, and where failover sent it.
+
+Not built here: it needs a second cluster and the enterprise edition.
 
 ## Observability and the Observatory
 

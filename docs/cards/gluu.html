@@ -50,7 +50,7 @@
             <span class="where">Settings</span>
             <div class="cmdwrap"><code class="cmd">cp .env.example .env</code></div>
           </td>
-          <td class="say">Set <strong>ENTERPRISE_IDP=gluu,keycloak</strong>, <strong>GLUU_ISSUER</strong>, <strong>GLUU_CLIENT_ID</strong>, <strong>GLUU_CLIENT_SECRET</strong>, <strong>RESOURCE_AS=gluu</strong>, <strong>RESOURCE_AS_ISSUER</strong>.</td>
+          <td class="say">Set <strong>ENTERPRISE_IDP=gluu,keycloak</strong>, <strong>GLUU_ISSUER</strong>, <strong>GLUU_CLIENT_ID</strong>, <strong>RESOURCE_AS=gluu</strong>, <strong>RESOURCE_AS_ISSUER</strong>.</td>
         </tr>
         <tr class="term">
           <td class="num">3</td>
@@ -64,15 +64,15 @@
           <td class="num">4</td>
           <td class="act">
             <span class="where">Right screen, once</span>
-            <span class="click">Sign in to kagent as <strong>bob</strong> at Gluu</span>
+            <span class="click">Sign in to kagent as <strong>bob</strong> at Gluu, then to <strong>https://idp.ledgerline.lab/realms/ledgerline/account</strong> through Gluu</span>
           </td>
-          <td class="say">Links Bob's Gluu account.</td>
+          <td class="say">Links Bob's Gluu account at S&amp;V and at Ledgerline.</td>
         </tr>
         <tr class="term">
           <td class="num">5</td>
           <td class="act">
             <span class="where">Check</span>
-            <div class="cmdwrap"><code class="cmd">./demos/bob/install.sh &amp;&amp; make bob-verify</code></div>
+            <div class="cmdwrap"><code class="cmd">make bob-verify</code></div>
           </td>
           <td class="say">Must end with <strong>all checks passed</strong>.</td>
         </tr>
@@ -130,7 +130,7 @@
           </td>
           <td class="say">
             <span class="chip refused">Every bypass fails</span>
-            <span class="lede">ID-JAG from gluu, checked at the firm's egress.</span>
+            <span class="lede">Every ID-JAG checked at the firm's egress; the agent never holds one.</span>
           </td>
         </tr>
         <tr class="term">
@@ -141,7 +141,7 @@
           </td>
           <td class="say">
             <span class="chip tier">On the wire</span>
-            <span class="lede">Both token requests, by their claims. No tokens logged.</span>
+            <span class="lede">Bob's chat: <code>idp: gluu</code>. Both token requests, by their claims; no tokens logged.</span>
           </td>
         </tr>
         </tbody>

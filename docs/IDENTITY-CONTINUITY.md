@@ -28,6 +28,20 @@ accounts, always last. An upstream without `<NAME>_ISSUER` in `.env` is left
 out, so with no Auth0 tenant the lab runs on local accounts only. Failback is
 automatic (`platform/47-continuity/identitycontinuity.yaml`).
 
+Every IdP in the chain is trusted for S&V's workforce: a user who signs in
+through it is linked to the S&V account with the same verified email. Chain
+only IdPs that are authoritative for S&V's users. Accounts with role
+`local-only` (the `platform-admins` group: break-glass and platform admins)
+are never linked to an upstream. Only the active tier's IdP is enabled in
+Keycloak; the others keep their users' links but can't sign anyone in, not
+even by `kc_idp_hint`.
+
+S&V's broker authenticates to an upstream with `private_key_jwt` (tier
+`oidc.clientAuth`), signing with a PS256 realm key kept for that alone; its
+public half is in the realm's JWKS and in `make xaa-keys`
+(`sv-upstream-client.jwks.json`). An upstream given `<NAME>_CLIENT_SECRET` in
+`.env` uses `client_secret_post` instead (the Auth0 setup below).
+
 Each upstream's ServiceEntry is exported to `sv-identity` and to the
 namespaces in `spec.egress.exportTo` (`agentgateway-system`, where S&V's
 egress has upstreams vouch for users), so every S&V call to an upstream
