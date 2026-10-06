@@ -1,7 +1,7 @@
-// idtoken-exchange: agentgateway's external authorization step for Cross App
-// Access. Given the caller's verified access token from S&V's Keycloak, it
-// returns an OIDC ID token for the same user from the enterprise IdP that
-// vouches for them, which the gateway then trades for an ID-JAG
+// idtoken-exchange: agentgateway's external processor (ext_proc) for Cross App
+// Access. Given the caller's access token the gateway verified, it sets
+// x-id-token to an OIDC ID token for the same user from the enterprise IdP
+// that vouches for them, which the gateway then trades for an ID-JAG
 // (demos/bob/manifests/40-xaa-ledgerline.yaml).
 //
 // It exists because the agent doesn't have the ID token: kagent passes agents
@@ -10,22 +10,28 @@
 // while RFC 8693 (2.2.1) has an IdP return N_A for a token that isn't an
 // access token, as Keycloak does for an ID token.
 //
-// Which IdP: the one S&V's identity continuity has active (CONTINUITY, the
-// IdentityContinuity's status.active), when it is an upstream that issues
-// ID-JAGs (OPS, scripts/idp.sh xaa_env); otherwise S&V's Keycloak. The
-// controller alone decides failover: an upstream that isn't active is never
-// called, and an active one that fails fails the call until the controller
-// moves on.
+// Which IdP: the one the user's session came from (the access token's idp
+// claim, Keycloak's identity_provider session note), when it is an upstream
+// that issues ID-JAGs (OPS, scripts/idp.sh xaa_env); otherwise S&V's Keycloak,
+// for its own sessions and for upstreams that don't issue ID-JAGs. A session
+// from an upstream that S&V's identity continuity no longer has active
+// (CONTINUITY, the IdentityContinuity's status.active) is refused: the user
+// signs in again. The controller alone decides failover, and an upstream that
+// isn't active is never called.
 //
 //	upstream  S&V's Keycloak brokers the user's sign-in there and keeps their
 //	          upstream tokens. They are read through Keycloak's Identity
-//	          Brokering API v2 as the requesting app (kagent, allowed for
-//	          that upstream only) with the user's own access token, and the
-//	          ID token is renewed at the upstream with the refresh token, so
-//	          the upstream decides on every renewal. A user with no account
-//	          there gets S&V's Keycloak; an upstream that refuses (revoked,
-//	          disabled) refuses the call.
-//	keycloak  RFC 8693 at S&V's Keycloak, as the requesting app:
+//	          Brokering API v2 as client xaa-egress (its own key; the only
+//	          client allowed, for those upstreams only) with the user's own
+//	          access token, and the
+//	          ID token is renewed at the upstream with the stored refresh
+//	          token, so the upstream decides on every renewal. S&V is a
+//	          confidential client there (private_key_jwt), so the refresh
+//	          token is not rotated (RFC 9700 4.14.2) and nothing is kept
+//	          between replicas. A user with no account there gets S&V's
+//	          Keycloak; an upstream that refuses (revoked, disabled) refuses
+//	          the call.
+//	keycloak  RFC 8693 at S&V's Keycloak, as the requesting app (kagent):
 //	            subject_token=<access token>  subject_token_type=...:access_token
 //	            requested_token_type=...:id_token  scope=openid
 //	          Keycloak issues it only for a live session of that user and
@@ -35,14 +41,13 @@ package main
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -51,6 +56,9 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	extproc "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -71,14 +79,18 @@ func env(k, def string) string {
 // op is an OpenID Provider and S&V's client there.
 type op struct {
 	Name     string `json:"name"`
+	Issuer   string `json:"issuer"`
 	TokenURL string `json:"token_url"`
 	ClientID string `json:"client_id"`
+	Auth     string `json:"auth"` // private_key_jwt, client_secret_post or client_secret_basic
 	secret   string
+	key      *clientKey
 }
 
 // exchanger turns access tokens into ID tokens, caching each for a while.
 type exchanger struct {
-	keycloak  op   // S&V's Keycloak: the floor, and the broker
+	keycloak  op   // S&V's Keycloak, as kagent: the ID token, the floor
+	broker    op   // S&V's Keycloak, as the client that may read stored upstream tokens
 	upstreams []op // ID-JAG-issuing upstreams, in failover order
 	brokerURL string
 	hc        *http.Client
@@ -87,9 +99,6 @@ type exchanger struct {
 	mu     sync.Mutex
 	active string // the active tier; "" until known
 	cache  map[[32]byte]cached
-	// the newest refresh token per upstream user, for upstreams that rotate
-	// them (the broker keeps only the one from sign-in)
-	refresh map[string]string
 }
 
 type cached struct {
@@ -101,8 +110,6 @@ var (
 	// errRefused: an IdP declined (bad or expired subject token, no live
 	// session, revoked or disabled upstream account): the caller is refused.
 	errRefused = errors.New("refused")
-	// errNotLinked: the user has no stored tokens at that upstream.
-	errNotLinked = errors.New("no account at the upstream")
 	// errUnavailable: the upstream didn't answer, or answered 5xx.
 	errUnavailable = errors.New("upstream unavailable")
 	// errNoActive: the active tier isn't known yet.
@@ -143,17 +150,18 @@ func (x *exchanger) idToken(ctx context.Context, accessToken string) (id, source
 	x.mu.Unlock()
 
 	source, ttl := x.keycloak.Name, time.Duration(0)
-	for _, u := range x.upstreams {
-		if u.Name != active {
-			continue
+	if sess := payload(accessToken).IdP; sess != "" {
+		if sess != active {
+			return "", sess, fmt.Errorf("%w: the session came from %s, which is no longer the active IdP (%s): sign in again", errRefused, sess, active)
 		}
-		id, err = x.fromUpstream(ctx, accessToken, u)
-		switch {
-		case err == nil:
+		for _, u := range x.upstreams {
+			if u.Name != sess {
+				continue
+			}
+			if id, err = x.fromUpstream(ctx, accessToken, u); err != nil {
+				return "", u.Name, err
+			}
 			source, ttl = u.Name, upstreamTTL
-		case errors.Is(err, errNotLinked): // no account there: S&V's Keycloak
-		default:
-			return "", u.Name, err
 		}
 	}
 	if id == "" {
@@ -202,12 +210,18 @@ func (x *exchanger) exchange(ctx context.Context, accessToken string) (string, e
 // and renews the ID token there.
 func (x *exchanger) fromUpstream(ctx context.Context, accessToken string, u op) (string, error) {
 	form := url.Values{"token": {accessToken}}
+	user, pass, err := x.broker.authenticate(form, x.now()) // as xaa-egress, the one client allowed
+	if err != nil {
+		return "", err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, x.brokerURL+"/"+url.PathEscape(u.Name)+"/token", strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.SetBasicAuth(url.QueryEscape(x.keycloak.ClientID), url.QueryEscape(x.keycloak.secret))
+	if user != "" {
+		req.SetBasicAuth(user, pass)
+	}
 	resp, err := x.hc.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("broker: %w", err)
@@ -215,9 +229,7 @@ func (x *exchanger) fromUpstream(ctx context.Context, accessToken string, u op) 
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	switch {
-	case resp.StatusCode == http.StatusBadRequest:
-		return "", fmt.Errorf("%w: %s: %s", errNotLinked, u.Name, oauthError(body))
-	case resp.StatusCode != http.StatusOK:
+	case resp.StatusCode != http.StatusOK: // a session from u always has its tokens: anything else fails closed
 		return "", fmt.Errorf("broker: HTTP %d: %s", resp.StatusCode, oauthError(body))
 	}
 	var stored struct {
@@ -230,57 +242,43 @@ func (x *exchanger) fromUpstream(ctx context.Context, accessToken string, u op) 
 	if stored.RefreshToken == "" {
 		return "", fmt.Errorf("%w: %s: no refresh token stored (offline_access)", errRefused, u.Name)
 	}
-	key := u.Name + "|" + subject(stored.IDToken)
-	x.mu.Lock()
-	rt := x.refresh[key]
-	x.mu.Unlock()
-	if rt == "" {
-		rt = stored.RefreshToken
-	}
-	id, next, err := x.renew(ctx, u, rt)
-	if errors.Is(err, errRefused) && rt != stored.RefreshToken {
-		id, next, err = x.renew(ctx, u, stored.RefreshToken) // a newer sign-in replaced it
-	}
-	if err != nil {
-		return "", err
-	}
-	if next != "" {
-		x.mu.Lock()
-		x.refresh[key] = next
-		x.mu.Unlock()
-	}
-	return id, nil
+	return x.renew(ctx, u, stored.RefreshToken)
 }
 
-// renew trades a refresh token for a fresh ID token at upstream u.
-func (x *exchanger) renew(ctx context.Context, u op, refreshToken string) (idToken, next string, err error) {
+// renew trades the refresh token for a fresh ID token at upstream u.
+func (x *exchanger) renew(ctx context.Context, u op, refreshToken string) (string, error) {
 	var out struct {
-		IDToken      string `json:"id_token"`
-		RefreshToken string `json:"refresh_token"`
+		IDToken string `json:"id_token"`
 	}
 	if err := x.tokenRequest(ctx, u, url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
 		"scope":         {"openid"},
 	}, &out); err != nil {
-		return "", "", err
+		return "", err
 	}
 	if out.IDToken == "" {
-		return "", "", fmt.Errorf("%s: refresh returned no ID token", u.Name)
+		return "", fmt.Errorf("%s: refresh returned no ID token", u.Name)
 	}
-	return out.IDToken, out.RefreshToken, nil
+	return out.IDToken, nil
 }
 
 // tokenRequest POSTs a form to o's token endpoint as S&V's client there. A
 // 400, 401 or 403 is the IdP refusing (errRefused); no answer or a 5xx is
 // errUnavailable.
 func (x *exchanger) tokenRequest(ctx context.Context, o op, form url.Values, out any) error {
+	user, pass, err := o.authenticate(form, x.now())
+	if err != nil {
+		return err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.SetBasicAuth(url.QueryEscape(o.ClientID), url.QueryEscape(o.secret))
+	if user != "" {
+		req.SetBasicAuth(user, pass)
+	}
 	resp, err := x.hc.Do(req)
 	if err != nil {
 		return fmt.Errorf("%w: %s: %v", errUnavailable, o.Name, err)
@@ -315,6 +313,7 @@ func oauthError(body []byte) string {
 func payload(jwt string) (c struct {
 	Exp int64  `json:"exp"`
 	Sub string `json:"sub"`
+	IdP string `json:"idp"`
 	Iss string `json:"iss"`
 	Aud any    `json:"aud"`
 	Jti string `json:"jti"`
@@ -345,101 +344,8 @@ func earliest(a, b time.Time) time.Time {
 	return a
 }
 
-// ServeHTTP is agentgateway's HTTP ext-auth check: 200 with x-id-token, which
-// the gateway copies onto the request (replacing any the caller sent), or 403.
-func (x *exchanger) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	tok := strings.TrimSpace(r.Header.Get("x-subject-token"))
-	if tok == "" {
-		http.Error(w, "no subject token", http.StatusForbidden)
-		return
-	}
-	id, source, err := x.idToken(r.Context(), tok)
-	switch {
-	case errors.Is(err, errNoActive):
-		slog.Warn("failed", "err", err)
-		http.Error(w, "exchange failed", http.StatusServiceUnavailable)
-		return
-	case errors.Is(err, errRefused):
-		slog.Info("refused", "idp", source, "err", err)
-		http.Error(w, "refused", http.StatusForbidden)
-		return
-	case err != nil:
-		slog.Warn("failed", "idp", source, "err", err)
-		http.Error(w, "exchange failed", http.StatusServiceUnavailable)
-		return
-	}
-	// the ID token's claims, never the token: the trail for the ID-JAG request
-	c := payload(id)
-	slog.Info("id token", "iss", c.Iss, "sub", c.Sub, "aud", c.Aud, "jti", c.Jti,
-		"exp", time.Unix(c.Exp, 0).UTC().Format(time.RFC3339), "request_id", r.Header.Get("x-request-id"))
-	w.Header().Set("x-id-token", id)
-	w.WriteHeader(http.StatusOK)
-}
-
-// watchActive polls the IdentityContinuity (CONTINUITY, "<namespace>/<name>")
-// through the Kubernetes API with the pod's service account, and records
-// status.active. Polling keeps it to one read-only GET.
-func (x *exchanger) watchActive(ctx context.Context, api *http.Client, base, token, ic string, every time.Duration) {
-	ns, name, _ := strings.Cut(ic, "/")
-	u := base + "/apis/continuity.lab.solo.io/v1alpha1/namespaces/" + url.PathEscape(ns) + "/identitycontinuities/" + url.PathEscape(name)
-	for {
-		if tier, err := readActive(ctx, api, u, token); err != nil {
-			slog.Warn("identity continuity", "err", err)
-		} else if tier != "" {
-			x.setActive(tier)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(every):
-		}
-	}
-}
-
-func readActive(ctx context.Context, api *http.Client, u, tokenFile string) (string, error) {
-	tok, err := os.ReadFile(tokenFile) // re-read: projected tokens rotate
-	if err != nil {
-		return "", err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(tok)))
-	resp, err := api.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GET identitycontinuity: HTTP %d", resp.StatusCode)
-	}
-	var ic struct {
-		Status struct {
-			Active string `json:"active"`
-		} `json:"status"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&ic); err != nil {
-		return "", err
-	}
-	return ic.Status.Active, nil
-}
-
-// kubeClient trusts the cluster CA from the pod's service account.
-func kubeClient(caFile string) (*http.Client, error) {
-	pem, err := os.ReadFile(caFile)
-	if err != nil {
-		return nil, err
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("no certificates in %s", caFile)
-	}
-	return &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}}, nil
-}
-
-// loadOPs reads OPS (JSON, the last entry S&V's Keycloak) and each client
-// secret from SECRETS_DIR/<name>.
+// loadOPs reads OPS (JSON, the last entry S&V's Keycloak) and S&V's
+// credential at each from dir.
 func loadOPs(raw, dir string) (keycloak op, upstreams []op, err error) {
 	var ops []op
 	if err := json.Unmarshal([]byte(raw), &ops); err != nil || len(ops) == 0 {
@@ -449,11 +355,9 @@ func loadOPs(raw, dir string) (keycloak op, upstreams []op, err error) {
 		if ops[i].Name == "" || ops[i].TokenURL == "" || ops[i].ClientID == "" {
 			return op{}, nil, fmt.Errorf("OPS[%d]: name, token_url and client_id are required", i)
 		}
-		s, err := os.ReadFile(dir + "/" + ops[i].Name)
-		if err != nil {
-			return op{}, nil, fmt.Errorf("client secret for %s: %w", ops[i].Name, err)
+		if err := ops[i].loadCredential(dir); err != nil {
+			return op{}, nil, err
 		}
-		ops[i].secret = strings.TrimSpace(string(s))
 	}
 	return ops[len(ops)-1], ops[:len(ops)-1], nil
 }
@@ -466,18 +370,26 @@ func main() {
 		slog.Error("config", "err", err)
 		os.Exit(1)
 	}
+	broker := op{Name: "broker", Issuer: keycloak.Issuer, TokenURL: keycloak.TokenURL,
+		ClientID: env("BROKER_CLIENT_ID", "xaa-egress"), Auth: "private_key_jwt"}
+	if len(upstreams) > 0 {
+		if err := broker.loadCredential(env("SECRETS_DIR", "/var/run/secrets/op")); err != nil {
+			slog.Error("config", "err", err)
+			os.Exit(1)
+		}
+	}
 	x := &exchanger{
 		keycloak:  keycloak,
+		broker:    broker,
 		upstreams: upstreams,
 		brokerURL: env("BROKER_URL", "http://keycloak.sv-identity/realms/sterling-vance/broker"),
 		hc:        &http.Client{Timeout: 10 * time.Second},
 		now:       time.Now,
 		cache:     map[[32]byte]cached{},
-		refresh:   map[string]string{},
 	}
 	names := []string{}
 	for _, u := range upstreams {
-		names = append(names, u.Name)
+		names = append(names, u.Name+" ("+u.Auth+")")
 	}
 	sa := env("SA_DIR", "/var/run/secrets/kubernetes.io/serviceaccount")
 	api, err := kubeClient(sa + "/ca.crt")
@@ -487,28 +399,43 @@ func main() {
 	}
 	base := "https://" + os.Getenv("KUBERNETES_SERVICE_HOST") + ":" + env("KUBERNETES_SERVICE_PORT", "443")
 	go x.watchActive(ctx, api, base, sa+"/token", env("CONTINUITY", "sv-identity/sterling-vance"), 2*time.Second)
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		x.mu.Lock()
-		known := x.active != ""
-		x.mu.Unlock()
-		if !known { // not ready until it knows which IdP vouches
-			http.Error(w, "active tier unknown", http.StatusServiceUnavailable)
-			return
-		}
-		w.Write([]byte("ok"))
-	})
-	mux.Handle("/", x)
-	srv := &http.Server{Addr: env("LISTEN", ":8080"), Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+
+	// readiness: not ready until it knows which IdP vouches
+	health := &http.Server{Addr: env("HEALTH_LISTEN", ":8081"), ReadHeaderTimeout: 5 * time.Second,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			x.mu.Lock()
+			known := x.active != ""
+			x.mu.Unlock()
+			if !known {
+				http.Error(w, "active tier unknown", http.StatusServiceUnavailable)
+				return
+			}
+			w.Write([]byte("ok"))
+		})}
 	go func() {
-		slog.Info("listening", "addr", srv.Addr, "upstreams", names, "keycloak", keycloak.TokenURL, "client_id", keycloak.ClientID)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := health.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("health", "err", err)
+			os.Exit(1)
+		}
+	}()
+
+	lis, err := net.Listen("tcp", env("LISTEN", ":8080"))
+	if err != nil {
+		slog.Error("listen", "err", err)
+		os.Exit(1)
+	}
+	srv := grpc.NewServer()
+	extproc.RegisterExternalProcessorServer(srv, &processor{x: x})
+	go func() {
+		slog.Info("listening (ext_proc)", "addr", lis.Addr().String(), "upstreams", names, "keycloak", keycloak.TokenURL, "client_id", keycloak.ClientID)
+		if err := srv.Serve(lis); err != nil {
 			slog.Error("server", "err", err)
 			os.Exit(1)
 		}
 	}()
 	<-ctx.Done()
+	srv.GracefulStop()
 	sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	srv.Shutdown(sctx)
+	health.Shutdown(sctx)
 }
