@@ -6,6 +6,7 @@ from an ID-JAG (Cross App Access); the ledgerline waypoint has verified its
 signature. Tool listing is a public catalog; every tool call needs the token.
 """
 import contextvars
+import json
 import os
 import time
 
@@ -17,6 +18,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 AUDIENCE = os.environ.get("RESEARCH_AUDIENCE", "ledgerline-research")
 ISSUER = os.environ["RESEARCH_ISSUER"]
 JWKS = jwt.PyJWKClient(os.environ["RESEARCH_JWKS_URL"], cache_keys=True, lifespan=300)
+# asymmetric algorithms only: the key comes from the AS's published JWKS
+ALGORITHMS = ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512"]
 _auth = contextvars.ContextVar("authorization", default="")
 
 OUTLOOK = {
@@ -40,10 +43,15 @@ def _claims() -> dict:
     token = token.strip()
     try:
         key = JWKS.get_signing_key_from_jwt(token)
-        return jwt.decode(token, key.key, algorithms=["RS256"], audience=AUDIENCE, issuer=ISSUER,
-                          options={"require": ["exp", "iat", "sub"]}, leeway=5)
+        c = jwt.decode(token, key.key, algorithms=ALGORITHMS, audience=AUDIENCE, issuer=ISSUER,
+                       options={"require": ["exp", "iat", "sub"]}, leeway=5)
     except jwt.PyJWTError as e:
+        print(json.dumps({"event": "token refused", "error": str(e)}), flush=True)
         raise ToolError(f"refused: {e}")
+    # the access token's claims, never the token: the resource server's trail
+    print(json.dumps({"event": "token accepted", **{k: c.get(k) for k in
+                      ("iss", "sub", "aud", "azp", "client_id", "scope", "jti", "iat", "exp")}}), flush=True)
+    return c
 
 
 mcp = MCPServer("ledgerline-research")
@@ -53,8 +61,10 @@ mcp = MCPServer("ledgerline-research")
 def account_info() -> dict:
     """Show which Ledgerline account and client this call arrives as."""
     c = _claims()
-    return {"ledgerline_account": c.get("preferred_username"), "ledgerline_subject": c.get("sub"),
-            "via_client": c.get("azp"), "issuer": c.get("iss"), "audience": c.get("aud"),
+    # Keycloak names them preferred_username / azp; Janssen user_name / client_id
+    return {"ledgerline_account": c.get("preferred_username") or c.get("user_name") or c.get("email"),
+            "ledgerline_subject": c.get("sub"), "via_client": c.get("azp") or c.get("client_id"),
+            "issuer": c.get("iss"), "audience": c.get("aud"),
             "expires_in_s": c.get("exp", 0) - int(time.time())}
 
 
