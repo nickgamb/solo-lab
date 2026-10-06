@@ -203,12 +203,6 @@ def panel(num, x, y, w, tab, caption, lines, leaders=()):
     return h
 
 PX, PW = 1340, 720
-panel(None, PX, 262, PW, ".env", "this run", [
-    "ENTERPRISE_IDP=gluu,keycloak     # S&V: Gluu, else its own accounts",
-    "GLUU_ISSUER=https://sv.gluu.example",
-    "RESOURCE_AS=gluu                 # Ledgerline's authorization server",
-    "RESOURCE_AS_ISSUER=https://ledgerline.gluu.example",
-])
 def lead(i): return [anchors[i]]
 panel("1", PX, 436, PW, "gluu-id-token.json", "Bob's Gluu ID token, kept by S&V's broker", [
     "// Gluu → S&V's Keycloak: OIDC code flow, PKCE S256, offline_access",

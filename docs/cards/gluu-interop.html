@@ -13,7 +13,7 @@
 <div class="wrap">
   <header class="masthead">
     <h1>Gluu Interop Demo Card</h1>
-    <p class="standfirst">Bob signs in with a passkey at his firm's Gluu. His agent then uses another company's service as Bob: Gluu vouches for him, that company's own Gluu issues the access, and the agent never holds either.</p>
+    <p class="standfirst">Gluu is the firm's IdP and Ledgerline's authorization server. Bob's agent reaches Ledgerline as Bob through Cross App Access.</p>
   </header>
   <section class="screens">
     <div class="screen left">
@@ -23,14 +23,14 @@
     </div>
     <div class="screen right">
       <span class="side">Right screen</span>
-      <span class="what">kagent, signed in as Bob through Gluu</span>
+      <span class="what">kagent</span>
       <span class="detail">https://kagent.sterling.lab</span>
     </div>
   </section>
 
   <section class="setup">
     <h2>Pre-demo setup</h2>
-    <p class="setup-note">The lab is already up (<code>make up</code>). This card needs two Gluu servers, one per company: the firm's enterprise IdP and Ledgerline's authorization server. Registering them is done once. The steps are in <code>docs/GLUU-INTEROP.md</code>.</p>
+    <p class="setup-note">Needs two Gluu servers, one for each company. Registration: <code>docs/GLUU-INTEROP.md</code>.</p>
     <div class="table-scroll">
       <table>
         <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
@@ -39,26 +39,42 @@
         <tr class="term">
           <td class="num">1</td>
           <td class="act">
-            <span class="where">Once: both Gluus in .env</span>
-            <div class="cmdwrap"><code class="cmd">make layer-45 layer-47 &amp;&amp; ./demos/bob/install.sh</code></div>
+            <span class="where">Once per machine</span>
+            <div class="cmdwrap"><code class="cmd">make machine-setup</code></div>
           </td>
-          <td class="say">With <strong>ENTERPRISE_IDP=gluu,keycloak</strong>, the <strong>GLUU_*</strong> settings and <strong>RESOURCE_AS=gluu</strong> in <code>.env</code>, sign-in moves to the firm's Gluu, with the firm's own accounts as the fallback. Ledgerline's Gluu becomes the only audience for Bob's ID-JAG.</td>
+          <td class="say">One sudo: <strong>*.lab</strong> resolves locally and the lab CA is trusted.</td>
         </tr>
-        <tr class="port">
+        <tr class="term">
           <td class="num">2</td>
           <td class="act">
-            <span class="where">Right screen, once</span>
-            <span class="click">Open kagent in a private window. On Gluu's page, sign in as <strong>bob</strong> with his passkey</span>
+            <span class="where">Settings</span>
+            <div class="cmdwrap"><code class="cmd">cp .env.example .env</code></div>
           </td>
-          <td class="say">The firm's Keycloak links Bob's Gluu account by his verified email and keeps his Gluu tokens for the firm's egress.</td>
+          <td class="say">Set <strong>ENTERPRISE_IDP=gluu,keycloak</strong>, <strong>GLUU_ISSUER</strong>, <strong>GLUU_CLIENT_ID</strong>, <strong>GLUU_CLIENT_SECRET</strong>, <strong>RESOURCE_AS=gluu</strong>, <strong>RESOURCE_AS_ISSUER</strong>.</td>
         </tr>
         <tr class="term">
           <td class="num">3</td>
           <td class="act">
+            <span class="where">Build the lab</span>
+            <div class="cmdwrap"><code class="cmd">make up</code></div>
+          </td>
+          <td class="say">Every layer and demo, with Gluu in both roles.</td>
+        </tr>
+        <tr class="port">
+          <td class="num">4</td>
+          <td class="act">
+            <span class="where">Right screen, once</span>
+            <span class="click">Sign in to kagent as <strong>bob</strong> at Gluu</span>
+          </td>
+          <td class="say">Links Bob's Gluu account.</td>
+        </tr>
+        <tr class="term">
+          <td class="num">5</td>
+          <td class="act">
             <span class="where">Check</span>
             <div class="cmdwrap"><code class="cmd">./demos/bob/install.sh &amp;&amp; make bob-verify</code></div>
           </td>
-          <td class="say">Ledgerline links its account for Bob to his Gluu identity. The run must end with <strong>all checks passed</strong>, including <strong>ID-JAG from gluu</strong>.</td>
+          <td class="say">Must end with <strong>all checks passed</strong>.</td>
         </tr>
         </tbody>
       </table>
@@ -66,11 +82,11 @@
     <div class="afters">
       <div class="after">
         <span class="after-label">The flow</span>
-        <p>Every hop on one page, and what is on the wire at the key ones: <a href="../images/gluu-interop-flow.svg">docs/images/gluu-interop-flow.svg</a>.</p>
+        <p><a href="../images/gluu-interop-flow.svg">docs/images/gluu-interop-flow.svg</a></p>
       </div>
       <div class="after">
-        <span class="after-label">Back to the default</span>
-        <p>Take the Gluu lines out of <code>.env</code> and run step 1 again. The lab goes back to its default IdPs; nothing else changes.</p>
+        <span class="after-label">Interop evidence</span>
+        <p><code>make interop-logs</code> · <code>make interop-keys</code></p>
       </div>
     </div>
   </section>
@@ -78,7 +94,6 @@
 
   <section class="runthrough">
     <h2>The run-through</h2>
-    <p class="run-note">kagent on the right and the terminal on the left. Two companies, two Gluus, and an agent that never touches a cross-company credential.</p>
     <div class="table-scroll">
       <table>
         <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
@@ -88,24 +103,23 @@
           <td class="num">1</td>
           <td class="act">
             <span class="where">Right screen</span>
-            <span class="click">Open kagent in a private window. On Gluu's page, sign in as <strong>bob</strong> with his passkey</span>
+            <span class="click">Open kagent in a private window, sign in as <strong>bob</strong> at Gluu</span>
           </td>
           <td class="say">
             <span class="chip tier">Enterprise IdP</span>
-            <span class="lede">The firm's enterprise IdP is Gluu.</span>
-            Bob signs in with a passkey, no password. kagent never learns Gluu exists: it trusts the firm's broker, which trusts Gluu. If Gluu goes down, sign-in falls back to the firm's own accounts.
+            <span class="lede">Gluu signs Bob in. The firm's own accounts are the fallback.</span>
           </td>
         </tr>
         <tr class="port">
           <td class="num">2</td>
           <td class="act">
             <span class="where">kagent</span>
-            <div class="cmdwrap"><code class="cmd">What is Ledgerline's view on technology, and which Ledgerline account am I using?</code></div>
+            <div class="cmdwrap"><code class="cmd">Which Ledgerline account am I using? Use account_info.</code></div>
           </td>
           <td class="say">
             <span class="chip through">Cross App Access</span>
-            <span class="lede">Another company answers, as its own account for Bob.</span>
-            The firm's Gluu vouched for Bob for this one approved connection (an ID-JAG), and Ledgerline's Gluu turned it into a five-minute token of its own. <strong>There's no consent screen and no shared secret, and the agent only ever held Bob's own firm token.</strong>
+            <span class="lede">Ledgerline's own account for Bob.</span>
+            The firm's Gluu issues an ID-JAG; Ledgerline's Gluu redeems it. The agent holds neither.
           </td>
         </tr>
         <tr class="term">
@@ -117,7 +131,6 @@
           <td class="say">
             <span class="chip refused">Every bypass fails</span>
             <span class="lede">ID-JAG from gluu, checked at the firm's egress.</span>
-            The firm checks what Gluu issued before it uses it: type, signature, issuer, audience, subject and client. Then the checks try the wrong workload, another user's ID token, and Bob's own token straight at Ledgerline. <strong>Each one is refused.</strong>
           </td>
         </tr>
         <tr class="term">
@@ -128,20 +141,7 @@
           </td>
           <td class="say">
             <span class="chip tier">On the wire</span>
-            <span class="lede">Both requests, every claim, and no tokens.</span>
-            The ID-JAG Gluu issued and the checks on it, then the same ID-JAG, by its <code>jti</code>, presented to Ledgerline's Gluu with the firm's key. <code>make interop-logs</code> bundles this trail for the OpenID Foundation interop.
-          </td>
-        </tr>
-        <tr class="port">
-          <td class="num">5</td>
-          <td class="act">
-            <span class="where">Browser</span>
-            <span class="click">Open <strong>https://observatory.ops.lab</strong>, then Topology, Identity view</span>
-          </td>
-          <td class="say">
-            <span class="chip tier">Where it ran</span>
-            <span class="lede">The agent, the egress gateway, the firm's broker and Ledgerline's waypoint, each with a named identity.</span>
-            The two companies meet only at the edge, the way they would on the internet.
+            <span class="lede">Both token requests, by their claims. No tokens logged.</span>
           </td>
         </tr>
         </tbody>

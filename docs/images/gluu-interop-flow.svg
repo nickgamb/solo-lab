@@ -159,21 +159,6 @@
 <text x="78.0" y="1830" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13.5" fill="#a9aeb6">“bob”, no consent screen,</text>
 <text x="78.0" y="1848" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13.5" fill="#a9aeb6">no shared secret</text>
 </g>
-<g><rect x="1340" y="262" width="720" height="138.0" rx="8" fill="#1e1e1e" stroke="#333842"/>
-<path d="M1340,270 a8,8 0 0 1 8,-8 h704 a8,8 0 0 1 8,8 v28 h-720 z" fill="#252526"/>
-<rect x="1340" y="262" width="64.4" height="36" fill="#1e1e1e"/>
-<rect x="1340" y="262" width="64.4" height="2" fill="#bcdb2c"/>
-<text x="1356" y="285" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12.5" fill="#ffffff">.env</text>
-<text x="2044" y="285" text-anchor="end" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13" font-weight="500" fill="#a9aeb6">this run</text>
-<text x="1376" y="326.625" text-anchor="end" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#858585">1</text>
-<text x="1390" y="326.625" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13" xml:space="preserve"><tspan fill="#d4d4d4">ENTERPRISE_IDP=gluu</tspan><tspan fill="#d4d4d4">,</tspan><tspan fill="#d4d4d4">keycloak</tspan><tspan fill="#d4d4d4">     </tspan><tspan fill="#d4d4d4">#</tspan><tspan fill="#d4d4d4"> </tspan><tspan fill="#d4d4d4">S&amp;V</tspan><tspan fill="#d4d4d4">:</tspan><tspan fill="#d4d4d4"> </tspan><tspan fill="#d4d4d4">Gluu</tspan><tspan fill="#d4d4d4">,</tspan><tspan fill="#d4d4d4"> </tspan><tspan fill="#d4d4d4">else</tspan><tspan fill="#d4d4d4"> </tspan><tspan fill="#d4d4d4">its</tspan><tspan fill="#d4d4d4"> </tspan><tspan fill="#d4d4d4">own</tspan><tspan fill="#d4d4d4"> </tspan><tspan fill="#d4d4d4">accounts</tspan></text>
-<text x="1376" y="346.125" text-anchor="end" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#858585">2</text>
-<text x="1390" y="346.125" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13" xml:space="preserve"><tspan fill="#d4d4d4">GLUU_ISSUER=https</tspan><tspan fill="#d4d4d4">:</tspan><tspan fill="#d4d4d4">//sv.gluu.example</tspan></text>
-<text x="1376" y="365.625" text-anchor="end" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#858585">3</text>
-<text x="1390" y="365.625" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13" xml:space="preserve"><tspan fill="#d4d4d4">RESOURCE_AS=gluu</tspan><tspan fill="#d4d4d4">                 </tspan><tspan fill="#d4d4d4">#</tspan><tspan fill="#d4d4d4"> </tspan><tspan fill="#d4d4d4">Ledgerline's</tspan><tspan fill="#d4d4d4"> </tspan><tspan fill="#d4d4d4">authorization</tspan><tspan fill="#d4d4d4"> </tspan><tspan fill="#d4d4d4">server</tspan></text>
-<text x="1376" y="385.125" text-anchor="end" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#858585">4</text>
-<text x="1390" y="385.125" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13" xml:space="preserve"><tspan fill="#d4d4d4">RESOURCE_AS_ISSUER=https</tspan><tspan fill="#d4d4d4">:</tspan><tspan fill="#d4d4d4">//ledgerline.gluu.example</tspan></text>
-</g>
 <g><rect x="1340" y="436" width="720" height="235.5" rx="8" fill="#1e1e1e" stroke="#333842"/>
 <path d="M1340,444 a8,8 0 0 1 8,-8 h704 a8,8 0 0 1 8,8 v28 h-720 z" fill="#252526"/>
 <rect x="1340" y="436" width="170.79999999999998" height="36" fill="#1e1e1e"/>
