@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gluu Demo Card</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="card.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="masthead">
+    <h1>Gluu Demo Card</h1>
+    <p class="standfirst">Gluu is the firm's IdP and Ledgerline's authorization server. Bob's agent reaches Ledgerline as Bob through Cross App Access.</p>
+  </header>
+  <section class="screens">
+    <div class="screen left">
+      <span class="side">Left screen</span>
+      <span class="what">Terminal</span>
+      <span class="detail">in the solo-lab checkout</span>
+    </div>
+    <div class="screen right">
+      <span class="side">Right screen</span>
+      <span class="what">kagent</span>
+      <span class="detail">https://kagent.sterling.lab</span>
+    </div>
+  </section>
+
+  <section class="setup">
+    <h2>Pre-demo setup</h2>
+    <p class="setup-note">Needs two Gluu servers, one for each company. Registration: <code>docs/GLUU.md</code>.</p>
+    <div class="table-scroll">
+      <table>
+        <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
+        <thead><tr><th>#</th><th>Run this</th><th>What it does</th></tr></thead>
+        <tbody>
+        <tr class="term">
+          <td class="num">1</td>
+          <td class="act">
+            <span class="where">Once per machine</span>
+            <div class="cmdwrap"><code class="cmd">make machine-setup</code></div>
+          </td>
+          <td class="say">One sudo: <strong>*.lab</strong> resolves locally and the lab CA is trusted.</td>
+        </tr>
+        <tr class="term">
+          <td class="num">2</td>
+          <td class="act">
+            <span class="where">Settings</span>
+            <div class="cmdwrap"><code class="cmd">cp .env.example .env</code></div>
+          </td>
+          <td class="say">Set <strong>ENTERPRISE_IDP=gluu,keycloak</strong>, <strong>GLUU_ISSUER</strong>, <strong>GLUU_CLIENT_ID</strong>, <strong>GLUU_CLIENT_SECRET</strong>, <strong>RESOURCE_AS=gluu</strong>, <strong>RESOURCE_AS_ISSUER</strong>.</td>
+        </tr>
+        <tr class="term">
+          <td class="num">3</td>
+          <td class="act">
+            <span class="where">Build the lab</span>
+            <div class="cmdwrap"><code class="cmd">make up</code></div>
+          </td>
+          <td class="say">Every layer and demo, with Gluu in both roles.</td>
+        </tr>
+        <tr class="port">
+          <td class="num">4</td>
+          <td class="act">
+            <span class="where">Right screen, once</span>
+            <span class="click">Sign in to kagent as <strong>bob</strong> at Gluu</span>
+          </td>
+          <td class="say">Links Bob's Gluu account.</td>
+        </tr>
+        <tr class="term">
+          <td class="num">5</td>
+          <td class="act">
+            <span class="where">Check</span>
+            <div class="cmdwrap"><code class="cmd">./demos/bob/install.sh &amp;&amp; make bob-verify</code></div>
+          </td>
+          <td class="say">Must end with <strong>all checks passed</strong>.</td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="afters">
+      <div class="after">
+        <span class="after-label">The flow</span>
+        <p><a href="../images/gluu-flow.svg">docs/images/gluu-flow.svg</a></p>
+      </div>
+      <div class="after">
+        <span class="after-label">Back to the default</span>
+        <p>Remove the Gluu settings from <code>.env</code>, then <code>make up</code>.</p>
+      </div>
+    </div>
+  </section>
+  <hr class="rule">
+
+  <section class="runthrough">
+    <h2>The run-through</h2>
+    <div class="table-scroll">
+      <table>
+        <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
+        <thead><tr><th>#</th><th>Do this</th><th>Say this</th></tr></thead>
+        <tbody>
+        <tr class="port">
+          <td class="num">1</td>
+          <td class="act">
+            <span class="where">Right screen</span>
+            <span class="click">Open kagent in a private window, sign in as <strong>bob</strong> at Gluu</span>
+          </td>
+          <td class="say">
+            <span class="chip tier">Enterprise IdP</span>
+            <span class="lede">Gluu signs Bob in. The firm's own accounts are the fallback.</span>
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">2</td>
+          <td class="act">
+            <span class="where">kagent</span>
+            <div class="cmdwrap"><code class="cmd">Which Ledgerline account am I using? Use account_info.</code></div>
+          </td>
+          <td class="say">
+            <span class="chip through">Cross App Access</span>
+            <span class="lede">Ledgerline's own account for Bob.</span>
+            The firm's Gluu issues an ID-JAG; Ledgerline's Gluu redeems it. The agent holds neither.
+          </td>
+        </tr>
+        <tr class="term">
+          <td class="num">3</td>
+          <td class="act">
+            <span class="where">Terminal</span>
+            <div class="cmdwrap"><code class="cmd">make bob-verify</code></div>
+          </td>
+          <td class="say">
+            <span class="chip refused">Every bypass fails</span>
+            <span class="lede">ID-JAG from gluu, checked at the firm's egress.</span>
+          </td>
+        </tr>
+        <tr class="term">
+          <td class="num">4</td>
+          <td class="act">
+            <span class="where">Terminal</span>
+            <div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab logs -n agentgateway-system -l app=xaa-relay --tail=4</code></div>
+          </td>
+          <td class="say">
+            <span class="chip tier">On the wire</span>
+            <span class="lede">Both token requests, by their claims. No tokens logged.</span>
+          </td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+  <footer class="foot">
+    <a href="https://www.solo.io">Solo.io</a> · <a href="https://docs.solo.io">docs.solo.io</a> · <a href="https://www.solo.io/get-started">Get started</a>
+  </footer>
+</div>
+<script src="card.js"></script>
+</body>
+</html>

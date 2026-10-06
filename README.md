@@ -123,6 +123,7 @@ Open it in a browser (`open docs/cards/<card>.html` on macOS, `xdg-open` on Linu
 | [Bob to Alice](docs/cards/bob-to-alice.html) | the same agent asks Alice for her data on her terms (UMA for agents) | `make alice-verify` |
 | [Observatory tour](docs/cards/observatory.html) | every story end to end from one command, watched live: the agent waking, verified tokens per hop, refusals, Alice's terms, an IdP outage | `make tour` |
 | [Identity continuity](docs/cards/identity-continuity.html) | a real network outage of the upstream IdP, automatic failover to local accounts, and failback, live in the Observatory | `make continuity-verify` |
+| [Gluu](docs/cards/gluu.html) | Bob signs in with a passkey at Gluu, his agent reaches Ledgerline as him: Gluu vouches (ID-JAG), Ledgerline's Gluu redeems it, every hop checked and logged | `make bob-verify` |
 
 `make reset` rewinds every demo without a rebuild. The identity continuity
 demo needs an Auth0 tenant (free tier is enough):
@@ -157,7 +158,10 @@ See [docs/OBSERVATORY.md](docs/OBSERVATORY.md).
 | `LLM_PROVIDER` | `ollama` (default), `anthropic` or `openai`; apply with `make llm` |
 | `OLLAMA_MODEL`, `OLLAMA_URL` | the local model and where the cluster reaches it |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL` | hosted models (held by agentgateway only) |
-| `AUTH0_ISSUER`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | S&V's upstream workforce IdP (your Auth0 tenant); apply with `make layer-47` |
+| `ENTERPRISE_IDP` | S&V's IdPs in failover order, `keycloak` last (default `auth0,keycloak`): who signs Bob in and vouches for him to Ledgerline |
+| `RESOURCE_AS`, `RESOURCE_AS_ISSUER` | Ledgerline's authorization server: `keycloak` (default) or `gluu` |
+| `AUTH0_ISSUER`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | the auth0 IdP (your Auth0 tenant); left out without an issuer |
+| `GLUU_ISSUER`, `GLUU_CLIENT_ID`, `GLUU_CLIENT_SECRET` | the gluu IdP ([GLUU.md](docs/GLUU.md)) |
 | `EDITION`, `<PRODUCT>_EDITION`, `SOLO_LICENSE_KEY` | Solo Enterprise, all products or one at a time |
 
 `config/lab.env` holds the lab's shape: cluster name, node image, worker
@@ -179,6 +183,8 @@ count, host ports, party domains, registry port; `config/oss.env` and
 | `tour` | drive every story end to end, paced, to watch in the Observatory |
 | `reset` | rewind the demos (grants, terms, agent key, follow-ups) |
 | `llm` | switch the model: `make llm LLM_PROVIDER=anthropic` |
+| `xaa-logs` | the Cross App Access trail (both token requests, claims, checks), tokens redacted: `make xaa-logs SINCE=2h` |
+| `xaa-keys` | the public keys a resource authorization server registers for S&V |
 | `status` | pods, the active sign-in tier, URLs |
 | `preflight` | tools, Docker resources, Ollama |
 | `help` | every target, with its one-line description |
@@ -228,3 +234,4 @@ Layers:
 | [OBSERVATORY.md](docs/OBSERVATORY.md) | using the Observatory, how it derives the map, access model, local development |
 | [IDENTITY-CONTINUITY.md](docs/IDENTITY-CONTINUITY.md) | the IdentityContinuity API, the controller, Auth0 setup, the kill switch |
 | [ENTERPRISE.md](docs/ENTERPRISE.md) | switching products to Solo Enterprise |
+| [GLUU.md](docs/GLUU.md) | Gluu as S&V's enterprise IdP and Ledgerline's authorization server: settings, registration, logs, roadmap |
