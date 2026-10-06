@@ -13,7 +13,7 @@
 <div class="wrap">
   <header class="masthead">
     <h1>Bob to Alice Demo Card</h1>
-    <p class="standfirst">Same agent, same session, next question: this time the data is Alice's. Watch her side, not the agent's.</p>
+    <p class="standfirst">Same agent, next question: the data is Alice's, and she decides.</p>
   </header>
   <section class="screens">
     <div class="screen left">
@@ -30,7 +30,7 @@
 
   <section class="setup">
     <h2>Pre-demo setup</h2>
-    <p class="setup-note">This picks up where the Bob card ends, in the same lab and the same chat. <code>make up</code> already installed it: Alice, with her own IdP, authorization server and portal, and Meridian Wealth, her brokerage, where her vault sits behind Meridian's gateway and enforcement point.</p>
+    <p class="setup-note">Follows the Bob card, in the same chat.</p>
     <div class="table-scroll">
       <table>
         <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
@@ -39,21 +39,43 @@
         <tr class="term">
           <td class="num">1</td>
           <td class="act">
+            <span class="where">Once per machine</span>
+            <div class="cmdwrap"><code class="cmd">make machine-setup</code></div>
+          </td>
+          <td class="say">One sudo: <strong>*.lab</strong> resolves locally and the lab CA is trusted.</td>
+        </tr>
+        <tr class="term">
+          <td class="num">2</td>
+          <td class="act">
+            <span class="where">Build the lab</span>
+            <div class="cmdwrap"><code class="cmd">make up &amp;&amp; make verify</code></div>
+          </td>
+          <td class="say">Every layer and demo. Must end with <strong>all checks passed</strong>.</td>
+        </tr>
+        <tr class="term">
+          <td class="num">3</td>
+          <td class="act">
             <span class="where">Before each run</span>
             <div class="cmdwrap"><code class="cmd">make reset</code></div>
           </td>
-          <td class="say">Alice has never met this agent: no connections, an empty ledger, and her default terms.</td>
+          <td class="say">Alice starts with no agents connected.</td>
+        </tr>
+        <tr class="port">
+          <td class="num">4</td>
+          <td class="act">
+            <span class="where">Right screen</span>
+            <span class="click"><strong>https://portal.alice.lab</strong> as <strong>alice / alice-demo</strong>, then <strong>Settings → Security → Agent Authorization</strong></span>
+          </td>
+          <td class="say">Her approvals and terms.</td>
         </tr>
         </tbody>
       </table>
     </div>
-    <p class="setup-after">Open <strong>https://portal.alice.lab</strong> on the right, sign in as <strong>alice / alice-demo</strong>, and go to <strong>Settings → Security → Agent Authorization</strong>. Keep Bob's kagent chat open on the left.</p>
   </section>
   <hr class="rule">
 
   <section class="runthrough">
     <h2>The run-through</h2>
-    <p class="run-note">kagent on the left, her portal on the right. One question gets asked twice, on purpose.</p>
     <div class="table-scroll">
       <table>
         <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
@@ -68,7 +90,6 @@
           <td class="say">
             <span class="chip tier">Tier 1 · holdings</span>
             <span class="lede">Bob's firm doesn't hold Alice's money. Meridian does, and Alice decides who reads it.</span>
-            Meridian's gateway answers with a challenge that points at Alice's authorization server. Her server offers her terms, and the agent's adapter signs them for the agent (no person at the firm signs each one).
           </td>
         </tr>
         <tr class="port">
@@ -80,7 +101,6 @@
           <td class="say">
             <span class="chip held">Held for her</span>
             <span class="lede">It stopped. Alice has never met this agent.</span>
-            Nothing happens until she says yes. Approve, and the holdings appear on the left. <strong>What she granted covers her holdings, for her purpose, on her terms, and nothing else.</strong>
           </td>
         </tr>
         <tr class="term">
@@ -91,8 +111,7 @@
           </td>
           <td class="say">
             <span class="chip tier">Tier 2 · transactions</span>
-            <span class="lede">A different tier. Seeing her holdings gave no access to this.</span>
-          </td>
+            <span class="lede">A different tier. Seeing her holdings gave no access to this.</span></td>
         </tr>
         <tr class="port">
           <td class="num">4</td>
@@ -103,7 +122,6 @@
           <td class="say">
             <span class="chip held">Held for her</span>
             <span class="lede">It stops again, and this is the last time.</span>
-            She approves each tier once. <strong>Now watch what happens when it asks for the same thing again.</strong>
           </td>
         </tr>
         <tr class="term">
@@ -115,7 +133,6 @@
           <td class="say">
             <span class="chip through">Through · no approval</span>
             <span class="lede">Nothing stopped, and nobody approved this one.</span>
-            Her terms already covered it, so it went straight through while she was away. <strong>The portal never moved.</strong>
           </td>
         </tr>
         <tr class="term">
@@ -127,7 +144,6 @@
           <td class="say">
             <span class="chip tier">Tier 3 · trade</span>
             <span class="lede">She marked trades "ask me", so it stops and waits for her.</span>
-            The agent just sees a slow tool call.
           </td>
         </tr>
         <tr class="port">
@@ -139,7 +155,6 @@
           <td class="say">
             <span class="chip refused">Refused</span>
             <span class="lede">She says no, and the trade doesn't happen.</span>
-            The agent stops there. Its grant was for this one order, so it has no leftover token to retry with.
           </td>
         </tr>
         <tr class="port">
@@ -151,7 +166,6 @@
           <td class="say">
             <span class="chip tier">Her record</span>
             <span class="lede">Everything is recorded on her side.</span>
-            It shows each agent, what it promised, what it touched, and what she approved or refused. <strong>Revoke</strong>, and every token that agent holds dies at once. Its next request starts over, as a stranger asking her again.
           </td>
         </tr>
         <tr class="term">
@@ -163,7 +177,6 @@
           <td class="say">
             <span class="chip through">Bob's world, untouched</span>
             <span class="lede">Alice's no changed nothing Bob owns.</span>
-            Bob's book and his firm's Ledgerline research still work. Each company's rules are enforced where that company's data lives.
           </td>
         </tr>
         </tbody>
