@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Sterling & Vance identity: the firm's Keycloak (realm sterling-vance) in
-# sv-identity, published at https://idp.sterling.lab, plus the client secrets
-# each S&V component needs, each placed in the namespace that uses it.
+# Sterling & Vance identity: the firm's broker (Keycloak, realm sterling-vance)
+# in sv-identity, published at https://idp.sterling.lab, which routes sign-ins
+# to the firm's IdPs and maps them into one profile; the firm's own workforce
+# IdP (Keycloak, realm workforce) in sv-workforce at https://login.sterling.lab,
+# the keycloak in ENTERPRISE_IDP; and the client secrets each S&V component
+# needs, each placed in the namespace that uses it.
 # Alice's IdP is hers and is installed by demos/bob-to-alice, not here.
 . "$(dirname "$0")/../../scripts/lib.sh"
 D="$(cd "$(dirname "$0")" && pwd)"
@@ -12,7 +15,7 @@ step "Sterling & Vance mesh baseline, before the firm's first workload"
 # unfenced while the layers in between install. Layer 80 owns these and
 # applies them again.
 apply_tmpl "$LAB_ROOT/platform/80-mesh-policy/sterling-vance.yaml"
-deny_internet sv-identity kagent sv-agents sv-mcp agentregistry
+deny_internet sv-identity sv-workforce kagent sv-agents sv-mcp agentregistry
 ok "STRICT mTLS, identity-scoped ALLOWs and no-internet for S&V's namespaces"
 
 step "Sterling & Vance Keycloak $KEYCLOAK_VERSION (sv-identity)"
@@ -52,6 +55,26 @@ KC_IMAGE="localhost:${LAB_REGISTRY_PORT}/lab/keycloak-idjag:${KEYCLOAK_VERSION}-
 wait_for "https://idp.$SV_DOMAIN discovery" 30 3 \
   sh -c "curl -sf --cacert '$LAB_CA_DIR/ca.crt' https://idp.$SV_DOMAIN/realms/sterling-vance/.well-known/openid-configuration >/dev/null"
 ok "issuer https://idp.$SV_DOMAIN/realms/sterling-vance  (admin: see .lab/secrets.env)"
+
+step "Sterling & Vance workforce IdP, Keycloak $KEYCLOAK_VERSION (sv-workforce)"
+# The Keycloak S&V runs itself (keycloak in ENTERPRISE_IDP), apart from the
+# broker: its own accounts, sessions and keys. It issues ID-JAGs for the
+# broker's sign-ins like any upstream that vouches. S&V's client there
+# (sterling-vance-broker) takes the broker's and the egress's keys;
+# continuity-directory lets the profile sync read users.
+K create secret generic kc-secrets -n sv-workforce \
+  --from-literal=KC_BOOTSTRAP_ADMIN_USERNAME=admin \
+  --from-literal=KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret SV_WORKFORCE_KC_ADMIN_PASSWORD)" \
+  --from-literal=SV_WORKFORCE_DIRECTORY_SECRET="$(lab_secret SV_WORKFORCE_DIRECTORY_SECRET)" \
+  --dry-run=client -o yaml | K apply -f - >/dev/null
+mkdir -p "$LAB_STATE/realm"
+workforce_realm "$D/realm-workforce.json" >"$LAB_STATE/realm/realm-workforce.json"
+KC_HOST=login KC_IMAGE="localhost:${LAB_REGISTRY_PORT}/lab/keycloak-idjag:${KEYCLOAK_VERSION}-pr49998" \
+  deploy_keycloak sv-workforce "$SV_DOMAIN" https-sterling "$LAB_STATE/realm/realm-workforce.json" \
+  token-exchange-standard,identity-assertion-jwt
+wait_for "https://login.$SV_DOMAIN discovery" 30 3 \
+  sh -c "curl -sf --cacert '$LAB_CA_DIR/ca.crt' https://login.$SV_DOMAIN/realms/workforce/.well-known/openid-configuration >/dev/null"
+ok "issuer https://login.$SV_DOMAIN/realms/workforce  (bob / bob-demo; admin: see .lab/secrets.env)"
 
 step "Client secrets, in the namespace that uses each"
 # kgateway OAuth2 (edge SSO for kagent) lives with the kagent route

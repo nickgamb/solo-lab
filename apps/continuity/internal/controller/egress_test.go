@@ -16,6 +16,9 @@ func TestExternalHosts(t *testing.T) {
 	if got := externalHosts(internal, "https://gamb.us.auth0.com/", d); !slices.Equal(got, []string{"gamb.us.auth0.com", "keys.example.com"}) {
 		t.Errorf("auth0: %v", got)
 	}
+	if got := externalHosts(internal, "http://keycloak.sv-workforce.svc/admin/realms/workforce", nil); len(got) != 0 {
+		t.Errorf("a cluster Service needs no ServiceEntry: %v", got)
+	}
 	if got := externalHosts(internal, "https://idp.ledgerline.lab/realms/ledgerline", nil); len(got) != 0 {
 		t.Errorf("in-lab issuer needs no ServiceEntry: %v", got)
 	}

@@ -1,6 +1,7 @@
-# S&V's login chain (ENTERPRISE_IDP, config/lab.env): each upstream IdP while
-# it is healthy, in order, else the firm's own accounts. Keycloak stays the
-# issuer S&V's own services trust either way. The install sets spec.tiers from
+# S&V's login chain (ENTERPRISE_IDP, config/lab.env): each of the firm's IdPs
+# while it is healthy, in order, else the broker's break-glass accounts
+# (platform admins). The broker stays the issuer S&V's own services trust
+# either way. The install sets spec.tiers from
 # ENTERPRISE_IDP; each tier's failover rules belong to its operators (the
 # Observatory's rule builder edits them) and survive re-running the layer.
 apiVersion: continuity.lab.solo.io/v1alpha1

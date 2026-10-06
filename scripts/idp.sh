@@ -3,16 +3,17 @@
 # authorization server (RESOURCE_AS), from config/lab.env. Sourced by layers
 # 45 and 47 and by demos/bob (docs/IDENTITY-FLOWS.md, docs/GLUU.md).
 #
-#   ENTERPRISE_IDP  upstreams brokered by S&V's Keycloak, in failover order,
-#                   then keycloak (S&V's own accounts). Each upstream needs
-#                   <NAME>_ISSUER, <NAME>_CLIENT_ID, <NAME>_CLIENT_SECRET.
-#   ID-JAG          Bob's ID-JAG comes from the IdP he signs in with when it
-#                   issues them (gluu). Past the first upstream that doesn't
-#                   (auth0), S&V's Keycloak vouches for whoever signed in.
+#   ENTERPRISE_IDP  S&V's IdPs, in failover order, each brokered by S&V's
+#                   Keycloak (the broker). Each needs <NAME>_ISSUER and
+#                   <NAME>_CLIENT_ID (keycloak's default to S&V's own, layer
+#                   45), and <NAME>_CLIENT_SECRET unless S&V uses its keys.
+#   ID-JAG          Bob's ID-JAG comes from the IdP he signed in with when it
+#                   issues them (gluu, keycloak); for one that doesn't
+#                   (okta, auth0), the broker vouches for that sign-in.
 #   RESOURCE_AS     keycloak (Ledgerline's own) or gluu (RESOURCE_AS_ISSUER).
 
-IDP_UPSTREAMS="auth0 gluu"   # brokered by S&V's Keycloak
-IDP_ISSUES_IDJAG="gluu"      # upstreams that issue ID-JAGs
+IDP_UPSTREAMS="okta auth0 gluu keycloak"  # brokered by S&V's Keycloak
+IDP_ISSUES_IDJAG="gluu keycloak"          # upstreams that issue ID-JAGs
 SV_ISSUER="https://idp.$SV_DOMAIN/realms/sterling-vance"
 SV_CLIENT_AT_LEDGERLINE=sterling-vance-kagent
 
@@ -24,28 +25,32 @@ idp_discover() {
     || die "no OpenID discovery at ${1%/}/.well-known/openid-configuration"
 }
 
-# idp_chain: ENTERPRISE_IDP, checked, without upstreams that have no issuer
+# idp_chain: ENTERPRISE_IDP, checked, without IdPs that have no issuer
 idp_chain() {
-  local n last="" seen=" " out=""
+  local n seen=" " out=""
   for n in $(echo "$ENTERPRISE_IDP" | tr ',' ' '); do
-    case " $IDP_UPSTREAMS keycloak " in *" $n "*) ;; *) die "ENTERPRISE_IDP: unknown IdP '$n' (known: $IDP_UPSTREAMS keycloak)" ;; esac
+    case " $IDP_UPSTREAMS " in *" $n "*) ;; *) die "ENTERPRISE_IDP: unknown IdP '$n' (known: $IDP_UPSTREAMS)" ;; esac
     case "$seen" in *" $n "*) die "ENTERPRISE_IDP: '$n' is listed twice" ;; esac
-    seen="$seen$n "; last=$n
-    if [ "$n" = keycloak ] || [ -n "$(_idp_var "$n" ISSUER)" ]; then out="$out $n"; fi
+    seen="$seen$n "
+    if [ -n "$(_idp_var "$n" ISSUER)" ]; then out="$out $n"; fi
   done
-  [ "$last" = keycloak ] || die "ENTERPRISE_IDP must end with keycloak, S&V's own accounts: the tier every other one fails over to ($ENTERPRISE_IDP)"
+  [ -n "$out" ] || die "ENTERPRISE_IDP: no IdP with an issuer ($ENTERPRISE_IDP)"
   echo "${out# }"
 }
 
-# idp_xaa_upstreams: the upstreams at the head of the chain that vouch for
-# Bob themselves (issue his ID-JAG)
+# idp_xaa_upstreams: the IdPs in the chain that vouch for Bob themselves
+# (issue his ID-JAG)
 idp_xaa_upstreams() {
   local n out=""
   for n in $(idp_chain); do
-    case " $IDP_ISSUES_IDJAG " in *" $n "*) out="$out $n" ;; *) break ;; esac
+    case " $IDP_ISSUES_IDJAG " in *" $n "*) out="$out $n" ;; esac
   done
   echo "${out# }"
 }
+
+# idp_internal <url>: whether it is one of the lab's own hosts (in-cluster,
+# through the edge), not on the internet
+idp_internal() { case "$(echo "$1" | sed -E 's#^https?://([^/:]+).*#\1#')" in *."$LAB_TLD") return 0 ;; esac; return 1; }
 
 # ras_env: Ledgerline's authorization server
 ras_env() {
@@ -60,7 +65,6 @@ ras_env() {
       [ "$(echo "$d" | jq -r .issuer)" = "$RESOURCE_AS_ISSUER" ] \
         || die "RESOURCE_AS_ISSUER must match the issuer its discovery states: $(echo "$d" | jq -r .issuer)"
       for n in $(idp_chain); do
-        [ "$n" = keycloak ] && continue
         [ "${RESOURCE_AS_ISSUER%/}" != "$(_idp_var "$n" ISSUER | sed 's#/*$##')" ] \
           || die "RESOURCE_AS_ISSUER is S&V's $n: an IdP can't vouch for Bob to itself. Ledgerline needs its own deployment"
       done
@@ -76,8 +80,8 @@ ras_env() {
 idp_client_auth() { if [ -n "$(_idp_var "$1" CLIENT_SECRET)" ]; then echo client_secret_post; else echo private_key_jwt; fi; }
 
 # xaa_env: the OpenID Providers S&V's egress may get Bob's ID-JAG from, in
-# order, S&V's Keycloak last (XAA_OPS, for idtoken-exchange and xaa-relay),
-# and S&V's client key at Ledgerline's AS
+# order, S&V's broker last as "sterling-vance" (XAA_OPS, for idtoken-exchange
+# and xaa-relay), and S&V's client key at Ledgerline's AS
 xaa_env() {
   local n d ops='[]'
   for n in $(idp_xaa_upstreams); do
@@ -87,7 +91,7 @@ xaa_env() {
     ops=$(echo "$ops" | jq -c --arg n "$n" --argjson d "$d" --arg cid "$(_idp_var "$n" CLIENT_ID)" --arg auth "$(idp_client_auth "$n")" \
       '. + [{name: $n, issuer: $d.issuer, token_url: $d.token_endpoint, jwks_url: $d.jwks_uri, client_id: $cid, auth: $auth}]')
   done
-  XAA_OPS=$(echo "$ops" | jq -c --arg iss "$SV_ISSUER" '. + [{name: "keycloak", issuer: $iss,
+  XAA_OPS=$(echo "$ops" | jq -c --arg iss "$SV_ISSUER" '. + [{name: "sterling-vance", issuer: $iss,
     token_url: "http://keycloak.sv-identity/realms/sterling-vance/protocol/openid-connect/token",
     jwks_url: "http://keycloak.sv-identity/realms/sterling-vance/protocol/openid-connect/certs", client_id: "kagent",
     auth: "client_secret_basic"}]')
@@ -131,6 +135,22 @@ jwk = {"e": "AQAB", "kty": "RSA", "n": n}
 kid = base64.urlsafe_b64encode(hashlib.sha256(json.dumps(jwk, separators=(",", ":"), sort_keys=True).encode()).digest()).rstrip(b"=").decode()
 print(json.dumps({"keys": [{**jwk, "kid": kid, "use": "sig", "alg": "RS256"}]}, indent=2))'
 }
+# sv_upstream_client_jwks: S&V's client at an upstream IdP: the broker's key
+# (as S&V's Keycloak publishes it, PS256) and the egress's key (RS256)
+sv_upstream_client_jwks() {
+  local certs
+  realm_signing_key sv-egress-client
+  certs=$(curl -sf --cacert "$LAB_CA_DIR/ca.crt" "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/certs") || die "no JWKS from S&V's Keycloak"
+  echo "$certs" | jq --argjson egress "$(jwks_of "$LAB_STATE/keys/sv-egress-client.crt")" \
+    '{keys: ([.keys[] | select(.use == "sig" and .alg == "PS256")] + $egress.keys)}'
+}
+
+# workforce_realm <realm.json>: S&V's workforce IdP, with S&V's client keys
+workforce_realm() {
+  jq --arg jwks "$(sv_upstream_client_jwks | jq -c .)" \
+    '(.clients[] | select(.clientId == "sterling-vance-broker") | .attributes["jwks.string"]) = $jwks' "$1"
+}
+
 # xaa_client_jwks: S&V's client key at Ledgerline's AS
 xaa_client_jwks() { jwks_of "$LAB_STATE/keys/sv-xaa-client.crt"; }
 
@@ -178,12 +198,12 @@ ledgerline_research() {
 
 # ledgerline_egress_hosts: internet hosts Ledgerline's own services reach:
 # its Gluu AS's keys (MCP server), the keys of each upstream it trusts for
-# ID-JAGs (its Keycloak)
+# ID-JAGs (its Keycloak). The lab's own hosts are reached through the edge.
 ledgerline_egress_hosts() {
-  local n
+  local n u
   { [ "$RESOURCE_AS" = gluu ] && echo "$LEDGERLINE_AS_JWKS_URI"
     for n in $(idp_xaa_upstreams); do idp_discover "$(_idp_var "$n" ISSUER)" | jq -r .jwks_uri; done
-  } | sed -E 's#^https://([^/:]+).*#\1#' | sort -u
+  } | while read -r u; do idp_internal "$u" || echo "$u"; done | sed -E 's#^https://([^/:]+).*#\1#' | sort -u
 }
 
 # ledgerline_egress: one ServiceEntry per host, bound to Ledgerline's egress
@@ -209,4 +229,34 @@ YAML
   K get serviceentry -n ledgerline-egress -l lab.solo.io/egress=ledgerline -o json \
     | jq -r --arg keep " $(echo $hosts) " '.items[] | select(($keep | contains(" " + .spec.hosts[0] + " ")) | not) | .metadata.name' \
     | while read -r se; do K delete serviceentry "$se" -n ledgerline-egress >/dev/null; done
+}
+
+# prefer_tier <tier>: make <tier> S&V's active IdP for the rest of the calling
+# script (tiers ahead of it in the chain drained, their links kept) and put
+# the chain back on exit. Scripted sign-ins go through S&V's own IdP.
+prefer_tier() {
+  local cur ahead saved
+  cur=$(K get idc sterling-vance -n sv-identity -o json) || die "no IdentityContinuity sterling-vance"
+  [ "$(echo "$cur" | jq -r '.status.active')" = "$1" ] && return 0
+  echo "$cur" | jq -e --arg t "$1" '.spec.tiers | any(.name == $t)' >/dev/null || die "$1 is not in S&V's chain (ENTERPRISE_IDP)"
+  ahead=$(echo "$cur" | jq -c --arg t "$1" '[.spec.tiers | to_entries[] | select(.value.name == $t) | .key][0] as $i
+    | [.spec.tiers | to_entries[] | select(.key < $i) | {op: "add", path: "/spec/tiers/\(.key)/drain", value: true}]')
+  saved=$(mktemp); echo "$cur" | jq -c '{spec: {tiers: .spec.tiers}}' >"$saved"
+  on_exit "K patch idc sterling-vance -n sv-identity --type merge --patch-file $saved >/dev/null 2>&1; rm -f $saved"
+  K patch idc sterling-vance -n sv-identity --type json -p "$ahead" >/dev/null
+  wait_for "S&V signing in through $1" 30 1 sh -c "[ \"\$(kubectl --context $KCTX get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}')\" = $1 ]"
+  step "S&V's active IdP: $1 for these checks (restored on exit)"
+}
+
+# ledgerline_signin <user> <pass>: an S&V employee signs in to Ledgerline
+# once through S&V's active IdP, as in the browser: Ledgerline links their
+# seat to that IdP (or creates the account), so it can redeem that IdP's
+# ID-JAGs for them.
+ledgerline_signin() {
+  local active verifier challenge
+  active=$(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}')
+  verifier=$(openssl rand -hex 32)
+  challenge=$(printf '%s' "$verifier" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+  browser_signin "https://idp.$LEDGERLINE_DOMAIN/realms/ledgerline/protocol/openid-connect/auth?client_id=account-console&response_type=code&scope=openid&redirect_uri=$(jq -rn --arg u "https://idp.$LEDGERLINE_DOMAIN/realms/ledgerline/account/" '$u|@uri')&code_challenge=$challenge&code_challenge_method=S256&kc_idp_hint=sterling-vance-$active" \
+    "https://idp.$LEDGERLINE_DOMAIN/realms/ledgerline/account/" "$1" "$2" >/dev/null
 }

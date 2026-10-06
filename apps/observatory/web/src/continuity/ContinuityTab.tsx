@@ -115,7 +115,7 @@ function Continuity({ lab, ic, items, pick, setPick }: {
       const isCut = cuts.has(t.name)
       const down = isCut || (!!st && st.configured !== false && !st.healthy)
       const n: LabNode = { id: `tier:${t.name}`, kind: t.type === 'local' ? 'idp' : 'external', label: `${i + 1}. ${t.displayName ?? t.name}`, group: '',
-        status: isActive ? 'ok' : down ? 'down' : 'idle', sub: t.type === 'local' ? 'local accounts' : host(t.oidc?.issuer), summary: {}, products: [] }
+        status: isActive ? 'ok' : down ? 'down' : 'idle', sub: t.type === 'local' ? 'break-glass (platform admins)' : host(t.oidc?.issuer), summary: {}, products: [] }
       const off = st?.configured === false || t.enabled === false || !!t.drain
       tile(n.id, n, 3, tierRow(i), { fog: !isActive && !down && off, highlight: isActive ? 'ok' : down ? 'bad' : undefined, outage: isCut })
       const from = t.type === 'oidc' && egress ? egress.id : broker

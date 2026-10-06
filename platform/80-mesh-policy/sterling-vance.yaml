@@ -13,6 +13,11 @@ spec: {mtls: {mode: STRICT}}
 ---
 apiVersion: security.istio.io/v1
 kind: PeerAuthentication
+metadata: {name: strict, namespace: sv-workforce}
+spec: {mtls: {mode: STRICT}}
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
 metadata: {name: strict, namespace: kagent}
 spec: {mtls: {mode: STRICT}}
 ---
@@ -66,6 +71,23 @@ spec:
         - cluster.local/ns/sv-identity/sa/continuity-controller
         - cluster.local/ns/sv-identity/sa/continuity-sync
         - cluster.local/ns/observatory/sa/observatory    # its service-account token for kagent
+---
+# S&V's workforce IdP: browsers, and every in-lab caller of
+# https://login.sterling.lab (the broker, the continuity controller, the
+# egress, Ledgerline), arrive through the edge; the profile sync reads users
+# over the admin API directly. Its kill switch is a DENY in sv-workforce.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: keycloak-callers, namespace: sv-workforce}
+spec:
+  selector: {matchLabels: {app: keycloak}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/kgateway-system/sa/edge
+        - cluster.local/ns/sv-identity/sa/continuity-sync
 ---
 # The continuity controller only calls out (Keycloak, upstreams, kube API).
 apiVersion: security.istio.io/v1

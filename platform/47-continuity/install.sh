@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Identity continuity: S&V's Keycloak brokers workforce logins to an ordered
-# chain of upstream IdPs (ENTERPRISE_IDP, config/lab.env) and falls back to
-# its own accounts. The
-# continuity controller (apps/continuity) health-checks each upstream and
-# re-points Keycloak's login at the first healthy tier. Keycloak remains the
-# issuer everything trusts. Needs 45-identity. Idempotent.
+# Identity continuity: S&V's broker (Keycloak) routes workforce sign-ins to an
+# ordered chain of IdPs (ENTERPRISE_IDP, config/lab.env) and maps them into
+# one profile; with every IdP down, only platform admins sign in, with the
+# broker's break-glass accounts. The continuity controller (apps/continuity)
+# health-checks each IdP and re-points the broker's login at the first healthy
+# tier. The broker remains the issuer everything trusts. Needs 45-identity.
+# Idempotent.
 . "$(dirname "$0")/../../scripts/lib.sh"
 D="$(cd "$(dirname "$0")" && pwd)"
 APP="$LAB_ROOT/apps/continuity"
@@ -28,6 +29,11 @@ K create secret generic continuity-controller -n sv-identity \
 K create secret generic continuity-sync -n sv-identity \
   --from-literal=client-id=continuity-sync \
   --from-literal=client-secret="$(lab_secret SV_CONTINUITY_SYNC_CLIENT_SECRET)" \
+  --dry-run=client -o yaml | K apply -f - >/dev/null
+# the sync reads S&V's workforce IdP's users with its view-users client there
+K create secret generic directory-keycloak -n sv-identity \
+  --from-literal=client-id=continuity-directory \
+  --from-literal=client-secret="$(lab_secret SV_WORKFORCE_DIRECTORY_SECRET)" \
   --dry-run=client -o yaml | K apply -f - >/dev/null
 . "$LAB_ROOT/scripts/idp.sh"
 CHAIN=$(idp_chain)
@@ -61,24 +67,32 @@ apply_tmpl "$D/controller.yaml"
 # still has the cluster-wide grant
 K delete clusterrolebinding,clusterrole continuity-controller-partitions --ignore-not-found >/dev/null
 rollout sv-identity deploy/continuity-controller
-# The tiers follow ENTERPRISE_IDP: which IdPs and in what order. Each existing
-# tier keeps its failover rules (the operators' and the Observatory's rule
-# builder's); issuers and token settings follow .env. An upstream that issues
-# ID-JAGs keeps the user's tokens (storeTokens, with a refresh token) so the
-# egress can have it vouch for them (docs/IDENTITY-FLOWS.md).
-desired=$(for n in $CHAIN; do
-  if [ "$n" = keycloak ]; then jq -nc '{name: "keycloak", displayName: "Sterling & Vance (local)", type: "local"}'
-  else
-    store=false; if echo " $IDP_ISSUES_IDJAG " | grep -q " $n "; then store=true; fi
-    jq -nc --arg n "$n" --arg iss "$(_idp_var "$n" ISSUER)" --arg cid "$(_idp_var "$n" CLIENT_ID)" \
-      --arg auth "$(idp_client_auth "$n")" --argjson store "$store" '{name: $n,
-      displayName: ({auth0: "Auth0", gluu: "Gluu"}[$n] // $n), type: "oidc",
-      oidc: ({issuer: $iss, clientID: $cid, clientAuth: $auth}
-        + (if $auth == "private_key_jwt" then {clientAssertionSigningAlg: "PS256"} else {clientSecretRef: {name: "upstream-\($n)"}} end)
-        + (if $store then {scopes: ["openid", "email", "profile", "offline_access"], storeTokens: true} else {} end)),
-      failoverWhen: {unreachable: true, serverError: true, invalidDiscovery: true, latencyAboveMs: 1500}}'
+# The tiers follow ENTERPRISE_IDP: which IdPs and in what order, then the
+# broker's break-glass accounts (platform admins only). Each existing tier
+# keeps its failover rules, claim mappings and directory (the operators' and
+# the Observatory's); issuers and token settings follow .env. For an IdP that
+# issues ID-JAGs the broker keeps the user's tokens (storeTokens) so the
+# egress can have it vouch for them (docs/IDENTITY-FLOWS.md). No offline
+# access: the stored refresh token lives and dies with the user's session at
+# that IdP, so a logout there stops its ID-JAGs. S&V's own
+# workforce IdP comes with its directory, for the profile sync.
+desired=$({ for n in $CHAIN; do
+  store=false; if echo " $IDP_ISSUES_IDJAG " | grep -q " $n "; then store=true; fi
+  dir=null
+  if [ "$n" = keycloak ] && [ "$KEYCLOAK_ISSUER" = "https://login.$SV_DOMAIN/realms/workforce" ]; then
+    dir='{"type": "keycloak", "url": "http://keycloak.sv-workforce.svc/admin/realms/workforce", "credentialsRef": {"name": "directory-keycloak"}}'
   fi
-done | jq -sc .)
+  jq -nc --arg n "$n" --arg iss "$(_idp_var "$n" ISSUER)" --arg cid "$(_idp_var "$n" CLIENT_ID)" \
+    --arg auth "$(idp_client_auth "$n")" --argjson store "$store" --argjson dir "$dir" '{name: $n,
+    displayName: ({okta: "Okta", auth0: "Auth0", gluu: "Gluu", keycloak: "Sterling & Vance (Keycloak)"}[$n] // $n), type: "oidc",
+    oidc: ({issuer: $iss, clientID: $cid, clientAuth: $auth}
+      + (if $auth == "private_key_jwt" then {clientAssertionSigningAlg: "PS256"} else {clientSecretRef: {name: "upstream-\($n)"}} end)
+      + (if $store then {scopes: ["openid", "email", "profile"], storeTokens: true} else {} end)),
+    failoverWhen: {unreachable: true, serverError: true, invalidDiscovery: true, latencyAboveMs: 1500}}
+    + (if $dir then {directory: $dir} else {} end)'
+done
+jq -nc '{name: "break-glass", displayName: "Platform admins (break-glass)", type: "local"}'
+} | jq -sc .)
 if ! K get identitycontinuity sterling-vance -n sv-identity >/dev/null 2>&1; then
   render "$D/identitycontinuity.yaml" | T="$desired" yq '.spec.tiers = env(T)' | K apply -f - >/dev/null
 else
@@ -86,9 +100,9 @@ else
   # an existing tier keeps what operators set (display name, enabled, failover
   # rules); .env sets its type, issuer, secret and token settings
   merged=$(jq -nc --argjson d "$desired" --argjson c "$cur" '$d | map(. as $t
-    | ([$c[] | select(.name == $t.name)][0]) as $old
+    | ([$c[] | select(.name == $t.name and .type == $t.type)][0]) as $old
     | if $old == null then $t
-      else ($old * ($t | del(.displayName, .failoverWhen)))
+      else ($old * ($t | del(.displayName, .failoverWhen) | if $old.directory then del(.directory) else . end))
         | if .oidc.clientAuth == "private_key_jwt" then del(.oidc.clientSecretRef) else . end end)')
   # every S&V caller of an upstream goes through the egress waypoint
   egress=$(render "$D/identitycontinuity.yaml" | yq -o json -I0 '.spec.egress')

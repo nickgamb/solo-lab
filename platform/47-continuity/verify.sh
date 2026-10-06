@@ -4,7 +4,8 @@
 # pointed at an issuer the lab already runs (Ledgerline's IdP) and the spec is
 # restored on exit. Checks what a browser would see, via the edge.
 . "$(dirname "$0")/../../scripts/lib.sh"
-need_cluster; need_password_grant
+need_cluster
+. "$LAB_ROOT/scripts/idp.sh"
 NS=sv-identity IC=sterling-vance BOB_ID=5b0b0000-0000-4000-8000-000000000b0b
 T=verify-ledgerline TNS=ledgerline-identity
 CA=(--cacert "$LAB_CA_DIR/ca.crt")
@@ -52,9 +53,11 @@ redirector() {
 }
 idp_gone() { ! kcadm /identity-provider/instances | jq -e --arg t "$1" 'map(.alias) | index($t)' >/dev/null; }
 
-# The upstream under test: the first OIDC tier as installed (the first upstream
-# in ENTERPRISE_IDP), and the authorize endpoint its discovery publishes.
-UP=$(idc | jq -r '[.spec.tiers[] | select(.type=="oidc")][0].name // empty')
+# The upstream under test: the first IdP on the internet in the chain as
+# installed, and the authorize endpoint its discovery publishes. LOCAL is the
+# broker's break-glass tier (platform admins).
+UP=$(idc | jq -r --arg tld ".$LAB_TLD" '[.spec.tiers[] | select(.type=="oidc" and ((.oidc.issuer | sub("^https://"; "") | split("/")[0] | endswith($tld)) | not))][0].name // empty')
+LOCAL=$(idc | jq -r '[.spec.tiers[] | select(.type=="local")][0].name // empty')
 UP_ISSUER=$(idc | jq -r --arg t "$UP" '.spec.tiers[] | select(.name==$t) | .oidc.issuer // empty')
 UP_AUTHZ=$([ -n "$UP_ISSUER" ] && curl -s --max-time 10 "${UP_ISSUER%/}/.well-known/openid-configuration" | jq -r '.authorization_endpoint // empty')
 has_up() { [ -n "$UP" ]; }
@@ -100,22 +103,26 @@ expect 'continuity-controller-' "leader holds Lease continuity.lab.solo.io" \
   "$(K get lease continuity.lab.solo.io -n "$NS" -o jsonpath='{.spec.holderIdentity}' 2>&1)"
 expect '^True$' "IdentityContinuity $IC Ready" \
   "$(K get idc "$IC" -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')"
-if ! has_up; then
-  expect '^keycloak$' "no upstream tier (no issuer for any upstream in ENTERPRISE_IDP): active is local" "$(active)"
-  skipped "upstream checks: set an upstream's issuer and client (e.g. AUTH0_*) in .env and re-run make layer-47"
-elif [ "$(tier "$UP" configured)" = true ]; then
-  expect "^$UP \\(Healthy\\)\$" "$UP configured and healthy: it is active" "$(active) ($(tier "$UP" reason))"
+first=$(idc | jq -r '[.status.tiers[] | select(.configured and .healthy)][0].name // empty')
+expect "^${first:-none}\$" "the first configured, healthy tier is active (${first:-none})" "$(active)"
+expect "^$LOCAL\$" "the chain ends with the broker's break-glass accounts" "$(idc | jq -r '.spec.tiers[-1] | select(.type=="local") | .name')"
+if [ "$(active)" = keycloak ]; then
+  tok=$(sso_token bob bob-demo | jq -r .access_token)
+  expect "^$BOB_ID keycloak\$" "Bob signs in through S&V's own IdP: his S&V user, session from keycloak" \
+    "$(echo "$tok" | jq -rR 'split(".")[1] | gsub("-";"+") | gsub("_";"/") | @base64d | fromjson | "\(.sub) \(.idp)"' 2>/dev/null)"
+  unset tok
 else
-  expect '^keycloak ' "$UP NotConfigured (no upstream-$UP secret): active is local" "$(active) ($UP: $(tier "$UP" reason))"
+  skipped "Bob's sign-in through $(active) is interactive (S&V's own IdP is not active)"
 fi
-has_up && expect '(Healthy|NotConfigured.*probe: Healthy)' "$UP upstream answers discovery + JWKS from S&V" "$(tier "$UP" reason): $(tier "$UP" message)"
-tok=$(user_token "$NS" sterling-vance kagent "$(lab_secret SV_KAGENT_CLIENT_SECRET)" bob bob-demo)
-expect "^$BOB_ID\$" "password grant unchanged: Bob's S&V user id" "$(echo "$tok" | jq -rR 'split(".")[1] | gsub("-";"+") | gsub("_";"/") | @base64d | fromjson | .sub' 2>/dev/null)"
-unset tok
+if has_up; then
+  expect '(Healthy|NotConfigured.*probe: Healthy)' "$UP upstream answers discovery + JWKS from S&V" "$(tier "$UP" reason): $(tier "$UP" message)"
+else
+  skipped "no IdP on the internet in the chain: set one's issuer and client (e.g. AUTH0_*) in .env and re-run make layer-47"
+fi
 
-# The loop runs on [scratch tier, local accounts]: upstream tiers already in the
+# The loop runs on [scratch tier, break-glass]: the IdPs already in the
 # chain are drained (out of rotation, their Keycloak IdPs and user links kept),
-# so a partition of the scratch tier always falls back to S&V's own form.
+# so a partition of the scratch tier always falls back to break-glass.
 step "A new tier at runtime (spec edit + its Secret, no restart)"
 K create secret generic continuity-verify -n "$NS" --from-literal=client-secret="$(openssl rand -hex 16)" \
   --dry-run=client -o yaml | K apply -f - >/dev/null
@@ -132,10 +139,10 @@ expect "^https://idp\.$LEDGERLINE_DOMAIN/realms/ledgerline/.*client_id=continuit
 step "Kill switch: partition the upstream (DENY policy in $TNS)"
 fo=$(events FailoverActivated) fb=$(events Failback)
 partition "$T" "$TNS"
-expect '^[0-9]+s$' "probes see it: fails over to keycloak" "$(within 25 is_active keycloak)"
+expect '^[0-9]+s$' "probes see it: fails over to $LOCAL" "$(within 25 is_active "$LOCAL")"
 expect '^false' "tier unhealthy" "$(tier "$T" healthy) $(tier "$T" reason)"
 expect '^none$' "redirector cleared" "$(redirector)"
-expect '^S&V login form$' "browser sign-in shows S&V's own form" "$(login_lands)"
+expect '^S&V login form$' "browser sign-in shows the broker's own form (break-glass)" "$(login_lands)"
 expect "^$((fo+1))\$" "Event FailoverActivated" "$(events FailoverActivated)"
 heal "$T" "$TNS"
 expect '^[0-9]+s$' "healed: fails back to $T (Automatic)" "$(within 35 is_active "$T")"
@@ -143,17 +150,17 @@ expect "^$((fb+1))\$" "Event Failback" "$(events Failback)"
 
 step "Rules take effect live"
 K patch idc "$IC" -n "$NS" --type merge -p '{"spec":{"failback":"Manual"}}' >/dev/null
-partition "$T" "$TNS"; within 25 is_active keycloak >/dev/null; heal "$T" "$TNS"
+partition "$T" "$TNS"; within 25 is_active "$LOCAL" >/dev/null; heal "$T" "$TNS"
 within 35 sh -c "[ \"\$(kubectl --context $KCTX get idc $IC -n $NS -o json | jq -r '.status.tiers[]|select(.name==\"$T\").healthy')\" = true ]" >/dev/null; sleep 6
-expect '^keycloak$' "failback Manual: healthy again, but stays on keycloak" "$(active)"
+expect "^$LOCAL\$" "failback Manual: healthy again, but stays on $LOCAL" "$(active)"
 K patch idc "$IC" -n "$NS" --type merge -p '{"spec":{"failback":"Automatic"}}' >/dev/null
 expect '^[0-9]+s$' "failback Automatic: moves back up" "$(within 10 is_active "$T")"
 K patch idc "$IC" -n "$NS" --type json -p '[{"op":"add","path":"/spec/tiers/0/drain","value":true}]' >/dev/null
-expect '^[0-9]+s$' "drain: out of rotation" "$(within 10 is_active keycloak)"
+expect '^[0-9]+s$' "drain: out of rotation" "$(within 10 is_active "$LOCAL")"
 K patch idc "$IC" -n "$NS" --type json -p '[{"op":"replace","path":"/spec/tiers/0/drain","value":false}]' >/dev/null
 within 10 is_active "$T" >/dev/null
 K patch idc "$IC" -n "$NS" --type json -p '[{"op":"add","path":"/spec/tiers/0/failoverWhen/latencyAboveMs","value":1}]' >/dev/null
-expect '^[0-9]+s SlowResponse$' "failoverWhen latencyAboveMs=1: slow counts, fails over" "$(within 25 is_active keycloak) $(tier "$T" reason)"
+expect '^[0-9]+s SlowResponse$' "failoverWhen latencyAboveMs=1: slow counts, fails over" "$(within 25 is_active "$LOCAL") $(tier "$T" reason)"
 K patch idc "$IC" -n "$NS" --type json -p '[{"op":"remove","path":"/spec/tiers/0/failoverWhen/latencyAboveMs"}]' >/dev/null
 expect '^[0-9]+s$' "rule removed: back to $T" "$(within 35 is_active "$T")"
 
@@ -213,7 +220,12 @@ K patch idc "$IC" -n "$NS" --type merge -p "{\"spec\": $ORIG}" >/dev/null
 expect "^[0-9]+s\$" "active returns to $BASE" "$(within 15 is_active "$BASE")"
 expect '^[0-9]+s$' "Keycloak IdP $T deleted" "$(within 15 idp_gone "$T")"
 if [ "$(echo "$ORIG" | jq -r '.sync')" = null ]; then
-  expect '^[0-9]+s$' "CronJob $CJ deleted" "$(within 15 sh -c "! kubectl --context $KCTX get cronjob $CJ -n $NS")"
+  if echo "$ORIG" | jq -e '.tiers | any(.directory)' >/dev/null; then
+    cj_suspended() { [ "$(K get cronjob "$CJ" -n "$NS" -o jsonpath='{.spec.suspend}')" = true ]; }
+    expect '^[0-9]+s$' "CronJob $CJ kept for the directories as installed, never on a schedule" "$(within 15 cj_suspended)"
+  else
+    expect '^[0-9]+s$' "CronJob $CJ deleted" "$(within 15 sh -c "! kubectl --context $KCTX get cronjob $CJ -n $NS")"
+  fi
 fi
 if [ "$(echo "$ORIG" | jq -r '.profile')" = null ]; then
   profile_gone() { ! profile_has && ! kagent_scopes | grep -qx "$SCOPE"; }

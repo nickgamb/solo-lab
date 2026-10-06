@@ -725,7 +725,7 @@ func externalHosts(internal []string, issuer string, d *probe.Discovery) []strin
 	set := map[string]bool{}
 	for _, raw := range urls {
 		u, err := url.Parse(raw)
-		if err != nil || u.Hostname() == "" || isInternal(internal, u.Hostname()) {
+		if err != nil || u.Hostname() == "" || isInternal(internal, u.Hostname()) || isClusterService(u.Hostname()) {
 			continue
 		}
 		set[u.Hostname()] = true
@@ -746,6 +746,11 @@ func mergeHosts(a, b []string) []string {
 	}
 	sort.Strings(a)
 	return a
+}
+
+// isClusterService: a Service's in-cluster name, never routed by the egress.
+func isClusterService(host string) bool {
+	return strings.HasSuffix(host, ".svc") || strings.HasSuffix(host, ".svc.cluster.local")
 }
 
 func isInternal(domains []string, host string) bool {

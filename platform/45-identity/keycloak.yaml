@@ -1,9 +1,10 @@
 # A Keycloak for one party. Rendered per party with PARTY_NS, PARTY_DOMAIN,
-# KC_REALM, KC_REALM_CM. The realm is re-imported from its ConfigMap on every
+# PARTY_HOST, KC_REALM, KC_REALM_CM. The realm is re-imported from its ConfigMap on every
 # start, so the realm lives as code; secrets in it are Keycloak's own ${ENV}
 # placeholders, resolved from the kc-secrets Secret inside the container.
 #
-# Issuer is always https://idp.<party>.lab/realms/<realm>: the browser reaches
+# Issuer is https://<host>.<party>.lab/realms/<realm> (host idp, or login for
+# S&V's workforce IdP): the browser reaches
 # it through the edge, and in-cluster callers too (CoreDNS sends *.lab to the
 # edge), or directly at keycloak.<ns>.svc for backchannel calls.
 apiVersion: v1
@@ -47,7 +48,7 @@ spec:
         image: ${KC_IMAGE}
         args: ["start-dev", "--import-realm", "--features=${KC_FEATURES}"]
         env:
-        - {name: KC_HOSTNAME, value: "https://idp.${PARTY_DOMAIN}"}
+        - {name: KC_HOSTNAME, value: "https://${PARTY_HOST}.${PARTY_DOMAIN}"}
         - {name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC, value: "true"}
         - {name: KC_HTTP_ENABLED, value: "true"}
         - {name: KC_PROXY_HEADERS, value: xforwarded}
@@ -97,7 +98,7 @@ metadata:
   namespace: ${PARTY_NS}
 spec:
   parentRefs: [{name: edge, namespace: kgateway-system, sectionName: ${PARTY_LISTENER}}]
-  hostnames: ["idp.${PARTY_DOMAIN}"]
+  hostnames: ["${PARTY_HOST}.${PARTY_DOMAIN}"]
   # Only the party's realm (sign-in, tokens, keys, account) and the pages'
   # static assets are public. The admin console, the admin API and the master
   # realm answer 404 on the edge; admins use a port-forward (docs/COMMANDS.md).

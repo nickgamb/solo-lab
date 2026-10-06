@@ -99,8 +99,8 @@ export const IdpNode = memo(({ id, data }: NodeProps) => {
   )
 })
 
-// LocalNode: the broker's own accounts in the chain. They are the profile
-// itself, so there is nothing to map.
+// LocalNode: the broker's own accounts at the end of the chain: break-glass
+// for platform admins, never a workforce IdP, so nothing to map.
 export const LocalNode = memo(({ data }: NodeProps) => {
   const d = data as LocalData
   return (
@@ -111,9 +111,9 @@ export const LocalNode = memo(({ data }: NodeProps) => {
           <b className="grow ellipsis" title={d.tier.name}>{d.tier.displayName || d.tier.name}</b>
           <span className="chip">{d.rank}</span>
         </div>
-        <div className="subtle small">local accounts</div>
+        <div className="subtle small">the broker's own accounts</div>
       </div>
-      <p className="small subtle cm-pad">The broker's own accounts: their attributes are the profile, so there is nothing to map. Upstream IdPs added to the chain appear here to be mapped.</p>
+      <p className="small subtle cm-pad">Platform admins only, for when every IdP is down. Workforce users have no account here, so there is nothing to map. Each IdP in the chain appears above, to be mapped.</p>
     </div>
   )
 })

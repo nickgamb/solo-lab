@@ -65,7 +65,7 @@ export function RuleBuilder({ ic, broker }: { ic: IdentityContinuity; broker: st
               <span className="order">{i + 1}</span>
               <div className="grow">
                 <input className="field bare" value={t.displayName ?? ''} placeholder={t.name} onChange={e => set(i, { displayName: e.target.value })} />
-                <div className="subtle mono small ellipsis">{t.type === 'local' ? 'local accounts (the broker itself)' : t.oidc?.issuer}</div>
+                <div className="subtle mono small ellipsis">{t.type === 'local' ? 'break-glass: the broker\'s own accounts, platform admins only' : t.oidc?.issuer}</div>
               </div>
               <button className="btn ghost small" disabled={i === 0} onClick={() => move(i, -1)} title="Move up">↑</button>
               <button className="btn ghost small" disabled={i === tiers.length - 1} onClick={() => move(i, 1)} title="Move down">↓</button>

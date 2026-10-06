@@ -32,8 +32,8 @@ spec:
         description: |-
           IdentityContinuity keeps a broker (Keycloak) signing users in through the
           first healthy tier of an ordered chain of upstream IdPs, with the broker's
-          own accounts as a tier. The broker stays the only issuer relying parties
-          trust; upstreams only authenticate.
+          own accounts as a break-glass tier. The broker stays the only issuer
+          relying parties trust; upstreams only authenticate.
         properties:
           apiVersion:
             description: |-
@@ -292,8 +292,10 @@ spec:
                         url:
                           description: |-
                             The API's base URL: .../scim/v2, https://<tenant>/api/v2, or
-                            https://<host>/admin/realms/<realm>.
-                          pattern: ^https://
+                            https://<host>/admin/realms/<realm>. Plain http only to a cluster
+                            Service (the mesh encrypts it), e.g. a Keycloak whose admin API isn't
+                            published.
+                          pattern: ^(https://|http://[a-z0-9.-]+\.svc(\.cluster\.local)?(:[0-9]+)?(/|$))
                           type: string
                       required:
                       - credentialsRef
@@ -403,8 +405,9 @@ spec:
                           description: |-
                             Keep the upstream's tokens on each user's broker link, for a client the
                             realm allows to read them (Identity Brokering API v2): S&V's egress has
-                            the upstream vouch for its users in Cross App Access. Add
-                            offline_access to scopes for a refresh token.
+                            the upstream vouch for its users in Cross App Access. Without
+                            offline_access in scopes, the stored refresh token ends with the
+                            user's session at the upstream.
                           type: boolean
                       required:
                       - issuer

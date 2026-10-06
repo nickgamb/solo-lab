@@ -4,8 +4,8 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 // IdentityContinuity keeps a broker (Keycloak) signing users in through the
 // first healthy tier of an ordered chain of upstream IdPs, with the broker's
-// own accounts as a tier. The broker stays the only issuer relying parties
-// trust; upstreams only authenticate.
+// own accounts as a break-glass tier. The broker stays the only issuer
+// relying parties trust; upstreams only authenticate.
 //
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
@@ -115,8 +115,10 @@ type Directory struct {
 	// +kubebuilder:validation:Enum=scim;auth0;keycloak
 	Type string `json:"type"`
 	// The API's base URL: .../scim/v2, https://<tenant>/api/v2, or
-	// https://<host>/admin/realms/<realm>.
-	// +kubebuilder:validation:Pattern=`^https://`
+	// https://<host>/admin/realms/<realm>. Plain http only to a cluster
+	// Service (the mesh encrypts it), e.g. a Keycloak whose admin API isn't
+	// published.
+	// +kubebuilder:validation:Pattern=`^(https://|http://[a-z0-9.-]+\.svc(\.cluster\.local)?(:[0-9]+)?(/|$))`
 	URL string `json:"url"`
 	// A Secret with client-secret (and client-id, unless clientID is set):
 	// an OAuth client allowed the client_credentials grant at the tier's
@@ -218,8 +220,9 @@ type OIDCUpstream struct {
 	Scopes []string `json:"scopes,omitempty"`
 	// Keep the upstream's tokens on each user's broker link, for a client the
 	// realm allows to read them (Identity Brokering API v2): S&V's egress has
-	// the upstream vouch for its users in Cross App Access. Add
-	// offline_access to scopes for a refresh token.
+	// the upstream vouch for its users in Cross App Access. Without
+	// offline_access in scopes, the stored refresh token ends with the
+	// user's session at the upstream.
 	StoreTokens bool `json:"storeTokens,omitempty"`
 }
 
