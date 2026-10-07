@@ -13,7 +13,7 @@
 <div class="wrap">
   <header class="masthead">
     <h1>Bob Demo Card</h1>
-    <p class="standfirst">Bob's agent works for Bob, never as Bob. Every tool call carries two identities, and no token travels further than it has to.</p>
+    <p class="standfirst">Bob's agent works for Bob, never as Bob: every tool call carries two identities.</p>
   </header>
   <section class="screens">
     <div class="screen left">
@@ -30,7 +30,7 @@
 
   <section class="setup">
     <h2>Pre-demo setup</h2>
-    <p class="setup-note">From cold to ready: two commands, about 30 minutes the first time, and much less after that, because image caches outlive the cluster. One install brings up every demo.</p>
+    <p class="setup-note">About 30 minutes the first time; image caches outlive the cluster.</p>
     <div class="table-scroll">
       <table>
         <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
@@ -42,7 +42,7 @@
             <span class="where">Once per machine</span>
             <div class="cmdwrap"><code class="cmd">make machine-setup</code></div>
           </td>
-          <td class="say">One sudo. It makes <strong>*.lab</strong> resolve on this machine and trusts the lab CA, which is name-constrained to <code>.lab</code>, so it can't vouch for any real domain. The CA survives rebuilds, so you never do this again.</td>
+          <td class="say">One sudo: <strong>*.lab</strong> resolves locally and the lab CA is trusted.</td>
         </tr>
         <tr class="term">
           <td class="num">2</td>
@@ -50,16 +50,23 @@
             <span class="where">Build the lab</span>
             <div class="cmdwrap"><code class="cmd">make up &amp;&amp; make verify</code></div>
           </td>
-          <td class="say">Builds kind with Istio ambient, kgateway, agentgateway, kagent + kmcp, Agent Substrate, Keycloak, and observability, then every demo's parties. Each party gets its own namespaces, identities and hostnames. The verify run must end with <strong>all checks passed</strong>.</td>
+          <td class="say">Every layer and demo. Must end with <strong>all checks passed</strong>.</td>
+        </tr>
+        <tr class="port">
+          <td class="num">3</td>
+          <td class="act">
+            <span class="where">Right screen</span>
+            <span class="click">Open <strong>https://kagent.sterling.lab</strong>, agent <strong>sv-agents / bob-assistant</strong></span>
+          </td>
+          <td class="say">Signed in as <strong>bob / bob-demo</strong>.</td>
         </tr>
         </tbody>
       </table>
     </div>
-    <p class="setup-after">Then open <strong>https://kagent.sterling.lab</strong> on the right screen and start the run-through. Pick agent <strong>sv-agents / bob-assistant</strong>.</p>
     <div class="afters">
       <div class="after">
         <span class="after-label">Running it again</span>
-        <p><code>make reset</code> rewinds every story: a fresh agent key, empty follow-ups, and Alice's grants and terms back to her defaults. Nothing is rebuilt.</p>
+        <p><code>make reset</code></p>
       </div>
     </div>
     <div class="models-block">
@@ -84,7 +91,6 @@
 
   <section class="runthrough">
     <h2>The run-through</h2>
-    <p class="run-note">kagent on the right and the terminal on the left. Bob asks, and the platform decides.</p>
     <div class="table-scroll">
       <table>
         <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
@@ -99,7 +105,6 @@
           <td class="say">
             <span class="chip tier">Sign-in</span>
             <span class="lede">The app never sees Bob's password.</span>
-            The kgateway edge runs the login against Sterling &amp; Vance's Keycloak, then hands kagent Bob's access token and ID token. kagent only proves who he is to it.
           </td>
         </tr>
         <tr class="port">
@@ -111,7 +116,6 @@
           <td class="say">
             <span class="chip through">Delegated</span>
             <span class="lede">Acting for bob. Issued to mcp-waypoint. Audience bob-workspace. 120 seconds.</span>
-            Bob's own token never reached the tool. The waypoint in front of Bob's tools swapped it (RFC 8693) for a token that only this workspace accepts, for two minutes. <strong>Steal it and you get Bob's workspace for two minutes, and nothing else.</strong>
           </td>
         </tr>
         <tr class="port">
@@ -123,7 +127,6 @@
           <td class="say">
             <span class="chip through">Two identities</span>
             <span class="lede">Bob's book, and only because both halves checked out.</span>
-            The waypoint allows the call only when the caller's <em>workload</em> is one of the firm's agents (its SPIFFE identity, from the mesh) <em>and</em> the <em>user</em> is an advisor (Bob's token). Either half alone is refused.
           </td>
         </tr>
         <tr class="port">
@@ -136,7 +139,6 @@
           <td class="say">
             <span class="chip held">Bob approves</span>
             <span class="lede">Reads are automatic. Writes wait for Bob.</span>
-            The agent stops and asks. Nothing is written until Bob says yes, and the entry records who asked (bob) and who carried it out (the waypoint).
           </td>
         </tr>
         <tr class="port">
@@ -148,7 +150,6 @@
           <td class="say">
             <span class="chip refused">Not his to ask</span>
             <span class="lede">For Bob, that tool doesn't exist.</span>
-            <code>export_book</code> is compliance-only, so the waypoint's per-tool policy removes it from the list the agent sees. A prompt can't reach a tool the agent was never shown.
           </td>
         </tr>
         <tr class="port">
@@ -160,7 +161,6 @@
           <td class="say">
             <span class="chip through">Cross App Access</span>
             <span class="lede">Another company answers, as its own account for Bob.</span>
-            Ledgerline is a SaaS Sterling &amp; Vance subscribes to. The firm's IdP issued an ID-JAG for that one approved connection, and Ledgerline turned it into a five-minute token of its own. <strong>There's no consent screen and no shared credential, and the agent never held either token.</strong>
           </td>
         </tr>
         <tr class="term">
@@ -171,8 +171,7 @@
           </td>
           <td class="say">
             <span class="chip refused">Every bypass fails</span>
-            <span class="lede">Twelve checks, all from real mesh identities.</span>
-            The checks try the right user from the wrong workload, a call with no user token, dialing a pod past the waypoint, skipping the ID token, and walking straight to Ledgerline with Bob's own token. <strong>Each one is refused by a different layer.</strong>
+            <span class="lede">17 checks, all from real mesh identities.</span>
           </td>
         </tr>
         <tr class="port">
@@ -184,7 +183,6 @@
           <td class="say">
             <span class="chip tier">Where it ran</span>
             <span class="lede">Agents, waypoint, tools and egress: every hop is mTLS with a named identity.</span>
-            Nothing talks pod to pod across companies. The firm meets Ledgerline only at the edge, the way two companies meet on the internet.
           </td>
         </tr>
         </tbody>

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Identity continuity: S&V's Keycloak brokers workforce logins to an ordered
-# chain of upstream IdPs (Auth0 first) and falls back to its own accounts. The
+# chain of upstream IdPs (ENTERPRISE_IDP, config/lab.env) and falls back to
+# its own accounts. The
 # continuity controller (apps/continuity) health-checks each upstream and
 # re-points Keycloak's login at the first healthy tier. Keycloak remains the
 # issuer everything trusts. Needs 45-identity. Idempotent.
@@ -23,15 +24,24 @@ K create secret generic continuity-controller -n sv-identity \
   --from-literal=client-id=continuity-controller \
   --from-literal=client-secret="$(lab_secret SV_CONTINUITY_CLIENT_SECRET)" \
   --dry-run=client -o yaml | K apply -f - >/dev/null
-if [ -n "${AUTH0_CLIENT_ID:-}" ] && [ -n "${AUTH0_CLIENT_SECRET:-}" ]; then
-  K create secret generic upstream-auth0 -n sv-identity \
-    --from-literal=client-id="$AUTH0_CLIENT_ID" --from-literal=client-secret="$AUTH0_CLIENT_SECRET" \
-    --dry-run=client -o yaml | K apply -f - >/dev/null
-  ok "sv-identity/continuity-controller  sv-identity/upstream-auth0"
-else
-  ok "sv-identity/continuity-controller"
-  warn "auth0 tier is NotConfigured until AUTH0_CLIENT_ID and AUTH0_CLIENT_SECRET are in .env (then re-run this layer)"
-fi
+. "$LAB_ROOT/scripts/idp.sh"
+CHAIN=$(idp_chain)
+for n in $IDP_UPSTREAMS; do
+  case " $CHAIN " in *" $n "*) ;; *) continue ;; esac
+  N=$(echo "$n" | tr '[:lower:]' '[:upper:]')
+  if [ -z "$(_idp_var "$n" CLIENT_ID)" ]; then
+    warn "$n tier is NotConfigured until ${N}_CLIENT_ID is in .env (then re-run this layer)"
+  elif [ "$(idp_client_auth "$n")" = private_key_jwt ]; then
+    K delete secret "upstream-$n" -n sv-identity --ignore-not-found >/dev/null
+    ok "$n: private_key_jwt with S&V's broker key (make xaa-keys for its JWKS)"
+  else
+    K create secret generic "upstream-$n" -n sv-identity \
+      --from-literal=client-id="$(_idp_var "$n" CLIENT_ID)" --from-literal=client-secret="$(_idp_var "$n" CLIENT_SECRET)" \
+      --dry-run=client -o yaml | K apply -f - >/dev/null
+    ok "$n: client_secret_post (sv-identity/upstream-$n)"
+  fi
+done
+ok "sv-identity/continuity-controller  (chain: $(echo "$CHAIN" | sed 's/ / -> /g'))"
 
 step "Egress waypoint (sv-egress)"
 apply_tmpl "$D/egress.yaml"
@@ -46,18 +56,44 @@ apply_tmpl "$D/controller.yaml"
 # still has the cluster-wide grant
 K delete clusterrolebinding,clusterrole continuity-controller-partitions --ignore-not-found >/dev/null
 rollout sv-identity deploy/continuity-controller
+# The tiers follow ENTERPRISE_IDP: which IdPs and in what order. Each existing
+# tier keeps its failover rules (the operators' and the Observatory's rule
+# builder's); issuers and token settings follow .env. An upstream that issues
+# ID-JAGs keeps the user's tokens (storeTokens, with a refresh token) so the
+# egress can have it vouch for them (docs/IDENTITY-FLOWS.md).
+desired=$(for n in $CHAIN; do
+  if [ "$n" = keycloak ]; then jq -nc '{name: "keycloak", displayName: "Sterling & Vance (local)", type: "local"}'
+  else
+    store=false; if echo " $IDP_ISSUES_IDJAG " | grep -q " $n "; then store=true; fi
+    jq -nc --arg n "$n" --arg iss "$(_idp_var "$n" ISSUER)" --arg cid "$(_idp_var "$n" CLIENT_ID)" \
+      --arg auth "$(idp_client_auth "$n")" --argjson store "$store" '{name: $n,
+      displayName: ({auth0: "Auth0", gluu: "Gluu"}[$n] // $n), type: "oidc",
+      oidc: ({issuer: $iss, clientID: $cid, clientAuth: $auth}
+        + (if $auth == "private_key_jwt" then {clientAssertionSigningAlg: "PS256"} else {clientSecretRef: {name: "upstream-\($n)"}} end)
+        + (if $store then {scopes: ["openid", "email", "profile", "offline_access"], storeTokens: true} else {} end)),
+      failoverWhen: {unreachable: true, serverError: true, invalidDiscovery: true, latencyAboveMs: 1500}}'
+  fi
+done | jq -sc .)
 if ! K get identitycontinuity sterling-vance -n sv-identity >/dev/null 2>&1; then
-  # without an issuer there is no upstream tier, only S&V's own accounts
-  if [ -n "$AUTH0_ISSUER" ]; then render "$D/identitycontinuity.yaml"
-  else render "$D/identitycontinuity.yaml" | yq 'del(.spec.tiers[] | select(.name == "auth0"))'; fi | K apply -f - >/dev/null
-elif [ -n "$AUTH0_ISSUER" ]; then
-  # the spec is the operators' now; only follow a changed AUTH0_ISSUER
-  i=$(K get idc sterling-vance -n sv-identity -o json | jq '[.spec.tiers[].name] | index("auth0") // empty')
-  cur=$([ -n "$i" ] && K get idc sterling-vance -n sv-identity -o jsonpath="{.spec.tiers[$i].oidc.issuer}")
-  if [ -z "$i" ]; then warn "the auth0 tier was removed from the IdentityContinuity; AUTH0_ISSUER is not applied"
-  elif [ "$cur" != "$AUTH0_ISSUER" ]; then
-    K patch idc sterling-vance -n sv-identity --type json -p "[{\"op\":\"replace\",\"path\":\"/spec/tiers/$i/oidc/issuer\",\"value\":\"$AUTH0_ISSUER\"}]" >/dev/null
-    ok "auth0 tier issuer: $cur -> $AUTH0_ISSUER"
+  render "$D/identitycontinuity.yaml" | T="$desired" yq '.spec.tiers = env(T)' | K apply -f - >/dev/null
+else
+  cur=$(K get idc sterling-vance -n sv-identity -o json | jq -c '.spec.tiers')
+  # an existing tier keeps what operators set (display name, enabled, failover
+  # rules); .env sets its type, issuer, secret and token settings
+  merged=$(jq -nc --argjson d "$desired" --argjson c "$cur" '$d | map(. as $t
+    | ([$c[] | select(.name == $t.name)][0]) as $old
+    | if $old == null then $t
+      else ($old * ($t | del(.displayName, .failoverWhen)))
+        | if .oidc.clientAuth == "private_key_jwt" then del(.oidc.clientSecretRef) else . end end)')
+  # every S&V caller of an upstream goes through the egress waypoint
+  egress=$(render "$D/identitycontinuity.yaml" | yq -o json -I0 '.spec.egress')
+  if [ "$(K get idc sterling-vance -n sv-identity -o json | jq -cS '.spec.egress | del(.internalDomains)')" != "$(echo "$egress" | jq -cS .)" ]; then
+    K patch idc sterling-vance -n sv-identity --type merge -p "{\"spec\":{\"egress\":$egress}}" >/dev/null
+    ok "egress: $(echo "$egress" | jq -c .)"
+  fi
+  if [ "$(echo "$cur" | jq -cS .)" != "$(echo "$merged" | jq -cS .)" ]; then
+    K patch idc sterling-vance -n sv-identity --type merge -p "{\"spec\":{\"tiers\":$merged}}" >/dev/null
+    ok "tiers: $(echo "$cur" | jq -r 'map(.name) | join(" -> ")') => $(echo "$merged" | jq -r 'map(.name) | join(" -> ")')"
   fi
 fi
 # a latency rule at or above the probe timeout can never fire (the probe times

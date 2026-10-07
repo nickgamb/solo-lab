@@ -1,11 +1,13 @@
 # Identity continuity
 
 Sterling & Vance's Keycloak (`https://idp.sterling.lab`, realm `sterling-vance`)
-brokers workforce sign-in to an ordered chain of upstream IdPs and falls back
-to its own accounts. Keycloak stays the only issuer anything in the lab
-trusts; an upstream only authenticates the person. When the upstream goes
-down, new sign-ins move to the next healthy tier and nothing downstream
-changes: same issuer, same `sub`, same groups.
+brokers workforce sign-in to an ordered chain of upstream IdPs
+(`ENTERPRISE_IDP`) and falls back to its own accounts. S&V's own services
+trust only Keycloak. When an upstream goes down, new sign-ins move to the next
+healthy tier and nothing downstream changes: same issuer, same `sub`, same
+groups. An upstream that issues ID-JAGs (Gluu) also vouches for its users to
+other companies (Cross App Access), with the same fallback
+([IDENTITY-FLOWS.md](IDENTITY-FLOWS.md#2-cross-app-access-id-jag-to-a-saas)).
 
 [![Identity continuity at 4x speed: the upstream IdP signing people in, a simulated outage at the firm's egress, failover to S&V's own accounts, and failback](videos/identity-continuity.gif)](videos/identity-continuity.mp4)
 
@@ -20,12 +22,43 @@ kubectl --context kind-solo-lab get idc -n sv-identity
 
 ## The resource
 
-The installed rule is `platform/47-continuity/identitycontinuity.yaml`: Auth0
-first, S&V's local accounts second, automatic failback. Without `AUTH0_ISSUER`
-it is installed with the local tier only. It is applied once; after that the
-spec belongs to its operators (the Observatory rule builder edits it), and
-re-running the layer changes only the auth0 tier's issuer, when
-`AUTH0_ISSUER` has changed.
+The tiers come from `ENTERPRISE_IDP` in `config/lab.env` (default
+`auth0,keycloak`): each upstream in order, then `keycloak`, S&V's own
+accounts, always last. An upstream without `<NAME>_ISSUER` in `.env` is left
+out, so with no Auth0 tenant the lab runs on local accounts only. Failback is
+automatic (`platform/47-continuity/identitycontinuity.yaml`).
+
+Every IdP in the chain is trusted for S&V's workforce: a user who signs in
+through it is linked to the S&V account with the same verified email. Chain
+only IdPs that are authoritative for S&V's users. Accounts with role
+`local-only` (the `platform-admins` group: break-glass and platform admins)
+are never linked to an upstream. Only the active tier's IdP is enabled in
+Keycloak; the others keep their users' links but can't sign anyone in, not
+even by `kc_idp_hint`.
+
+S&V's broker authenticates to an upstream with `private_key_jwt` (tier
+`oidc.clientAuth`), signing with a PS256 realm key kept for that alone; its
+public half is in the realm's JWKS and in `make xaa-keys`
+(`sv-upstream-client.jwks.json`). An upstream given `<NAME>_CLIENT_SECRET` in
+`.env` uses `client_secret_post` instead (the Auth0 setup below).
+
+Each upstream's ServiceEntry is exported to `sv-identity` and to the
+namespaces in `spec.egress.exportTo` (`agentgateway-system`, where S&V's
+egress has upstreams vouch for users), so every S&V call to an upstream
+leaves through `sv-egress/egress-waypoint`, and a partition there cuts all
+of them. Cross App Access follows `status.active` the same way sign-in does.
+
+Re-running the layer applies `ENTERPRISE_IDP` and `.env` (which tiers, their
+order, issuers, client secrets, token settings). What operators set on a tier
+(display name, enabled, failover rules, through the Observatory rule builder
+or by hand) is kept.
+
+| `ENTERPRISE_IDP` | Sign-in |
+| --- | --- |
+| `keycloak` | S&V's own accounts |
+| `auth0,keycloak` (default) | Auth0, else S&V's own accounts |
+| `gluu,keycloak` | Gluu, else S&V's own accounts; Gluu also vouches for Bob in Cross App Access ([GLUU.md](GLUU.md)) |
+| `gluu,auth0,keycloak` | any order; `keycloak` last |
 
 ### What the broker realm must already have
 
@@ -214,8 +247,8 @@ slash (`https://<tenant>.us.auth0.com/`). Unset, the lab has no auth0 tier.
    `PATCH /api/v2/users/{id}` with `{"email_verified": true}` from the
    Management API Explorer). Unverified emails are refused at Keycloak.
 
-4. **Give the lab the tenant and credentials** in `.env`, then install the
-   layer again:
+4. **Give the lab the tenant and credentials** in `.env` (`auth0` is in the
+   default `ENTERPRISE_IDP`), then install the layer again:
 
    ```
    AUTH0_ISSUER=https://<tenant>.us.auth0.com/
@@ -235,6 +268,10 @@ slash (`https://<tenant>.us.auth0.com/`). Unset, the lab has no auth0 tier.
    ```
 
 Bob's groups come from his S&V account, not from Auth0.
+
+## Gluu setup
+
+Gluu as S&V's enterprise IdP: [GLUU.md](GLUU.md#sv-enterprise-idp-gluu).
 
 ## Another upstream IdP
 

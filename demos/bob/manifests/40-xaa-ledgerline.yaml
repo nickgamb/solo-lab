@@ -2,13 +2,17 @@
 # Owned by S&V, on the firm's egress gateway (ai-gateway): anything that leaves
 # the firm leaves here, and cross-company credentials never reach the agent.
 #
-#   requesting app   kagent (the app Bob signed into); ai-gateway is its back-channel
-#   subject          Bob's ID token for kagent. ai-gateway gets it itself: S&V
-#                    Keycloak exchanges the access token the agent carries for
-#                    the same sign-in's ID token (idtoken-exchange, below)
-#   enterprise IdP   S&V Keycloak + PR #49998: ID token -> ID-JAG, for the approved
-#                    connection (scope xaa-ledgerline) only
-#   resource AS      Ledgerline Keycloak: ID-JAG -> Ledgerline access token (RFC 7523)
+#   requesting app   kagent (the app Bob signed into); the egress is its back
+#                    channel. Users' stored upstream tokens: client xaa-egress
+#   subject          Bob's ID token from the enterprise IdP that vouches for
+#                    him (idtoken-exchange, below): the first upstream in
+#                    ENTERPRISE_IDP that issues ID-JAGs and where Bob has an
+#                    account, else S&V's Keycloak
+#   enterprise IdP   that IdP: ID token -> ID-JAG for the approved connection
+#                    (scope xaa-ledgerline), through xaa-relay, which
+#                    authenticates as S&V's client there and checks the ID-JAG
+#   resource AS      Ledgerline's (RESOURCE_AS): ID-JAG -> Ledgerline access
+#                    token (RFC 7523), S&V authenticating with private_key_jwt
 #
 # Discovery lane: the kagent controller (no user) may list Ledgerline's public
 # tool catalog; it can never obtain a Ledgerline token.
@@ -47,23 +51,30 @@ spec:
         - >-
           source.identity.namespace == "sv-agents" && source.identity.serviceAccount in ["bob-assistant", "advisor-desk"]
           && "advisors" in jwt.groups
-    # The subject of the ID-JAG exchange: Bob's ID token, from S&V's IdP, for
-    # the access token just verified. It replaces any x-id-token the caller sent.
+    # The subject of the ID-JAG exchange: Bob's ID token, from the enterprise
+    # IdP that vouches for him, for the access token just verified. It
+    # replaces any x-id-token the caller sent.
     #
     # Why not from the agent: kagent passes an agent the caller's access token,
     # not the ID token, and neither edition has a setting to pass it. Why not
-    # agentgateway's own oauthTokenExchange: it requires
-    # token_type Bearer in the response, while RFC 8693 2.2.1 has the IdP
-    # return N_A for a token that isn't an access token, as Keycloak does for
-    # an ID token. So a small external-auth step does the RFC 8693 exchange
-    # (apps/idtoken-exchange), the same on both editions.
-    extAuth:
+    # agentgateway's own oauthTokenExchange: it requires token_type Bearer in
+    # the response, while RFC 8693 2.2.1 has the IdP return N_A for a token
+    # that isn't an access token, as Keycloak does for an ID token. So an
+    # external processor (apps/idtoken-exchange) sets it, the same on both
+    # editions. It gets the token verified above as metadata, request headers
+    # only, and the request fails closed if it can't answer.
+    extProc:
       backendRef: {kind: Service, name: idtoken-exchange, port: 8080}
-      http:
-        addRequestHeaders:
-          x-subject-token: 'jwt.rawToken.unredacted()'
-        allowedRequestHeaders: []               # the verified token above, nothing else
-        allowedResponseHeaders: [x-id-token]
+      failureMode: FailClosed
+      metadataContext:
+        xaa: {subject_token: 'jwt.rawToken.unredacted()'}
+      processingOptions:
+        requestHeaderMode: Send
+        requestBodyMode: None
+        requestTrailerMode: Skip
+        responseHeaderMode: Skip
+        responseBodyMode: None
+        responseTrailerMode: Skip
 ---
 apiVersion: ${AGW_BACKEND_API}
 kind: ${AGW_BACKEND_KIND}
@@ -86,35 +97,27 @@ spec:
               subjectToken:
                 source: {header: {name: x-id-token}}
                 tokenType: IdToken
-              audience: https://idp.${LEDGERLINE_DOMAIN}/realms/ledgerline
-              scopes: [xaa-ledgerline, research:read]     # the approved connection, requested from S&V's IdP
-              accessTokenScopes: []                       # Ledgerline grants what the ID-JAG carries
+              audience: ${LEDGERLINE_AS_ISSUER}                # Ledgerline's AS: the ID-JAG is for it alone
+              scopes: [xaa-ledgerline, research:read]     # the approved connection, requested from the enterprise IdP
+              accessTokenScopes: [research:read]          # what Ledgerline's token may do
               identityProvider:
-                backendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}
-                path: /realms/sterling-vance/protocol/openid-connect/token
-                clientAuth:
-                  clientId: kagent
-                  method: ClientSecretBasic
-                  secretRef: {name: kagent-client, key: clientSecret}
+                # xaa-relay picks the IdP by the subject token's issuer and
+                # authenticates as S&V's client there: no IdP secret here
+                backendRef: {kind: Service, name: xaa-relay, port: 8080}
+                path: /op/token
+                clientAuth: {clientId: kagent, method: ClientSecretPost}
               resourceAuthorizationServer:
-                # Ledgerline's token endpoint, across the "internet" (the edge), over TLS.
-                backendRef: {group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: ledgerline-idp}
-                path: /realms/ledgerline/protocol/openid-connect/token
+                # Ledgerline's token endpoint, across the "internet", through xaa-relay
+                backendRef: {kind: Service, name: xaa-relay, port: 8080}
+                path: /ras/token
                 clientAuth:
-                  clientId: sterling-vance-kagent       # S&V's registration at Ledgerline
-                  method: ClientSecretBasic
-                  secretRef: {name: ledgerline-client, key: clientSecret}
----
-# Ledgerline's authorization server, reached through the edge with the lab CA.
-apiVersion: ${AGW_BACKEND_API}
-kind: ${AGW_BACKEND_KIND}
-metadata: {name: ledgerline-idp, namespace: agentgateway-system}
-spec:
-  static: {host: idp.${LEDGERLINE_DOMAIN}, port: 443}
-  policies:
-    tls:
-      sni: idp.${LEDGERLINE_DOMAIN}
-      caCertificateRefs: [{name: lab-ca-bundle}]
+                  clientId: ${SV_CLIENT_AT_LEDGERLINE}     # S&V's registration at Ledgerline
+                  method: PrivateKeyJwt
+                  privateKeyJwt:
+                    alg: RS256
+                    kid: ${SV_XAA_CLIENT_KID}
+                    assertionAudience: ${LEDGERLINE_AS_ISSUER}            # the AS by its identifier (RFC 7523bis)
+                    signingKeyRef: {name: xaa-client-key, key: signingKey}
 ---
 # ---- discovery lane: kagent controller lists Ledgerline's public catalog ---------
 apiVersion: gateway.networking.k8s.io/v1
@@ -159,12 +162,32 @@ spec:
         matchExpressions:
         - 'source.identity.namespace == "kagent" && source.identity.serviceAccount == "kagent-controller"'
 ---
-# ---- idtoken-exchange: ai-gateway's ext-auth step (apps/idtoken-exchange) ------
-# Authenticates to S&V's IdP as kagent, the requesting app whose ID token it
-# fetches (the same client ai-gateway uses for the ID-JAG exchange).
+# ---- idtoken-exchange: ai-gateway's external processor (apps/idtoken-exchange)
+# The enterprise IdPs that may vouch for Bob (OPS, scripts/idp.sh xaa_env) and
+# S&V's client at each (the egress's key). The IdP of Bob's session vouches
+# while S&V's identity continuity has it active; S&V's Keycloak vouches for
+# its own sessions and for upstreams that don't issue ID-JAGs. It reads Bob's
+# stored upstream tokens from S&V's Keycloak as xaa-egress, which Keycloak
+# allows for those upstreams only (Identity Brokering API v2).
 apiVersion: v1
 kind: ServiceAccount
 metadata: {name: idtoken-exchange, namespace: agentgateway-system}
+---
+# read the continuity decision, nothing else
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: idtoken-exchange-continuity, namespace: sv-identity}
+rules:
+- apiGroups: [continuity.lab.solo.io]
+  resources: [identitycontinuities]
+  resourceNames: [sterling-vance]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: idtoken-exchange-continuity, namespace: sv-identity}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: idtoken-exchange-continuity}
+subjects: [{kind: ServiceAccount, name: idtoken-exchange, namespace: agentgateway-system}]
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -177,7 +200,7 @@ spec:
       labels: {app: idtoken-exchange}
     spec:
       serviceAccountName: idtoken-exchange
-      automountServiceAccountToken: false
+      automountServiceAccountToken: true     # the continuity read above
       securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
       topologySpreadConstraints:
       - maxSkew: 1
@@ -188,27 +211,34 @@ spec:
       - name: idtoken-exchange
         image: ${IDTOKEN_EXCHANGE_IMAGE}
         env:
-        - {name: TOKEN_URL, value: http://keycloak.sv-identity/realms/sterling-vance/protocol/openid-connect/token}
-        - {name: CLIENT_ID, value: kagent}
-        ports: [{name: http, containerPort: 8080}]
-        readinessProbe: {httpGet: {path: /healthz, port: http}}
+        - {name: OPS, value: '${XAA_OPS}'}
+        - {name: CONTINUITY, value: sv-identity/sterling-vance}
+        - {name: BROKER_CLIENT_ID, value: xaa-egress}         # reads stored upstream tokens, with the egress's key
+        ports:
+        - {name: grpc, containerPort: 8080}
+        - {name: health, containerPort: 8081}
+        readinessProbe: {httpGet: {path: /healthz, port: health}}
         resources:
           requests: {cpu: 10m, memory: 16Mi}
           limits: {memory: 64Mi}
         securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
-        volumeMounts: [{name: client, mountPath: /var/run/secrets/client, readOnly: true}]
+        volumeMounts: [{name: op, mountPath: /var/run/secrets/op, readOnly: true}]
       volumes:
-      - name: client
-        secret: {secretName: kagent-client}
+      - name: op
+        projected:
+          sources:
+          - secret: {name: kagent-client, items: [{key: clientSecret, path: keycloak}]}
+          - secret: {name: egress-client-key, items: [{key: signingKey, path: broker.key}, {key: signingKey, path: gluu.key}]}
+          - secret: {name: op-gluu, optional: true, items: [{key: clientSecret, path: gluu}]}
 ---
 apiVersion: v1
 kind: Service
 metadata: {name: idtoken-exchange, namespace: agentgateway-system}
 spec:
   selector: {app: idtoken-exchange}
-  ports: [{name: http, port: 8080, targetPort: http}]
+  ports: [{name: grpc, port: 8080, targetPort: grpc, appProtocol: kubernetes.io/h2c}]
 ---
-# Only ai-gateway asks it, and only on the check port.
+# Only ai-gateway calls it, and only on the ext_proc port.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata: {name: idtoken-exchange-callers, namespace: agentgateway-system}
@@ -218,4 +248,77 @@ spec:
   rules:
   - from: [{source: {principals: [cluster.local/ns/agentgateway-system/sa/ai-gateway]}}]
     to: [{operation: {ports: ["8080"]}}]
-
+---
+# ---- xaa-relay: the token requests of ai-gateway's crossAppAccess (apps/xaa-relay)
+# ID token -> ID-JAG at the enterprise IdP that issued the ID token, as S&V's
+# client there, checking the ID-JAG; ID-JAG -> access token at Ledgerline's
+# AS, relayed as the gateway signed it. Both legs logged, tokens redacted.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: xaa-relay, namespace: agentgateway-system}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: xaa-relay, namespace: agentgateway-system}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: xaa-relay}}
+  template:
+    metadata:
+      labels: {app: xaa-relay}
+    spec:
+      serviceAccountName: xaa-relay
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector: {matchLabels: {app: xaa-relay}}
+      containers:
+      - name: xaa-relay
+        image: ${XAA_RELAY_IMAGE}
+        env:
+        - {name: OPS, value: '${XAA_OPS}'}
+        - {name: RAS_TOKEN_URL, value: "${LEDGERLINE_AS_TOKEN_URL}"}
+        # the one connection it makes requests for
+        - {name: AUDIENCE, value: "${LEDGERLINE_AS_ISSUER}"}
+        - {name: RAS_CLIENT_ID, value: "${SV_CLIENT_AT_LEDGERLINE}"}
+        - {name: SCOPES, value: "xaa-ledgerline research:read"}
+        - {name: CA_FILE, value: /etc/lab-ca/ca.crt}           # Ledgerline's Keycloak, through the edge
+        ports: [{name: http, containerPort: 8080}]
+        readinessProbe: {httpGet: {path: /healthz, port: http}}
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {memory: 64Mi}
+        securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+        volumeMounts:
+        - {name: op, mountPath: /var/run/secrets/op, readOnly: true}
+        - {name: lab-ca, mountPath: /etc/lab-ca, readOnly: true}
+      volumes:
+      - name: op
+        projected:
+          sources:
+          - secret: {name: kagent-client, items: [{key: clientSecret, path: keycloak}]}
+          - secret: {name: egress-client-key, items: [{key: signingKey, path: broker.key}, {key: signingKey, path: gluu.key}]}
+          - secret: {name: op-gluu, optional: true, items: [{key: clientSecret, path: gluu}]}
+      - name: lab-ca
+        configMap: {name: lab-ca-bundle}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: xaa-relay, namespace: agentgateway-system}
+spec:
+  selector: {app: xaa-relay}
+  ports: [{name: http, port: 8080, targetPort: http}]
+---
+# Only ai-gateway calls it.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: xaa-relay-callers, namespace: agentgateway-system}
+spec:
+  selector: {matchLabels: {app: xaa-relay}}
+  action: ALLOW
+  rules:
+  - from: [{source: {principals: [cluster.local/ns/agentgateway-system/sa/ai-gateway]}}]
+    to: [{operation: {ports: ["8080"]}}]

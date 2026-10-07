@@ -1,8 +1,8 @@
-# S&V's login chain: Auth0 while it is healthy, else the firm's own accounts.
-# Keycloak stays the only issuer relying parties trust either way. Installed
-# once; after that the spec belongs to its operators (the Observatory's rule
-# builder edits it), so re-running the layer only updates the auth0 tier's
-# issuer from AUTH0_ISSUER. With AUTH0_ISSUER unset the auth0 tier is left out.
+# S&V's login chain (ENTERPRISE_IDP, config/lab.env): each upstream IdP while
+# it is healthy, in order, else the firm's own accounts. Keycloak stays the
+# issuer S&V's own services trust either way. The install sets spec.tiers from
+# ENTERPRISE_IDP; each tier's failover rules belong to its operators (the
+# Observatory's rule builder edits them) and survive re-running the layer.
 apiVersion: continuity.lab.solo.io/v1alpha1
 kind: IdentityContinuity
 metadata:
@@ -14,17 +14,9 @@ spec:
       url: http://keycloak.sv-identity.svc
       realm: sterling-vance
       credentialsRef: {name: continuity-controller}
-  egress: {namespace: sv-egress, waypoint: egress-waypoint}
-  tiers:
-  - name: auth0
-    displayName: Auth0
-    type: oidc
-    oidc:
-      issuer: ${AUTH0_ISSUER}
-      clientSecretRef: {name: upstream-auth0}   # client-id + client-secret, from .env
-    failoverWhen: {unreachable: true, serverError: true, invalidDiscovery: true, latencyAboveMs: 1500}
-  - name: keycloak
-    displayName: Sterling & Vance (local)
-    type: local
+  # S&V's egress gateway has upstreams vouch for users (Cross App Access):
+  # its calls to them leave through the same waypoint
+  egress: {namespace: sv-egress, waypoint: egress-waypoint, exportTo: [agentgateway-system]}
+  tiers: []   # from ENTERPRISE_IDP (install.sh)
   health: {intervalSeconds: 5, timeoutSeconds: 2, unhealthyThreshold: 2, healthyThreshold: 3}
   failback: Automatic

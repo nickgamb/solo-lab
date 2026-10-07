@@ -40,7 +40,7 @@ metadata:
 rules:
 - apiGroups: [""]
   resources: [secrets]
-  resourceNames: [continuity-controller, upstream-auth0]
+  resourceNames: [continuity-controller, upstream-auth0, upstream-gluu]
   verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
