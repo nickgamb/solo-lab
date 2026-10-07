@@ -4,13 +4,17 @@ package probe
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -25,6 +29,14 @@ type Discovery struct {
 	JWKSURI               string `json:"jwks_uri"`
 	UserinfoEndpoint      string `json:"userinfo_endpoint,omitempty"`
 	EndSessionEndpoint    string `json:"end_session_endpoint,omitempty"`
+	// What the IdP says it supports, for the trust checks. Absent means
+	// not published, not unsupported.
+	ScopesSupported                   []string `json:"scopes_supported,omitempty"`
+	ClaimsSupported                   []string `json:"claims_supported,omitempty"`
+	ACRValuesSupported                []string `json:"acr_values_supported,omitempty"`
+	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported,omitempty"`
+	TokenEndpointAuthSigningAlgs      []string `json:"token_endpoint_auth_signing_alg_values_supported,omitempty"`
+	CodeChallengeMethodsSupported     []string `json:"code_challenge_methods_supported,omitempty"`
 }
 
 type Prober struct {
@@ -121,6 +133,62 @@ func (p *Prober) Broker(ctx context.Context, url string, timeout time.Duration) 
 		return tiers.Result{Kind: tiers.InvalidDiscovery, Message: "broker discovery has no issuer", Latency: time.Since(start)}, ""
 	}
 	return tiers.Result{Kind: tiers.Healthy, Message: "broker reachable", Latency: time.Since(start)}, d.Issuer
+}
+
+// Callback outcomes.
+const (
+	CallbackRegistered = "Registered"
+	CallbackRefused    = "Refused"
+	CallbackUnknown    = "Unknown"
+)
+
+// Callback asks the IdP's authorization endpoint whether it accepts S&V's
+// client with the broker's callback, the way a relying party checks a
+// registration without a user: an authorization request with prompt=none
+// (and PKCE), redirects not followed. A registered callback is where the IdP
+// sends the answer (error=login_required, no session); an unregistered one is
+// never redirected to (OpenID Connect Core 3.1.2.6) and the IdP shows an
+// error instead. It creates no session and no user; the IdP may log a failed
+// silent sign-in.
+func (p *Prober) Callback(ctx context.Context, authz, clientID, callback string, timeout time.Duration) (string, string) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	verifier := make([]byte, 32)
+	state := make([]byte, 12)
+	_, _ = rand.Read(verifier)
+	_, _ = rand.Read(state)
+	sum := sha256.Sum256([]byte(base64.RawURLEncoding.EncodeToString(verifier)))
+	q := url.Values{
+		"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {callback}, "scope": {"openid"},
+		"prompt": {"none"}, "state": {base64.RawURLEncoding.EncodeToString(state)},
+		"code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}, "code_challenge_method": {"S256"},
+	}
+	sep := "?"
+	if strings.Contains(authz, "?") {
+		sep = "&"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, authz+sep+q.Encode(), nil)
+	if err != nil {
+		return CallbackUnknown, err.Error()
+	}
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return CallbackUnknown, "authorization endpoint: no answer"
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	resp.Body.Close()
+	loc := resp.Header.Get("Location")
+	switch {
+	case resp.StatusCode >= 300 && resp.StatusCode < 400 && strings.HasPrefix(loc, callback):
+		return CallbackRegistered, "the IdP answers at the broker's callback"
+	case resp.StatusCode >= 300 && resp.StatusCode < 400 && (strings.Contains(loc, "/error") || strings.Contains(loc, "error=")):
+		return CallbackRefused, "the IdP sent the request to its error page, not the broker's callback"
+	case resp.StatusCode >= 400 && resp.StatusCode < 500:
+		return CallbackRefused, fmt.Sprintf("the IdP refused the request (HTTP %d): client or callback not registered", resp.StatusCode)
+	case resp.StatusCode >= 500:
+		return CallbackUnknown, fmt.Sprintf("authorization endpoint: HTTP %d", resp.StatusCode)
+	}
+	return CallbackUnknown, fmt.Sprintf("HTTP %d without the broker's callback (the IdP may ignore prompt=none)", resp.StatusCode)
 }
 
 func (p *Prober) getJSON(ctx context.Context, url string, v any) (string, error) {

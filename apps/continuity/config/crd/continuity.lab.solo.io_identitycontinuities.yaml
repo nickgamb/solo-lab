@@ -671,6 +671,52 @@ spec:
                         oidc tiers: the callback the upstream client must allow,
                         <broker issuer>/broker/<name>/endpoint.
                       type: string
+                    trust:
+                      description: |-
+                        oidc tiers: S&V's registration at this IdP checked against what the
+                        IdP publishes, and whether it accepts the broker's callback. Run every
+                        10 minutes, on every spec change, and when the instance's
+                        continuity.lab.solo.io/check-trust annotation changes. Informational:
+                        selection only ever follows the probes.
+                      properties:
+                        checkedAt:
+                          format: date-time
+                          type: string
+                        checks:
+                          items:
+                            description: |-
+                              TrustCheck is one property of S&V's registration at an IdP. Unknown: the
+                              IdP doesn't publish what the check needs (many omit some discovery
+                              fields), which is not a failure.
+                            properties:
+                              message:
+                                type: string
+                              name:
+                                type: string
+                              result:
+                                enum:
+                                - Pass
+                                - Fail
+                                - Unknown
+                                type: string
+                            required:
+                            - name
+                            - result
+                            type: object
+                          type: array
+                          x-kubernetes-list-map-keys:
+                          - name
+                          x-kubernetes-list-type: map
+                        generation:
+                          description: The spec generation and check-trust annotation
+                            the checks ran for.
+                          format: int64
+                          type: integer
+                        requested:
+                          type: string
+                      required:
+                      - checkedAt
+                      type: object
                     type:
                       type: string
                   required:

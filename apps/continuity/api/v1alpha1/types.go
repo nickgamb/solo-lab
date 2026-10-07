@@ -362,6 +362,33 @@ type TierStatus struct {
 	Message              string       `json:"message,omitempty"`
 	ConsecutiveFailures  int32        `json:"consecutiveFailures,omitempty"`
 	ConsecutiveSuccesses int32        `json:"consecutiveSuccesses,omitempty"`
+	// oidc tiers: S&V's registration at this IdP checked against what the
+	// IdP publishes, and whether it accepts the broker's callback. Run every
+	// 10 minutes, on every spec change, and when the instance's
+	// continuity.lab.solo.io/check-trust annotation changes. Informational:
+	// selection only ever follows the probes.
+	// +optional
+	Trust *TrustStatus `json:"trust,omitempty"`
+}
+
+type TrustStatus struct {
+	CheckedAt metav1.Time `json:"checkedAt"`
+	// The spec generation and check-trust annotation the checks ran for.
+	Generation int64  `json:"generation,omitempty"`
+	Requested  string `json:"requested,omitempty"`
+	// +listType=map
+	// +listMapKey=name
+	Checks []TrustCheck `json:"checks,omitempty"`
+}
+
+// TrustCheck is one property of S&V's registration at an IdP. Unknown: the
+// IdP doesn't publish what the check needs (many omit some discovery
+// fields), which is not a failure.
+type TrustCheck struct {
+	Name string `json:"name"`
+	// +kubebuilder:validation:Enum=Pass;Fail;Unknown
+	Result  string `json:"result"`
+	Message string `json:"message,omitempty"`
 }
 
 type Transition struct {

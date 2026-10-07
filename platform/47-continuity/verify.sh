@@ -273,6 +273,42 @@ if [ "$(echo "$ORIG" | jq -r '.profile')" = null ]; then
   expect '^[0-9]+s$' "profile attribute $A removed" "$(within 20 profile_gone)"
 fi
 
+step "Trust: S&V's registration at each IdP"
+check_trust() { K annotate idc "$IC" -n "$NS" --overwrite continuity.lab.solo.io/check-trust="verify-$(date +%s)-$RANDOM" >/dev/null; }
+trust_of() { idc | jq -r --arg t "$1" '.status.tiers[] | select(.name==$t) | .trust.checks // [] | map("\(.name)=\(.result)") | join(" ")'; }
+consistent() { [ "$(K get idc "$IC" -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="TrustConsistent")].status}')" = "$1" ]; }
+check_trust
+expect '^[0-9]+s$' "TrustConsistent: every IdP accepts S&V's registration" "$(within 30 consistent True)"
+expect 'Callback=Pass ClientAuth=Pass PKCE=Pass Scopes=Pass Claims=Pass Assurance=Pass' \
+  "$T: callback registered, private_key_jwt and PS256, PKCE S256, scopes, identity claims, its acr values" "$(trust_of "$T")"
+[ -n "$NNS" ] && expect 'Callback=Pass .*Assurance=Pass' "$NEXT: the same" "$(trust_of "$NEXT")"
+# Drift at the IdP: S&V's client at S&V's own Keycloak loses the broker's
+# callback (as an admin there would), and the next check says so
+wfa() {  # wfa <path> [curl args]: S&V's own Keycloak's admin API, as its admin
+  local t; t=$(printf 'grant_type=password&client_id=admin-cli&username=admin&password=%s' "$(lab_secret_get SV_WORKFORCE_KC_ADMIN_PASSWORD)" \
+    | curl -s "http://127.0.0.1:$wlp/realms/master/protocol/openid-connect/token" --data @- | jq -r .access_token)
+  with_bearer "$t" curl -s "http://127.0.0.1:$wlp/admin/realms/workforce$1" "${@:2}"
+}
+BC=$(wfa "/clients?clientId=sterling-vance-broker" | jq -r '.[0].id // empty')
+REDIRECTS=$(wfa "/clients/$BC" | jq -c '.redirectUris')
+set_redirects() {
+  local f="$TMPD/client.json"
+  wfa "/clients/$BC" | jq -c --argjson r "$1" '.redirectUris = $r' >"$f"
+  wfa "/clients/$BC" -X PUT -H 'content-type: application/json' --data "@$f" -o /dev/null -w '%{http_code}'; rm -f "$f"
+}
+on_exit "set_redirects '$REDIRECTS' >/dev/null 2>&1"
+drift_at=$(date -u +%s)
+expect '^204$' "the broker's callback removed from S&V's client at $T" "$(set_redirects '["https://idp.'"$SV_DOMAIN"'/elsewhere"]')"
+check_trust
+expect '^[0-9]+s$' "TrustConsistent False: $T doesn't accept the broker's callback" "$(within 30 consistent False)"
+expect "$T Callback: the IdP refused" "the condition names the IdP and the check" \
+  "$(K get idc "$IC" -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="TrustConsistent")].message}')"
+expect '^[1-9]' "Warning event TrustMismatch" "$(events TrustMismatch "$drift_at")"
+expect "^$BASE\$" "informational: sign-ins stay where they were ($BASE)" "$(active)"
+expect '^204$' "callback restored" "$(set_redirects "$REDIRECTS")"
+check_trust
+expect '^[0-9]+s$' "TrustConsistent True again" "$(within 30 consistent True)"
+
 step "External upstream: ${UP:-none} through S&V's egress waypoint"
 # a NotConfigured tier (no credentials) is still probed: its outcome is in the
 # message ("...; probe: <result>")

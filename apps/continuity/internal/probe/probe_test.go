@@ -83,3 +83,39 @@ func TestOIDCUnreachable(t *testing.T) {
 		t.Errorf("closed server: %s %q", res.Kind, res.Message)
 	}
 }
+
+// The callback check: a registered callback is where the IdP answers a
+// prompt=none request; anything else isn't, and a 5xx says nothing either way.
+func TestCallback(t *testing.T) {
+	const cb = "https://idp.sterling.lab/realms/sterling-vance/broker/keycloak/endpoint"
+	cases := []struct {
+		name   string
+		answer func(w http.ResponseWriter, r *http.Request)
+		want   string
+	}{
+		{"registered", func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			if q.Get("prompt") != "none" || q.Get("code_challenge_method") != "S256" || q.Get("redirect_uri") != cb {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			http.Redirect(w, r, cb+"?error=login_required&state="+q.Get("state"), http.StatusFound)
+		}, CallbackRegistered},
+		{"refused with 400", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusBadRequest) }, CallbackRefused},
+		{"refused to an error page", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/error?error=invalid_request", http.StatusFound)
+		}, CallbackRefused},
+		{"login page shown", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("<form>")) }, CallbackUnknown},
+		{"5xx", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusBadGateway) }, CallbackUnknown},
+	}
+	for _, c := range cases {
+		srv := httptest.NewTLSServer(http.HandlerFunc(c.answer))
+		p := &Prober{client: srv.Client()}
+		p.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		got, msg := p.Callback(context.Background(), srv.URL+"/authorize", "sterling-vance-broker", cb, time.Second)
+		if got != c.want {
+			t.Errorf("%s: %s (%s), want %s", c.name, got, msg, c.want)
+		}
+		srv.Close()
+	}
+}
