@@ -67,7 +67,14 @@ else
     'del(.spec.ai.provider, .spec.policies) | .metadata.labels["lab.solo.io/llm-fallback"] = $f
      | .spec.ai.groups = [{providers: [$a]}, {providers: [$b]}]' | K apply -f - >/dev/null
 fi
-apply_tmpl "$D/route.yaml" "$D/policy.yaml"
+# API keys for callers outside the mesh (llm/external.yaml): only their
+# SHA-256 is in the cluster; the key itself is in .lab/secrets.env
+key=$(lab_secret LLM_API_KEY)
+jq -nc --arg h "sha256:$(printf '%s' "$key" | openssl dgst -sha256 -r | cut -d' ' -f1)" \
+  '{apiVersion: "v1", kind: "ConfigMap", metadata: {name: "llm-api-keys", namespace: "agentgateway-system",
+    labels: {"lab.solo.io/llm-api-keys": "true"}},
+    data: {developer: ({keyHash: $h, metadata: {id: "developer", user_id: "developer"}} | tojson)}}' | K apply -f - >/dev/null
+apply_tmpl "$D/route.yaml" "$D/policy.yaml" "$D/external.yaml"
 K annotate namespace agentgateway-system lab.solo.io/llm-provider="$P" lab.solo.io/llm-model="$MODEL" \
   lab.solo.io/llm-fallback="${F:+$F/$FMODEL}" --overwrite >/dev/null
 ok "llm -> $P ($MODEL)${F:+, then $F ($FMODEL)}"

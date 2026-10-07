@@ -3,6 +3,9 @@
 #   failover  a provider that answers 5xx or 429 (or not at all) is taken out
 #             of rotation for a while; with a fallback group (make llm
 #             LLM_FALLBACK=...) the next healthy one serves instead
+#   formats   OpenAI chat completions and Anthropic messages, either way
+#             round: the provider answers in its own API, the caller gets
+#             the one it asked in
 #   guards    prompts that try to override the agent's instructions are
 #             refused; card and social security numbers are masked before
 #             the prompt leaves for the provider, and again in the answer
@@ -20,6 +23,12 @@ spec:
         consecutiveFailures: 1
         duration: 30s
     ai:
+      # the request's API shape, translated to what the provider speaks
+      routes:
+        /v1/chat/completions: Completions
+        /v1/messages: Messages
+        /v1/models: Models
+        "*": Passthrough
       promptGuard:
         request:
         - regex:

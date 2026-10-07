@@ -139,6 +139,25 @@ else
   else res no "card and SSN masked before the model sees them (and in its answer)" "$(echo "$out" | tail -1) ${seen:0:200}"; fi
 fi
 
+# a developer outside the mesh, at https://llm.<firm>: an API key, either API
+ext() {  # ext <path> <body> [key]: the edge's answer, status last
+  local h=()
+  [ -n "${3:-}" ] && { printf 'authorization: Bearer %s' "$3" >"$TMPD/ext.h"; h=(-H @"$TMPD/ext.h"); }
+  curl -s -m 180 --cacert "$LAB_CA_DIR/ca.crt" -w '\n%{http_code}' "https://llm.$SV_DOMAIN$1" -H 'content-type: application/json' ${h[@]+"${h[@]}"} -d "$2"
+}
+msg='{"model": "any", "max_tokens": 400, "messages": [{"role": "user", "content": "Reply with exactly: hello"}]}'
+out=$(ext /v1/messages "$msg")
+if [ "$(echo "$out" | tail -1)" = 401 ]; then res ok "the model route from outside the mesh, no API key: refused"
+else res no "the model route from outside the mesh, no API key: refused" "$(echo "$out" | tail -1)"; fi
+if ! why=$(llm_ready); then
+  skipped "Anthropic-format call with an API key, answered by the firm's model: needs the model ($why)"
+else
+  out=$(ext /v1/messages "$msg" "$(lab_secret_get LLM_API_KEY)")
+  if [ "$(echo "$out" | tail -1)" = 200 ] && echo "$out" | sed '$d' | jq -e '.type == "message" and (.content | length > 0)' >/dev/null 2>&1; then
+    res ok "Anthropic-format call with an API key, answered by the firm's model"
+  else res no "Anthropic-format call with an API key, answered by the firm's model" "$(echo "$out" | tail -1) $(echo "$out" | sed '$d' | head -c 200)"; fi
+fi
+
 fallback=$(K get ns agentgateway-system -o jsonpath='{.metadata.annotations.lab\.solo\.io/llm-fallback}' 2>/dev/null || true)
 if [ -z "$fallback" ]; then
   skipped "the primary model down, the fallback answers: no fallback (make llm LLM_FALLBACK=...)"

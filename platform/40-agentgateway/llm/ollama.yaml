@@ -1,4 +1,6 @@
-# Ollama on the host machine (scripts/llm.sh finds it). OpenAI-compatible API on :11434.
+# Ollama on the host machine (scripts/llm.sh finds it), on :11434. It speaks
+# both OpenAI chat completions and Anthropic messages, so each request goes
+# out in the format it came in.
 apiVersion: ${AGW_BACKEND_API}
 kind: ${AGW_BACKEND_KIND}
 metadata:
@@ -8,7 +10,11 @@ metadata:
 spec:
   ai:
     provider:
-      openai:
+      custom:
         model: ${OLLAMA_MODEL}
+        providerOverride: ollama      # its name in cost, metrics and logs
+        formats:
+        - {type: Completions, path: /v1/chat/completions}
+        - {type: Messages, path: /v1/messages}
       host: ${OLLAMA_HOST}
       port: ${OLLAMA_PORT}

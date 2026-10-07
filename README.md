@@ -101,6 +101,7 @@ workers in zones a, b and c). The full lab uses about 17 GB of memory.
 | https://kiali.ops.lab | Kiali mesh graph (view-only) | `ops` / `ops-demo` |
 | https://idp.sterling.lab/realms/sterling-vance/account | S&V broker account: sign-in through S&V's active IdP | S&V sign-in, as for kagent |
 | https://login.sterling.lab/realms/workforce/account | S&V's own Keycloak (an IdP in `ENTERPRISE_IDP`): a user's own account | `bob` / `bob-demo` |
+| https://llm.sterling.lab/v1 | the firm's model route for developers: OpenAI chat completions or Anthropic messages | API key `LLM_API_KEY` in `.lab/secrets.env` (docs/COMMANDS.md) |
 
 APIs on the edge, for agents and the checks rather than browsers:
 `https://as.alice.lab` (Alice's authorization server), `https://gateway.meridian.lab/mcp`
