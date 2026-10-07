@@ -79,10 +79,13 @@ step "IdentityContinuity and WorkloadProfile CRDs + controller (sv-identity)"
 K apply --server-side -f "$APP/config/crd" >/dev/null
 K wait crd/identitycontinuities.continuity.lab.solo.io crd/workloadprofiles.continuity.lab.solo.io --for=condition=Established --timeout=60s >/dev/null
 apply_tmpl "$D/controller.yaml"
+# the assurance gate: the same image, its gate command
+apply_tmpl "$D/assurance-gate.yaml"
 # partitions are read in the egress namespace only; a lab from before that
 # still has the cluster-wide grant
 K delete clusterrolebinding,clusterrole continuity-controller-partitions --ignore-not-found >/dev/null
 rollout sv-identity deploy/continuity-controller
+rollout sv-identity deploy/assurance-gate
 # What each IdP's sign-ins prove (NIST 800-63B levels), by the acr or amr it
 # asserts: S&V's own IdPs by their level of authentication; the vendors' as
 # they publish them. A sign-in asserting none of them is its default, AAL1:

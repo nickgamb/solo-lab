@@ -1,6 +1,7 @@
 // continuity-controller: keeps a Keycloak broker signing users in through the
-// first healthy upstream IdP of an IdentityContinuity chain. "sync" runs one
-// scheduled profile sync (the controller's CronJob).
+// first healthy upstream IdP of an IdentityContinuity chain, and workload
+// profiles' status. "sync" runs one scheduled profile sync (the controller's
+// CronJob); "gate" is the assurance gate workloads' policy points ask.
 package main
 
 import (
@@ -23,6 +24,9 @@ import (
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "sync" {
 		os.Exit(runSync(os.Args[2:]))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "gate" {
+		os.Exit(runGate(os.Args[2:]))
 	}
 	var ns, caFile, metrics, health, syncImage, syncCA string
 	var leaderElect bool
