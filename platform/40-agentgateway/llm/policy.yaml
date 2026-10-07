@@ -1,8 +1,10 @@
 # What every model call meets at the gateway, whichever provider serves it.
 #
-#   failover  a provider that answers 5xx or 429 (or not at all) is taken out
-#             of rotation for a while; with a fallback group (make llm
-#             LLM_FALLBACK=...) the next healthy one serves instead
+#   failover  a provider that answers 5xx or doesn't answer is taken out of
+#             rotation for a while; with a fallback group (make llm
+#             LLM_FALLBACK=...) the next healthy one serves instead. (No
+#             unhealthyCondition: the default is what catches no answer at
+#             all; a condition would replace it.)
 #   formats   OpenAI chat completions and Anthropic messages, either way
 #             round: the provider answers in its own API, the caller gets
 #             the one it asked in
@@ -18,7 +20,6 @@ spec:
   targetRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: llm}]
   backend:
     health:
-      unhealthyCondition: 'response.code >= 500 || response.code == 429'
       eviction:
         consecutiveFailures: 1
         duration: 30s

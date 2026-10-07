@@ -82,8 +82,7 @@ func (f *fakeModels) serve(t *testing.T) *Models {
 			switch name {
 			case "llm-backend":
 				pol["spec"] = map[string]any{"backend": map[string]any{"health": map[string]any{
-					"unhealthyCondition": "response.code >= 500 || response.code == 429",
-					"eviction":           map[string]any{"consecutiveFailures": 1, "duration": "30s"}}}}
+					"eviction": map[string]any{"consecutiveFailures": 1, "duration": "30s"}}}}
 			case "llm-callers":
 				pol["spec"] = map[string]any{"traffic": map[string]any{
 					"authorization": map[string]any{"action": "Allow", "policy": map[string]any{"matchExpressions": []any{
@@ -187,7 +186,7 @@ func TestPutModelsShapes(t *testing.T) {
 	if v.Backend == nil || v.Backend.ResourceVersion != "4" || len(v.Providers) != 2 || v.Providers[0].Kind != "ollama" || v.Providers[1].Group != 1 || v.Providers[1].Secret != "model-anthropic" {
 		t.Fatalf("view after save %+v", v)
 	}
-	if p := f.patches["llm-backend"]; len(p) != 1 || !strings.Contains(p[0], `"unhealthyCondition":"response.code \u003e= 500"`) || strings.Contains(p[0], "promptGuard") ||
+	if p := f.patches["llm-backend"]; len(p) != 1 || !strings.Contains(p[0], `"unhealthyCondition":null`) || strings.Contains(p[0], "promptGuard") ||
 		!strings.Contains(p[0], `"consecutiveFailures":2`) || !strings.Contains(p[0], `"duration":"45s"`) {
 		t.Fatalf("llm-backend patches %v", p)
 	}
@@ -394,8 +393,11 @@ func TestParseModelRules(t *testing.T) {
 	if !r.On5xx || r.On429 || !r.Custom {
 		t.Errorf("custom condition %+v", r)
 	}
-	if got := unhealthyWhen(true, true); got != "response.code >= 500 || response.code == 429" {
-		t.Errorf("CEL %q", got)
+	if r = parseRules(map[string]any{"spec": map[string]any{"backend": map[string]any{"health": map[string]any{}}}}, nil); !r.On5xx || r.Custom {
+		t.Errorf("no condition is the default (a 5xx or no answer): %+v", r)
+	}
+	if got := unhealthyWhen(true, true); got != nil {
+		t.Errorf("a condition replaces the default that catches no answer: %v", got)
 	}
 	callers := func(expr string) []ModelCaller {
 		return parseCallers(map[string]any{"spec": map[string]any{"traffic": map[string]any{"authorization": map[string]any{
@@ -438,7 +440,7 @@ func TestModelsView(t *testing.T) {
 	if v.External == nil || !slices.Equal(v.External.Hosts, []string{"llm.sv.lab"}) || len(v.Callers) != 3 || v.Declared["provider"] != "ollama" {
 		t.Fatalf("external %+v callers %+v declared %v", v.External, v.Callers, v.Declared)
 	}
-	if !v.Rules.On5xx || !v.Rules.On429 || v.Rules.Duration != "30s" || v.Rules.RetryAttempts != 1 || len(v.Rules.RetryCodes) != 5 {
+	if !v.Rules.On5xx || v.Rules.On429 || v.Rules.Duration != "30s" || v.Rules.RetryAttempts != 1 || len(v.Rules.RetryCodes) != 5 {
 		t.Fatalf("rules %+v", v.Rules)
 	}
 	f.be = groupsBackend()

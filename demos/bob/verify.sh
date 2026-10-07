@@ -178,8 +178,10 @@ else
   on_exit "K apply -f $TMPD/llm.json >/dev/null 2>&1"
   K patch agentgatewaybackend llm -n agentgateway-system --type json -p '[{"op": "replace", "path": "/spec/ai/groups/0/providers/0/port", "value": 1}]' >/dev/null
   sleep 3
-  out=$(model "Say hello in five words.")
-  served=$(echo "$out" | sed '$d' | jq -r '.model // empty' 2>/dev/null)
+  # the first call to find it down is what takes it out of rotation
+  model "Say hi." >/dev/null || true
+  out=$(model "Say hello in five words.") || true
+  served=$(echo "$out" | sed '$d' | jq -r '.model // empty' 2>/dev/null) || served=""
   if [ "$(echo "$out" | tail -1)" = 200 ] && [ -n "$served" ] && [ "$served" = "${fallback#*/}" ]; then
     res ok "the primary model down, the fallback answers ($served)"
   else res no "the primary model down, the fallback answers (${fallback#*/})" "$(echo "$out" | tail -1) model=$served $(echo "$out" | sed '$d' | head -c 200)"; fi

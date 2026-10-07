@@ -88,8 +88,7 @@ export function ModelRules({ view, onSaved }: { view: ModelView; onSaved: (v: Mo
   const other = conns.find(c => c.other), noModel = conns.find(c => !c.model.trim())
   const problem = other ? `${other.name} is a ${other.other} provider, which this editor doesn't write: remove it or use make llm`
     : noModel ? `${noModel.name} needs a model`
-      : !rules.on5xx && !rules.on429 ? 'Fail over on 5xx, 429, or both'
-        : secs < 1 || secs > 3600 ? 'Take a failed provider out for 1 to 3600 seconds'
+      : secs < 1 || secs > 3600 ? 'Take a failed provider out for 1 to 3600 seconds'
           : rules.consecutiveFailures > 10 ? 'At most 10 failures before a provider is taken out'
             : conns.length > 4 ? 'At most 4 model connections' : undefined
 
@@ -162,11 +161,8 @@ export function ModelRules({ view, onSaved }: { view: ModelView; onSaved: (v: Mo
         }} />
         : <button className="btn small" disabled={conns.length >= 4} onClick={() => setAdding(true)}>+ Add model connection</button>}
 
-      <div className="label" style={{ marginTop: 18 }}>Fail over on</div>
-      <div className="row wrap">
-        <label className="tog" title="the provider answers 500 or above (or doesn't answer)"><input type="checkbox" checked={rules.on5xx} onChange={e => setRules(r => ({ ...r, on5xx: e.target.checked }))} />5xx</label>
-        <label className="tog" title="the provider is rate limiting"><input type="checkbox" checked={rules.on429} onChange={e => setRules(r => ({ ...r, on429: e.target.checked }))} />429</label>
-      </div>
+      <div className="label" style={{ marginTop: 18 }}>Fail over when</div>
+      <span className="small">a provider answers 5xx, or doesn't answer at all. A rate-limited call (429) is retried, but doesn't take the provider out.</span>
       {view.rules.custom && <span className="subtle small">The live condition (<span className="mono">{view.rules.condition}</span>) says more than this; saving replaces it.</span>}
       <div className="grid2">
         <NumField label="take a failed provider out for (s)" value={secs || 30} onChange={n => setRules(r => ({ ...r, duration: `${n}s` }))} />

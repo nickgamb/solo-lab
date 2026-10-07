@@ -419,6 +419,10 @@ func parseRules(backend, callers map[string]any) FailoverRules {
 			r.RetryCodes = append(r.RetryCodes, n)
 		}
 	}
+	if r.Condition == "" { // the default: a 5xx, or no answer at all
+		r.On5xx = true
+		return r
+	}
 	for _, term := range strings.Split(r.Condition, "||") {
 		switch strings.Join(strings.Fields(strings.Trim(strings.TrimSpace(term), "()")), " ") {
 		case "response.code >= 500":
@@ -433,17 +437,10 @@ func parseRules(backend, callers map[string]any) FailoverRules {
 	return r
 }
 
-// unhealthyWhen is the CEL for the checked conditions.
-func unhealthyWhen(on5xx, on429 bool) string {
-	var c []string
-	if on5xx {
-		c = append(c, "response.code >= 500")
-	}
-	if on429 {
-		c = append(c, "response.code == 429")
-	}
-	return strings.Join(c, " || ")
-}
+// unhealthyWhen is the health condition to write: none, so agentgateway's
+// default applies (a 5xx, or no answer at all). Any condition replaces that
+// default, and a provider that doesn't answer would never be taken out.
+func unhealthyWhen(bool, bool) any { return nil }
 
 // parseCallers reads who may call the model route, when the rule is a plain
 // list of namespace and ServiceAccount pairs; anything else is nil.
