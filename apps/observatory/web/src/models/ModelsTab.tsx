@@ -6,14 +6,16 @@ import { edgeTypes, type FlowData } from '../topology/edges'
 import { nodeTypes, type CardData } from '../topology/nodes'
 import { CAPTION_H, LABEL_H, LABEL_W, TILE } from '../topology/layout'
 import { substrateFor } from '../topology/Topology'
-import { endpoint, health, kindLabel, serving, usd } from './chain'
+import { endpoint, health, kindLabel, serving } from './chain'
 import { ModelRules } from './ModelRules'
+import { TrafficRow } from '../traffic/TrafficRow'
 import '../continuity/continuity.css'
 import './models.css'
 
 const POLL_MS = 5000
 const pname = (p: ModelProvider) => `${kindLabel(p)} ${p.model}`
 const at = (t?: string) => (t ? new Date(t).toLocaleTimeString() : '')
+type Move = { id: string; time: string; kind: 'move' | 'cut' | 'restore'; from?: string; to: string; reason: string }
 
 export function ModelsTab({ lab }: { lab: Lab }) {
   const [view, setView] = useState<ModelView>()
@@ -72,6 +74,35 @@ function Models({ lab, view, setView, reload, err }: {
   const names = useMemo(() => new Map(lab.graph?.nodes.map(n => [n.id, n.label]) ?? []), [lab.graph])
   const calls = useMemo(() => lab.traffic.filter(t => t.kind === 'llm').slice(0, 120), [lab.traffic])
   const events = useMemo(() => lab.traffic.filter(t => t.kind === 'model').slice(0, 60), [lab.traffic])
+  const feed = useMemo(() => lab.traffic.filter(t => t.kind === 'llm' || t.kind === 'model').slice(0, 120), [lab.traffic])
+  // Transitions: each time a different provider starts answering (from the
+  // calls, oldest first), and each outage simulated or restored
+  const moves = useMemo(() => {
+    const ps = view?.providers ?? []
+    const who = (t: Traffic) => {
+      const a = t.attrs ?? {}
+      const m = a['gen_ai.response.model'] || ''
+      return ps.find(p => !!p.model && (p.model === m || m.startsWith(p.model + '-')))
+    }
+    const out: Move[] = []
+    let last: ModelProvider | undefined
+    for (const t of calls.slice().reverse()) {
+      const p = t.status === 200 ? who(t) : undefined
+      if (!p) continue
+      if (last && p.name !== last.name) {
+        const down = ps.indexOf(p) > ps.indexOf(last)
+        out.push({ id: t.id, time: t.time, kind: 'move', from: last.name, to: p.name,
+          reason: down ? `FailoverActivated · ${p.model} answering` : `Failback · ${p.model} answering again` })
+      }
+      last = p
+    }
+    for (const t of events) {
+      const cut = /cut|outage/i.test(t.summary) && !/restor/i.test(t.summary)
+      const name = ps.find(p => t.summary.includes(p.name))
+      out.push({ id: t.id, time: t.time, kind: cut ? 'cut' : 'restore', to: name?.name ?? 'provider', reason: `${t.summary}${t.user ? ` · ${t.user}` : ''}` })
+    }
+    return out.sort((x, y) => Date.parse(y.time) - Date.parse(x.time)).slice(0, 60)
+  }, [calls, events, view])
 
   // Left to right: who may call (the agent pools by mesh identity, and
   // callers outside the mesh with an API key), the AI gateway, and the
@@ -168,52 +199,32 @@ function Models({ lab, view, setView, reload, err }: {
       </div>
       <div className="cont-foot">
         <div className="cont-col">
-          <div className="label">Outages</div>
+          <div className="label">Transitions</div>
           <div className="scroll trans">
-            {events.map(t => (
-              <div key={t.id} className="row line">
-                <span className="mono subtle">{at(t.time)}</span>
-                <span className={`dot ${t.outcome === 'error' ? 'bad' : 'ok'}`} />
-                <span className="ellipsis grow" title={t.summary}>{t.summary}</span>
-                {t.user && <span className="subtle small">{t.user}</span>}
+            {moves.map(m => (
+              <div key={m.id} className="row line">
+                <span className="mono subtle">{at(m.time)}</span>
+                {m.kind === 'move' ? <>
+                  <span className="chip">{m.from}</span>→<span className="chip accent">{m.to}</span>
+                  <span className="subtle ellipsis grow">{m.reason}</span>
+                </> : <>
+                  <span className={`chip ${m.kind === 'cut' ? 'bad' : 'ok'}`}>{m.kind === 'cut' ? 'outage' : 'restored'}</span>
+                  <span className="chip">{m.to}</span>
+                  <span className="subtle ellipsis grow">{m.reason}</span>
+                </>}
               </div>
             ))}
-            {!events.length && <div className="subtle small">No outages simulated yet.</div>}
+            {!moves.length && <div className="subtle small">No failovers yet. Simulate an outage and watch the calls move.</div>}
           </div>
         </div>
         <div className="cont-col grow">
           <div className="label">Model traffic</div>
-          <div className="scroll trans" role="table" aria-label="Recent model calls">
-            {calls.map(t => <ModelCall key={t.id} t={t} names={names} />)}
-            {!calls.length && <div className="subtle small">Ask any agent something and its model calls stream in here.</div>}
+          <div className="scroll trans">
+            {feed.map(t => <TrafficRow key={t.id} t={t} names={names} compact />)}
+            {!feed.length && <div className="subtle small">Ask any agent something and its model calls stream in here.</div>}
           </div>
         </div>
       </div>
-    </div>
-  )
-}
-
-// the caller as the graph names it, else its ServiceAccount
-function caller(t: Traffic, names: Map<string, string>) {
-  if (t.source && names.has(t.source)) return names.get(t.source)!
-  const m = /\/ns\/([^/]+)\/sa\/([^/]+)$/.exec(t.identity ?? '')
-  return m ? `${m[2]} (${m[1]})` : t.identity || t.user || '—'
-}
-
-function ModelCall({ t, names }: { t: Traffic; names: Map<string, string> }) {
-  const a = t.attrs ?? {}
-  const model = a['gen_ai.response.model'] || a['gen_ai.request.model'] || a['llm.request.model'] || '—'
-  const provider = a['gen_ai.provider.name']
-  const tokens = a['gen_ai.usage.input_tokens'] ? `${a['gen_ai.usage.input_tokens']} in / ${a['gen_ai.usage.output_tokens'] ?? '—'} out` : ''
-  const bad = t.outcome === 'error' || t.status === 429
-  return (
-    <div className="mcall" role="row">
-      <span className="mono subtle" role="cell">{at(t.time)}</span>
-      <span className="ellipsis" role="cell" title={t.identity}>{caller(t, names)}</span>
-      <span className="mono ellipsis" role="cell" title={a['gen_ai.request.model'] ? `asked for ${a['gen_ai.request.model']}` : undefined}>{provider ? `${provider}/` : ''}{model}</span>
-      <span role="cell"><span className={`chip ${bad ? 'bad' : 'ok'}`}>{t.status || t.outcome}</span></span>
-      <span className="mono subtle small" role="cell">{tokens}</span>
-      <span className="mono subtle small" role="cell">{usd(a['agw.ai.usage.cost.total'])}</span>
     </div>
   )
 }
