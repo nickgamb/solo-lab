@@ -238,6 +238,57 @@ spec:
                 description: 'Ordered: the first eligible, healthy tier is active.'
                 items:
                   properties:
+                    assurance:
+                      description: |-
+                        What a sign-in through this IdP proves, for workload profiles that
+                        require an assurance level. Unset: every sign-in counts as AAL1.
+                      properties:
+                        default:
+                          default: AAL1
+                          description: |-
+                            The level of a sign-in whose acr and amr match no entry: what this
+                            IdP's sign-in policy for S&V's client guarantees on its own (a local
+                            tier's only level).
+                          enum:
+                          - AAL1
+                          - AAL2
+                          - AAL3
+                          type: string
+                        levels:
+                          items:
+                            properties:
+                              acr:
+                                description: |-
+                                  The IdP's acr value, exactly (e.g. "aal2", "phr",
+                                  "http://schemas.openid.net/pape/policies/2007/06/multi-factor").
+                                maxLength: 256
+                                type: string
+                              amr:
+                                description: One amr value (RFC 8176, e.g. "mfa",
+                                  "otp", "hwk").
+                                maxLength: 64
+                                type: string
+                              level:
+                                enum:
+                                - AAL1
+                                - AAL2
+                                - AAL3
+                                type: string
+                              phishingResistant:
+                                description: |-
+                                  The authenticator resists phishing (FIDO2/WebAuthn, smart card): what
+                                  AAL3 requires, and what a profile can require at any level.
+                                type: boolean
+                            required:
+                            - level
+                            type: object
+                            x-kubernetes-validations:
+                            - message: exactly one of acr or amr
+                              rule: has(self.acr) != has(self.amr)
+                          maxItems: 32
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      type: object
                     attributes:
                       description: |-
                         This IdP's attributes, paired with the broker's profile for the

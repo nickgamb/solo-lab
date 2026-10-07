@@ -203,6 +203,42 @@ type Tier struct {
 	Directory *Directory `json:"directory,omitempty"`
 	// +kubebuilder:default={}
 	FailoverWhen FailoverRules `json:"failoverWhen,omitempty"`
+	// What a sign-in through this IdP proves, for workload profiles that
+	// require an assurance level. Unset: every sign-in counts as AAL1.
+	// +optional
+	Assurance *TierAssurance `json:"assurance,omitempty"`
+}
+
+// TierAssurance maps what an IdP asserts about a sign-in (its acr, or one of
+// its amr values, which the broker keeps on the session) to a NIST SP 800-63B
+// authenticator assurance level. A sign-in is the highest level any of its
+// values maps to; one that asserts none of them is default.
+type TierAssurance struct {
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=32
+	Levels []AssuranceLevel `json:"levels,omitempty"`
+	// The level of a sign-in whose acr and amr match no entry: what this
+	// IdP's sign-in policy for S&V's client guarantees on its own (a local
+	// tier's only level).
+	// +kubebuilder:validation:Enum=AAL1;AAL2;AAL3
+	// +kubebuilder:default=AAL1
+	Default string `json:"default,omitempty"`
+}
+
+// +kubebuilder:validation:XValidation:rule="has(self.acr) != has(self.amr)",message="exactly one of acr or amr"
+type AssuranceLevel struct {
+	// The IdP's acr value, exactly (e.g. "aal2", "phr",
+	// "http://schemas.openid.net/pape/policies/2007/06/multi-factor").
+	// +kubebuilder:validation:MaxLength=256
+	ACR string `json:"acr,omitempty"`
+	// One amr value (RFC 8176, e.g. "mfa", "otp", "hwk").
+	// +kubebuilder:validation:MaxLength=64
+	AMR string `json:"amr,omitempty"`
+	// +kubebuilder:validation:Enum=AAL1;AAL2;AAL3
+	Level string `json:"level"`
+	// The authenticator resists phishing (FIDO2/WebAuthn, smart card): what
+	// AAL3 requires, and what a profile can require at any level.
+	PhishingResistant bool `json:"phishingResistant,omitempty"`
 }
 
 // +kubebuilder:validation:XValidation:rule="self.clientAuth == 'private_key_jwt' || has(self.clientSecretRef)",message="clientSecretRef is required unless clientAuth is private_key_jwt"

@@ -3,6 +3,7 @@ package keycloak
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,19 +11,31 @@ import (
 )
 
 // fakeKeycloak serves a token endpoint and one IdP's mapper list.
-func fakeKeycloak(t *testing.T, mappers *[]map[string]any, posts *int) *httptest.Server {
+func fakeKeycloak(t *testing.T, mappers *[]map[string]any, writes *int) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		const base = "/identity-provider/instances/auth0/mappers"
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/protocol/openid-connect/token"):
 			json.NewEncoder(w).Encode(map[string]any{"access_token": "t", "expires_in": 60})
-		case strings.HasSuffix(r.URL.Path, "/identity-provider/instances/auth0/mappers") && r.Method == http.MethodGet:
+		case strings.HasSuffix(r.URL.Path, base) && r.Method == http.MethodGet:
 			json.NewEncoder(w).Encode(*mappers)
-		case strings.HasSuffix(r.URL.Path, "/identity-provider/instances/auth0/mappers") && r.Method == http.MethodPost:
+		case strings.HasSuffix(r.URL.Path, base) && r.Method == http.MethodPost:
 			var m map[string]any
 			json.NewDecoder(r.Body).Decode(&m)
+			m["id"] = fmt.Sprintf("m%d", len(*mappers))
 			*mappers = append(*mappers, m)
-			*posts++
+			*writes++
 			w.WriteHeader(http.StatusCreated)
+		case strings.Contains(r.URL.Path, base+"/") && r.Method == http.MethodPut:
+			var m map[string]any
+			json.NewDecoder(r.Body).Decode(&m)
+			for i := range *mappers {
+				if (*mappers)[i]["id"] == strings.TrimPrefix(r.URL.Path[strings.Index(r.URL.Path, base):], base+"/") {
+					(*mappers)[i] = m
+				}
+			}
+			*writes++
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -30,25 +43,43 @@ func fakeKeycloak(t *testing.T, mappers *[]map[string]any, posts *int) *httptest
 	}))
 }
 
-func TestEnsureUsernameFromEmail(t *testing.T) {
+func TestEnsureMapper(t *testing.T) {
 	var mappers []map[string]any
-	posts := 0
-	srv := fakeKeycloak(t, &mappers, &posts)
+	writes := 0
+	srv := fakeKeycloak(t, &mappers, &writes)
 	defer srv.Close()
 	c := New(srv.URL, "r")
 	c.SetCredentials("id", "secret")
 	for i := 0; i < 2; i++ { // idempotent: the second call finds it
-		if err := c.EnsureUsernameFromEmail(context.Background(), "auth0"); err != nil {
+		if err := c.EnsureMapper(context.Background(), "auth0", UsernameMapper); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if posts != 1 {
-		t.Fatalf("want one mapper created, got %d", posts)
+	if writes != 1 {
+		t.Fatalf("want one mapper created, got %d writes", writes)
 	}
 	m := mappers[0]
 	cfg, _ := m["config"].(map[string]any)
 	if m["identityProviderMapper"] != "oidc-username-idp-mapper" || cfg["template"] != "${CLAIM.email}" {
 		t.Errorf("mapper: %+v", m)
+	}
+
+	// changed in Keycloak: put back, keeping config keys it doesn't set
+	cfg["template"], cfg["extra"] = "${CLAIM.sub}", "kept"
+	if err := c.EnsureMapper(context.Background(), "auth0", UsernameMapper); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ = mappers[0]["config"].(map[string]any)
+	if writes != 2 || cfg["template"] != "${CLAIM.email}" || cfg["extra"] != "kept" {
+		t.Errorf("after a hand edit: %d writes, config %v", writes, cfg)
+	}
+}
+
+func TestAssuranceMapperOnEverySignIn(t *testing.T) {
+	// FORCE: the mapper runs on every sign-in, so each session gets the notes
+	// of the authentication that made it, not of the user's first sign-in.
+	if AssuranceMapper.Config["syncMode"] != "FORCE" || AssuranceMapper.Config["claims"] != "acr,amr,auth_time" {
+		t.Fatalf("assurance mapper %+v", AssuranceMapper)
 	}
 }
 

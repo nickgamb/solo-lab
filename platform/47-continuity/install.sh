@@ -83,9 +83,22 @@ apply_tmpl "$D/controller.yaml"
 # still has the cluster-wide grant
 K delete clusterrolebinding,clusterrole continuity-controller-partitions --ignore-not-found >/dev/null
 rollout sv-identity deploy/continuity-controller
+# What each IdP's sign-ins prove (NIST 800-63B levels), by the acr or amr it
+# asserts: S&V's own IdPs by their level of authentication; the vendors' as
+# they publish them. A sign-in asserting none of them is its default, AAL1:
+# an IdP whose policy for S&V's client always takes a second factor says so
+# in config/continuity.local.yaml (or the Observatory) with default: AAL2.
+ASSURANCE='{
+  "keycloak": {"levels": [{"acr": "aal1", "level": "AAL1"}, {"acr": "aal2", "level": "AAL2"}], "default": "AAL1"},
+  "contingency": {"levels": [{"acr": "aal1", "level": "AAL1"}], "default": "AAL1"},
+  "auth0": {"levels": [{"amr": "mfa", "level": "AAL2"},
+    {"acr": "http://schemas.openid.net/pape/policies/2007/06/multi-factor", "level": "AAL2"}], "default": "AAL1"},
+  "okta": {"levels": [{"acr": "urn:okta:loa:2fa:any", "level": "AAL2"},
+    {"acr": "phr", "level": "AAL2", "phishingResistant": true}, {"acr": "phrh", "level": "AAL3", "phishingResistant": true}], "default": "AAL1"},
+  "gluu": {"levels": [{"acr": "fido2", "level": "AAL2", "phishingResistant": true}], "default": "AAL1"}}'
 # The tiers follow ENTERPRISE_IDP: which IdPs and in what order, then the
 # broker's break-glass accounts (platform admins only). Each existing tier
-# keeps its failover rules, attribute mappings and directory (the operators' and
+# keeps its failover rules, attribute mappings, directory and assurance (the operators' and
 # the Observatory's); issuers and token settings follow .env. For an IdP that
 # issues ID-JAGs the broker keeps the user's tokens (storeTokens) so the
 # egress can have it vouch for them (docs/IDENTITY-FLOWS.md). No offline
@@ -105,15 +118,16 @@ desired=$({ for n in $CHAIN; do
       "attributes": [{"attribute": "email", "path": "email"}, {"attribute": "firstName", "path": "firstName"}, {"attribute": "lastName", "path": "lastName"}]}'
   fi
   jq -nc --arg n "$n" --arg iss "$(_idp_var "$n" ISSUER)" --arg cid "$(_idp_var "$n" CLIENT_ID)" \
-    --arg auth "$(idp_client_auth "$n")" --argjson store "$store" --argjson dir "$dir" '{name: $n,
+    --arg auth "$(idp_client_auth "$n")" --argjson store "$store" --argjson dir "$dir" --argjson assurance "$ASSURANCE" '{name: $n,
     displayName: ({okta: "Okta", auth0: "Auth0", gluu: "Gluu", keycloak: "Sterling & Vance (Keycloak)", contingency: "Sterling & Vance (contingency)"}[$n] // $n), type: "oidc",
     oidc: ({issuer: $iss, clientID: $cid, clientAuth: $auth}
       + (if $auth == "private_key_jwt" then {clientAssertionSigningAlg: "PS256"} else {clientSecretRef: {name: "upstream-\($n)"}} end)
       + (if $store then {scopes: ["openid", "email", "profile"], storeTokens: true} else {} end)),
-    failoverWhen: {unreachable: true, serverError: true, invalidDiscovery: true, latencyAboveMs: 1500}}
+    failoverWhen: {unreachable: true, serverError: true, invalidDiscovery: true, latencyAboveMs: 1500},
+    assurance: ($assurance[$n] // {default: "AAL1"})}
     + ($dir // {})'
 done
-jq -nc '{name: "break-glass", displayName: "Platform admins (break-glass)", type: "local"}'
+jq -nc '{name: "break-glass", displayName: "Platform admins (break-glass)", type: "local", assurance: {default: "AAL1"}}'
 } | jq -sc .)
 # This lab's own profile and mappings, beyond the defaults (gitignored;
 # config/continuity.example.yaml shows the format): S&V profile attributes,
@@ -133,6 +147,11 @@ add_local() {
         .attributes = ((.attributes // []) + [$a[] | select(.attribute as $n | ([($t.attributes // [])[].attribute] | index($n)) == null)])
       end)' <<<"$1"
 }
+# local_assurance <tiers>: each IdP's assurance from the local file, if it has one
+local_assurance() {
+  jq -c --argjson l "$local_json" 'map(. as $t | (($l.tiers // {})[$t.name].assurance) as $a | if $a then .assurance = $a else . end)' <<<"$1"
+}
+desired=$(local_assurance "$desired")
 if ! K get identitycontinuity sterling-vance -n sv-identity >/dev/null 2>&1; then
   desired=$(add_local "$desired")
   render "$D/identitycontinuity.yaml" | T="$desired" L="$local_json" yq '.spec.tiers = env(T)
@@ -147,7 +166,7 @@ else
     | ([$c[] | select(.name == $t.name and .type == $t.type)][0]) as $old
     | if $old == null then $t
       else ($old * ($t | del(.displayName, .failoverWhen) | if $old.directory then del(.directory) else . end
-          | if $old.attributes then del(.attributes) else . end))
+          | if $old.attributes then del(.attributes) else . end | if $old.assurance then del(.assurance) else . end))
         | if .oidc.clientAuth == "private_key_jwt" then del(.oidc.clientSecretRef) else . end end)')
   # every S&V caller of an upstream goes through the egress waypoint
   egress=$(render "$D/identitycontinuity.yaml" | yq -o json -I0 '.spec.egress')

@@ -569,12 +569,20 @@ func (r *Reconciler) reconcileKeycloak(ctx context.Context, ic *v1.IdentityConti
 		}
 		keep[t.Name] = true
 		if err == nil {
-			err = kc.EnsureUsernameFromEmail(ctx, t.Name)
+			err = kc.EnsureMapper(ctx, t.Name, keycloak.UsernameMapper)
 		}
 		if err != nil {
 			errs = append(errs, err)
-		} else if t.Name == active {
+			continue
+		}
+		if t.Name == active {
 			redirect = t.Name // only ever point logins at an IdP that exists
+		}
+		// Never holds up sign-ins: without it a session carries no upstream
+		// acr or amr, so workloads that require more than AAL1 refuse it
+		// (fail closed) while Ready says why.
+		if err := kc.EnsureMapper(ctx, t.Name, keycloak.AssuranceMapper); err != nil {
+			errs = append(errs, fmt.Errorf("identity provider %s: assurance mapper: %w", t.Name, err))
 		}
 	}
 	flow := ic.Spec.Broker.Keycloak.BrowserFlow

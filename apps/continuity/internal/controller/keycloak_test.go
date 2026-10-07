@@ -122,7 +122,8 @@ func (a *adminAPI) serve(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusCreated)
 		case strings.HasSuffix(p, "/mappers"):
 			if r.Method == http.MethodGet {
-				w.Write([]byte(`[{"name":"username-from-email"}]`))
+				w.Write([]byte(`[{"id":"u","name":"username-from-email","identityProviderMapper":"oidc-username-idp-mapper","config":{"template":"${CLAIM.email}","target":"LOCAL","syncMode":"INHERIT"}},` +
+					`{"id":"a","name":"continuity-assurance","identityProviderMapper":"continuity-session-claims-idp-mapper","config":{"claims":"acr,amr,auth_time","note.prefix":"continuity.","syncMode":"FORCE"}}]`))
 			}
 		case strings.HasPrefix(p, pre+"/identity-provider/instances/"):
 			alias := strings.TrimPrefix(p, pre+"/identity-provider/instances/")
