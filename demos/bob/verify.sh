@@ -176,7 +176,12 @@ else
   K get agentgatewaybackend llm -n agentgateway-system -o json \
     | jq 'del(.metadata.resourceVersion, .metadata.managedFields, .metadata.generation, .metadata.uid, .metadata.creationTimestamp, .status)' >"$TMPD/llm.json"
   on_exit "K apply -f $TMPD/llm.json >/dev/null 2>&1"
-  K patch agentgatewaybackend llm -n agentgateway-system --type json -p '[{"op": "replace", "path": "/spec/ai/groups/0/providers/0/port", "value": 1}]' >/dev/null
+  # cut as the Observatory's Simulate model outage does: its own host and
+  # port kept in an annotation, so the Model Continuity tab shows the outage
+  orig=$(jq -c '.spec.ai.groups[0].providers[0] | {host, port, by: "make verify", since: (now | todate)}' "$TMPD/llm.json")
+  K patch agentgatewaybackend llm -n agentgateway-system --type json -p "$(jq -nc --arg o "$orig" '[
+    {op: "add", path: "/metadata/annotations/lab.solo.io~1outage-primary", value: $o},
+    {op: "replace", path: "/spec/ai/groups/0/providers/0/port", value: 1}]')" >/dev/null
   sleep 3
   # the first call to find it down is what takes it out of rotation
   model "Say hi." >/dev/null || true
