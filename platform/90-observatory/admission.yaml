@@ -17,7 +17,7 @@ spec:
     expression: "request.userInfo.username == 'observatory:admin'"
   variables:
   - name: label
-    value: "'continuity.lab.solo.io/credentials'"
+    expression: "'continuity.lab.solo.io/credentials'"
   validations:
   - expression: "has(object.metadata.labels) && variables.label in object.metadata.labels && object.metadata.labels[variables.label] == 'true'"
     message: "the Observatory writes only IdP and directory credentials (label continuity.lab.solo.io/credentials)"

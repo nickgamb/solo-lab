@@ -16,7 +16,7 @@ step "RBAC: policy and routing, not what runs"
 expect '^yes$' "may change an AuthorizationPolicy" "$(can patch authorizationpolicies.security.istio.io -n sv-egress)"
 expect '^yes$' "may change an HTTPRoute" "$(can patch httproutes.gateway.networking.k8s.io -n agentgateway-system)"
 expect '^yes$' "may change an IdentityContinuity" "$(can update identitycontinuities.continuity.lab.solo.io -n sv-identity)"
-expect '^no$' "may not change its status (the active IdP is the controller's)" "$(can update identitycontinuities.continuity.lab.solo.io/status -n sv-identity)"
+expect '^no$' "may not change its status (the active IdP is the controller's)" "$(can update identitycontinuities.continuity.lab.solo.io --subresource=status -n sv-identity)"
 expect '^no$' "may not read a Secret" "$(can get secrets -n sv-identity)"
 expect '^no$' "may not list Secrets anywhere" "$(can list secrets -A)"
 expect '^no$' "may not change a Deployment" "$(can patch deployments.apps -n sv-agents)"
@@ -68,5 +68,22 @@ expect '^(403|422) .*continuity-sync' "may not run the sync as another account" 
   "$(as_admin POST /apis/batch/v1/namespaces/sv-identity/jobs "$(job '.spec.template.spec.serviceAccountName = "continuity-controller"')")"
 expect '^(403|422) .*Secret' "may not mount a Secret into the sync" \
   "$(as_admin POST /apis/batch/v1/namespaces/sv-identity/jobs "$(job '.spec.template.spec.volumes += [{name: "s", secret: {secretName: "continuity-controller"}}]')")"
+
+step "Its own account: one Role, to grant the sync a directory's Secret"
+SA=system:serviceaccount:observatory:observatory
+as_self() {  # as_self <method> <path> <json>: as the Observatory's own account, dry run
+  curl -s -X "$1" "http://127.0.0.1:$port$2?dryRun=All&fieldManager=observatory" -H 'Content-Type: application/json' \
+    -H "Impersonate-User: $SA" -H 'Impersonate-Group: system:serviceaccounts' -H 'Impersonate-Group: system:serviceaccounts:observatory' \
+    -H 'Impersonate-Group: system:authenticated' --data "$3" | jq -r 'if .kind == "Status" then "\(.code) \(.message)" else "200 \(.kind)" end'
+}
+role=$(K get role continuity-sync-secrets -n sv-identity -o json | jq -c 'del(.metadata.managedFields)
+  | .rules |= map(if (.resources | index("secrets")) then .resourceNames += ["directory-verify"] else . end)')
+expect '^200 ' "may add a directory's Secret to the sync's Role (a Secret it can't read itself)" \
+  "$(as_self PUT /apis/rbac.authorization.k8s.io/v1/namespaces/sv-identity/roles/continuity-sync-secrets "$role")"
+other=$(K get role continuity-controller-secrets -n sv-identity -o json | jq -c 'del(.metadata.managedFields)
+  | .rules |= map(if (.resources | index("secrets")) then .resourceNames += ["directory-verify"] else . end)')
+expect '^403 ' "may not change any other Role (the controller's)" \
+  "$(as_self PUT /apis/rbac.authorization.k8s.io/v1/namespaces/sv-identity/roles/continuity-controller-secrets "$other")"
+expect '^no$' "may not read a Secret itself" "$(K auth can-i get secrets -n sv-identity --as="$SA" 2>/dev/null)"
 
 echo; [ $fail -eq 0 ] && ok "observatory: $pass/$((pass+fail)) checks passed" || die "observatory: $fail of $((pass+fail)) checks failed"
