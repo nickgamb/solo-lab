@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -51,7 +54,7 @@ func profileAttrs(ic *v1.IdentityContinuity) []keycloak.Attr {
 }
 
 // Writable are the broker attributes a mapping may name: the profile's and
-// the built-in ones. The sync never writes the identity keys.
+// the built-in ones. The sync never writes the username (keycloak.NeverSynced).
 func Writable(ic *v1.IdentityContinuity) []string {
 	out := slices.Clone(keycloak.Builtin)
 	for _, a := range profileAttrs(ic) {
@@ -139,6 +142,16 @@ func (r *Reconciler) reconcileSync(ctx context.Context, ic *v1.IdentityContinuit
 	if r.SyncImage == "" {
 		return errors.New("a sync or directory is set but the controller has no --sync-image")
 	}
+	if s := ic.Spec.Sync; s != nil {
+		switch {
+		case s.Schedule == "" && !s.Suspend:
+			return errors.New("spec.sync.schedule is empty: set one, or suspend the sync")
+		case s.Schedule != "":
+			if err := checkCron(s.Schedule); err != nil {
+				return fmt.Errorf("spec.sync.schedule %q: %w", s.Schedule, err)
+			}
+		}
+	}
 	var cur batchv1.CronJob
 	err := r.Reader.Get(ctx, types.NamespacedName{Namespace: ic.Namespace, Name: name}, &cur)
 	if err == nil && cur.Labels[LabelInstance] != instanceOf(ic) {
@@ -176,8 +189,11 @@ func (r *Reconciler) syncCronJob(ic *v1.IdentityContinuity) *batchv1.CronJob {
 	// without spec.sync the CronJob only carries the job template (for
 	// "run now" and directory tests): suspended, on a placeholder schedule
 	schedule, suspend := noSchedule, true
-	if ic.Spec.Sync != nil {
-		schedule, suspend = ic.Spec.Sync.Schedule, ic.Spec.Sync.Suspend
+	if s := ic.Spec.Sync; s != nil {
+		suspend = s.Suspend
+		if s.Schedule != "" {
+			schedule = s.Schedule
+		}
 	}
 	cj := &batchv1.CronJob{
 		TypeMeta: metav1.TypeMeta{APIVersion: "batch/v1", Kind: "CronJob"},
@@ -222,6 +238,56 @@ func (r *Reconciler) syncCronJob(ic *v1.IdentityContinuity) *batchv1.CronJob {
 		},
 	}
 	return cj
+}
+
+// cronFields are the five fields of a standard cron schedule and the values
+// each takes (months and weekdays also by name).
+var cronFields = []struct {
+	name     string
+	min, max int
+	names    *regexp.Regexp
+}{
+	{"minute", 0, 59, nil}, {"hour", 0, 23, nil}, {"day of month", 1, 31, nil},
+	{"month", 1, 12, regexp.MustCompile(`^(?i:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)$`)},
+	{"day of week", 0, 7, regexp.MustCompile(`^(?i:sun|mon|tue|wed|thu|fri|sat)$`)},
+}
+
+// checkCron accepts what a CronJob's schedule does: five fields of numbers,
+// ranges, lists and steps, "*" or "?", or a macro such as @daily.
+func checkCron(s string) error {
+	switch s {
+	case "@yearly", "@annually", "@monthly", "@weekly", "@daily", "@midnight", "@hourly":
+		return nil
+	}
+	fs := strings.Fields(s)
+	if len(fs) != len(cronFields) {
+		return fmt.Errorf("%d fields, want 5 (minute hour day-of-month month day-of-week)", len(fs))
+	}
+	for i, f := range fs {
+		lim := cronFields[i]
+		value := func(v string) bool {
+			if n, err := strconv.Atoi(v); err == nil {
+				return n >= lim.min && n <= lim.max
+			}
+			return lim.names != nil && lim.names.MatchString(v)
+		}
+		for _, part := range strings.Split(f, ",") {
+			rng, step, stepped := strings.Cut(part, "/")
+			if stepped {
+				if n, err := strconv.Atoi(step); err != nil || n < 1 {
+					return fmt.Errorf("%s: bad step %q", lim.name, part)
+				}
+			}
+			if rng == "*" || rng == "?" {
+				continue
+			}
+			lo, hi, isRange := strings.Cut(rng, "-")
+			if !value(lo) || isRange && !value(hi) {
+				return fmt.Errorf("%s: %q is not in %d-%d", lim.name, part, lim.min, lim.max)
+			}
+		}
+	}
+	return nil
 }
 
 func toUnstructured(o runtime.Object) (*unstructured.Unstructured, error) {

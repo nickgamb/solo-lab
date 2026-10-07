@@ -1,3 +1,7 @@
+# Not in the image: local installs and build outputs (the Dockerfile builds
+# its own), so the build context and its content tag are the sources only.
 web/node_modules
 web/dist
+web/*.tsbuildinfo
 server/web
+**/.DS_Store

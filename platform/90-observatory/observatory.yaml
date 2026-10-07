@@ -131,6 +131,11 @@ spec: {mtls: {mode: STRICT}}
 ---
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
+metadata: {name: default-deny, namespace: observatory}
+spec: {}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
 metadata: {name: observatory-callers, namespace: observatory}
 spec:
   selector: {matchLabels: {app: observatory}}
@@ -145,6 +150,11 @@ apiVersion: security.istio.io/v1
 kind: PeerAuthentication
 metadata: {name: strict, namespace: ops-identity}
 spec: {mtls: {mode: STRICT}}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: default-deny, namespace: ops-identity}
+spec: {}
 ---
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy

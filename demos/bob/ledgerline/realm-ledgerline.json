@@ -97,7 +97,8 @@
       "bearerOnly": true,
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": false
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false
     }
   ],
   "components": {

@@ -11,7 +11,7 @@ const ConfigEditor = lazy(() => import('./ConfigEditor').then(m => ({ default: m
 // touched it. "Advanced" swaps the summary for the object's live YAML.
 export function DetailsPanel({ lab, node, onClose, onOpenNode, onExpand }: { lab: Lab; node: LabNode; onClose: () => void; onOpenNode: (id: string) => void; onExpand?: (id: string) => void }) {
   const [advanced, setAdvanced] = useState(false)
-  const [editRef, setEditRef] = useState<Ref | undefined>(node.ref)
+  const [editRef, setEditRef] = useState<Ref | undefined>()
   const [dir, setDir] = useState<'all' | 'in' | 'out'>('all')
   const names = useMemo(() => new Map(lab.graph?.nodes.map(n => [n.id, n.label]) ?? []), [lab.graph])
 
@@ -22,7 +22,8 @@ export function DetailsPanel({ lab, node, onClose, onOpenNode, onExpand }: { lab
     return dir === 'all' ? out || inn : dir === 'in' ? inn : out
   }).slice(0, 200), [lab.traffic, self, dir])
 
-  const refs = [node.ref, ...(node.related ?? [])].filter(Boolean) as Ref[]
+  // a Secret's data is never shown or edited here
+  const refs = [node.ref, ...(node.related ?? [])].filter((r): r is Ref => !!r && r.kind !== 'Secret')
   const edges = lab.graph?.edges.filter(e => e.source === node.id || e.target === node.id) ?? []
 
   return (
@@ -34,7 +35,7 @@ export function DetailsPanel({ lab, node, onClose, onOpenNode, onExpand }: { lab
           <div className="subtle mono ellipsis">{node.namespace ?? node.group.replace('party:', '')}{node.sub ? ` · ${node.sub}` : ''}</div>
         </div>
         {refs.length > 0 && (
-          <button className={advanced ? 'btn small primary' : 'btn small'} onClick={() => { setAdvanced(v => !v); setEditRef(node.ref ?? refs[0]) }}>
+          <button className={advanced ? 'btn small primary' : 'btn small'} onClick={() => { setAdvanced(v => !v); setEditRef(refs[0]) }}>
             {advanced ? 'Summary' : 'Advanced'}
           </button>
         )}
@@ -43,7 +44,7 @@ export function DetailsPanel({ lab, node, onClose, onOpenNode, onExpand }: { lab
 
       {advanced && editRef ? (
         <div className="dbody editor-body">
-          <select className="field" value={refKey(editRef)} onChange={e => setEditRef(refs.find(r => refKey(r) === e.target.value))}>
+          <select className="field" aria-label="Object to edit" value={refKey(editRef)} onChange={e => setEditRef(refs.find(r => refKey(r) === e.target.value))}>
             {refs.map(r => <option key={refKey(r)} value={refKey(r)}>{r.kind} · {r.namespace ? `${r.namespace}/` : ''}{r.name}</option>)}
           </select>
           <Guard key={refKey(editRef)}>
@@ -168,8 +169,8 @@ export function DetailsPanel({ lab, node, onClose, onOpenNode, onExpand }: { lab
   )
 }
 
-// Guard keeps an editor failure inside the panel instead of the whole page.
-class Guard extends Component<{ children: ReactNode }, { err?: Error }> {
+// Guard keeps an editor failure inside its panel instead of the whole page.
+export class Guard extends Component<{ children: ReactNode }, { err?: Error }> {
   state: { err?: Error } = {}
   static getDerivedStateFromError(err: Error) { return { err } }
   render() {

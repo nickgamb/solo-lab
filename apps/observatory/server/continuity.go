@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -28,27 +29,44 @@ import (
 type Continuity struct {
 	k       *Kube
 	res     *Resources
-	traffic *TrafficStore     // outages cut and restored show in the feed
-	seen    map[string]string // instance -> last transition time reported
+	traffic *TrafficStore         // outages cut and restored show in the feed
+	seen    map[string]reportMark // instance -> the last transitions reported
+}
+
+// reportMark is the last transition time reported and how many transitions
+// carried it: two in the same second are both news.
+type reportMark struct {
+	at string
+	n  int
 }
 
 // Report turns new failover transitions into events in the traffic feed.
 func (c *Continuity) Report(v ContinuityView, t *TrafficStore, ix *Index) {
 	if c.seen == nil {
-		c.seen = map[string]string{}
+		c.seen = map[string]reportMark{}
 	}
 	for _, it := range v.Items {
 		md, _ := it["metadata"].(map[string]any)
 		key := fmt.Sprint(md["namespace"], "/", md["name"])
-		first := c.seen[key] == ""
+		prev, known := c.seen[key]
+		cur, same := prev, 0
 		for _, tr := range slice(it, "status", "transitions") {
 			m, _ := tr.(map[string]any)
 			at := fmt.Sprint(m["time"])
-			if at <= c.seen[key] {
+			switch {
+			case at < prev.at:
 				continue
+			case at == prev.at:
+				if same++; same <= prev.n {
+					continue
+				}
 			}
-			c.seen[key] = at
-			if first {
+			if at == cur.at {
+				cur.n++
+			} else {
+				cur = reportMark{at: at, n: 1}
+			}
+			if !known {
 				continue // history from before we started isn't news
 			}
 			broker := ix.hostOf(str(it, "spec", "broker", "keycloak", "url"))
@@ -56,14 +74,13 @@ func (c *Continuity) Report(v ContinuityView, t *TrafficStore, ix *Index) {
 				Summary: fmt.Sprintf("sign-in moved %v → %v: %v", m["from"], m["to"], m["reason"]),
 				Attrs:   map[string]string{"from": fmt.Sprint(m["from"]), "to": fmt.Sprint(m["to"]), "reason": fmt.Sprint(m["reason"])}})
 		}
-		if first && c.seen[key] == "" {
-			c.seen[key] = "0"
-		}
+		c.seen[key] = cur
 	}
 }
 
 const (
 	tierLabel            = "continuity.lab.solo.io/tier"
+	instanceLabel        = "continuity.lab.solo.io/instance"          // "<namespace>.<name>", on what the controller keeps
 	secretsRoleLabel     = "continuity.lab.solo.io/secrets-role"      // the controller's
 	syncSecretsRoleLabel = "continuity.lab.solo.io/sync-secrets-role" // the profile sync's
 )
@@ -137,12 +154,22 @@ func (c *Continuity) View(ix *Index) ContinuityView {
 	return v
 }
 
-// PutSpec replaces the rule set (tiers, health, failback) of one instance.
+// PutSpec replaces one instance's spec: {"resourceVersion": ..., "spec":
+// {...}}. It is an update, not an apply, so whatever the new spec leaves out
+// is removed. With the resourceVersion the spec was read at, a change made
+// since is a conflict (409): reload and edit again.
 func (c *Continuity) PutSpec(w http.ResponseWriter, r *http.Request) {
 	ns, name := r.PathValue("ns"), r.PathValue("name")
-	var spec map[string]any
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&spec); err != nil {
-		http.Error(w, "invalid spec: "+err.Error(), http.StatusBadRequest)
+	if !nameRe.MatchString(ns) || !nameRe.MatchString(name) {
+		http.Error(w, "bad instance", http.StatusBadRequest)
+		return
+	}
+	var in struct {
+		ResourceVersion string         `json:"resourceVersion"`
+		Spec            map[string]any `json:"spec"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&in); err != nil || in.Spec == nil {
+		http.Error(w, `need {"resourceVersion": ..., "spec": {...}}`, http.StatusBadRequest)
 		return
 	}
 	cl, err := c.res.client(r)
@@ -150,10 +177,21 @@ func (c *Continuity) PutSpec(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, err)
 		return
 	}
-	patch, _ := json.Marshal(map[string]any{"apiVersion": "continuity.lab.solo.io/v1alpha1", "kind": "IdentityContinuity",
-		"metadata": map[string]any{"name": name, "namespace": ns}, "spec": spec})
-	out, err := cl.Resource(gvrIC).Namespace(ns).Patch(r.Context(), name, types.ApplyPatchType, patch,
-		metav1.PatchOptions{FieldManager: fieldManager, Force: ptr(true)})
+	ri := cl.Resource(gvrIC).Namespace(ns)
+	cur, err := ri.Get(r.Context(), name, metav1.GetOptions{})
+	if err != nil {
+		httpErr(w, err)
+		return
+	}
+	if in.ResourceVersion != "" {
+		cur.SetResourceVersion(in.ResourceVersion)
+	}
+	cur.Object["spec"] = in.Spec
+	out, err := ri.Update(r.Context(), cur, metav1.UpdateOptions{FieldManager: fieldManager})
+	if apierrors.IsConflict(err) {
+		http.Error(w, "changed since it was read: reload and edit again", http.StatusConflict)
+		return
+	}
 	if err != nil {
 		httpErr(w, err)
 		return
@@ -161,21 +199,28 @@ func (c *Continuity) PutSpec(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, clean(out).Object)
 }
 
-// PutSecret stores a tier's client secret next to the controller, or (for
-// "directory") a directory's client id and secret for the profile sync
-// only. Values are write-only: never read back or logged. One call writes
-// the Secret's whole data, so send every key it should hold.
+// PutSecret (PUT /api/continuity/{ns}/secrets/{name}) stores a tier's client
+// secret next to the controller, or (for "directory") a directory's or the
+// sync's client id and secret for the profile sync only. The name must be
+// one an IdentityContinuity in ns refers to for that use. Values are
+// write-only: never read back or logged. One call writes the Secret's whole
+// data, so send every key it should hold.
 func (c *Continuity) PutSecret(w http.ResponseWriter, r *http.Request) {
-	ns := r.PathValue("ns")
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	if !nameRe.MatchString(ns) || !nameRe.MatchString(name) {
+		http.Error(w, "need namespace and name (DNS labels)", http.StatusBadRequest)
+		return
+	}
 	var in struct {
 		Name, Key, Value string
 		Data             map[string]string
 		For              string
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&in); err != nil || !nameRe.MatchString(in.Name) {
-		http.Error(w, "need name (DNS label)", http.StatusBadRequest)
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&in); err != nil || in.Name != "" && in.Name != name {
+		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
+	in.Name = name
 	data := in.Data
 	if data == nil {
 		if in.Key == "" {
@@ -213,6 +258,15 @@ func (c *Continuity) PutSecret(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, err)
 		return
 	}
+	ics, err := cl.Resource(gvrIC).Namespace(ns).List(r.Context(), metav1.ListOptions{})
+	if err != nil {
+		httpErr(w, err)
+		return
+	}
+	if !referenced(ics.Items, name, label == syncSecretsRoleLabel) {
+		http.Error(w, "no IdentityContinuity in "+ns+" refers to Secret "+name+" for this: save the reference first", http.StatusConflict)
+		return
+	}
 	patch, _ := json.Marshal(map[string]any{"apiVersion": "v1", "kind": "Secret", "type": "Opaque",
 		"metadata":   map[string]any{"name": in.Name, "namespace": ns, "labels": map[string]string{"app.kubernetes.io/part-of": "identity-continuity"}},
 		"stringData": data})
@@ -227,6 +281,34 @@ func (c *Continuity) PutSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	keys := slices.Sorted(maps.Keys(data))
 	writeJSON(w, map[string]any{"name": in.Name, "keys": keys})
+}
+
+// referenced reports whether an instance names Secret name: for the sync, a
+// tier's directory.credentialsRef or spec.sync.credentialsRef; otherwise a
+// tier's oidc.clientSecretRef.
+func referenced(ics []unstructured.Unstructured, name string, forSync bool) bool {
+	for _, ic := range ics {
+		if sync, ok, _ := unstructured.NestedMap(ic.Object, "spec", "sync"); forSync && ok {
+			ref := str(sync, "credentialsRef", "name")
+			if ref == "" {
+				ref = "continuity-sync" // the CRD's default
+			}
+			if ref == name {
+				return true
+			}
+		}
+		for _, t := range slice(ic.Object, "spec", "tiers") {
+			m, _ := t.(map[string]any)
+			ref := str(m, "oidc", "clientSecretRef", "name")
+			if forSync {
+				ref = str(m, "directory", "credentialsRef", "name")
+			}
+			if ref != "" && ref == name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // grantSecret adds a Secret to the Roles labelled label=true: the controller's
@@ -393,7 +475,8 @@ func (c *Continuity) SyncJob(w http.ResponseWriter, r *http.Request) {
 }
 
 // startSyncJob creates a Job from the instance's sync CronJob, as the
-// signed-in admin; edit adjusts the Job spec.
+// signed-in admin; edit adjusts the Job spec. Only the CronJob the controller
+// keeps for this instance is used, whatever its status names.
 func startSyncJob(r *http.Request, cl dynamic.Interface, ns string, ic *unstructured.Unstructured, kind string, edit func(map[string]any) error) (string, int, error) {
 	cjName := str(ic.Object, "status", "sync", "cronJob")
 	if cjName == "" {
@@ -403,29 +486,36 @@ func startSyncJob(r *http.Request, cl dynamic.Interface, ns string, ic *unstruct
 	if err != nil {
 		return "", http.StatusBadGateway, err
 	}
+	if cj.GetLabels()[instanceLabel] != ns+"."+ic.GetName() {
+		return "", http.StatusConflict, errors.New("CronJob " + cjName + " is not this instance's sync")
+	}
 	spec, ok, _ := unstructured.NestedMap(cj.Object, "spec", "jobTemplate", "spec")
 	if !ok {
 		return "", http.StatusConflict, errors.New("CronJob " + cjName + " has no job template")
+	}
+	// only ever the sync, as the sync's own ServiceAccount
+	labels, _, _ := unstructured.NestedStringMap(cj.Object, "spec", "jobTemplate", "metadata", "labels")
+	if sa, _, _ := unstructured.NestedString(spec, "template", "spec", "serviceAccountName"); labels["app"] != "continuity-sync" || sa != "continuity-sync" {
+		return "", http.StatusConflict, errors.New("CronJob " + cjName + " does not run the sync as continuity-sync")
 	}
 	if edit != nil {
 		if err := edit(spec); err != nil {
 			return "", http.StatusConflict, err
 		}
 	}
-	jobName := fmt.Sprintf("%.40s-%s-%d", cjName, kind, time.Now().Unix())
-	labels, _, _ := unstructured.NestedStringMap(cj.Object, "spec", "jobTemplate", "metadata", "labels")
 	job := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "batch/v1", "kind": "Job",
-		"metadata": map[string]any{"name": jobName, "namespace": ns,
+		"metadata": map[string]any{"generateName": fmt.Sprintf("%.40s-%s-", cjName, kind), "namespace": ns,
 			"annotations":     map[string]any{"cronjob.kubernetes.io/instantiate": "manual", "continuity.lab.solo.io/run-by": userFrom(r.Context()).Name},
 			"ownerReferences": []any{map[string]any{"apiVersion": "batch/v1", "kind": "CronJob", "name": cjName, "uid": string(cj.GetUID())}}},
 		"spec": spec,
 	}}
 	job.SetLabels(labels)
-	if _, err := cl.Resource(gvrJob).Namespace(ns).Create(r.Context(), job, metav1.CreateOptions{FieldManager: fieldManager}); err != nil {
+	out, err := cl.Resource(gvrJob).Namespace(ns).Create(r.Context(), job, metav1.CreateOptions{FieldManager: fieldManager})
+	if err != nil {
 		return "", http.StatusBadGateway, err
 	}
-	return jobName, 0, nil
+	return out.GetName(), 0, nil
 }
 
 func toStrings(v any) []string {
@@ -503,7 +593,7 @@ func (c *Continuity) note(tier, outcome, what, by string) {
 		return
 	}
 	c.traffic.Add(Traffic{Kind: "continuity", Reporter: "observatory", Outcome: outcome, User: by,
-		Summary: what, Attrs: map[string]string{"tier": tier, "by": by}})
+		Summary: what, Attrs: map[string]string{"idp": tier, "by": by}})
 }
 
 // pathOf finds where a tier's traffic can be cut: the ServiceEntry the

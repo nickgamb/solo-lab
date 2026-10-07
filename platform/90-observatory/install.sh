@@ -10,39 +10,32 @@ APP="$LAB_ROOT/apps/observatory"
 need_cluster
 
 step "observatory image (local registry)"
-# tagged by source content, so a code change is a new image and a rollout
+# tagged by source content, so a code change is a new image and a rollout:
 # everything the image is built from (Dockerfile, lockfile and build config
-# included), not the build's own outputs
-tag=$(cd "$APP" && find . -type f -not -path './server/web/*' -not -path '*/node_modules/*' -not -path './web/dist/*' \
-  -not -name .DS_Store -not -name '*.tsbuildinfo' | LC_ALL=C sort | xargs cat | sha1 | cut -c1-12)
+# included), not the build's own outputs (apps/observatory/.dockerignore)
+tag=$(src_hash "$APP")
 export OBSERVATORY_IMAGE="localhost:$LAB_REGISTRY_PORT/lab/observatory:$tag"
-docker image inspect "$OBSERVATORY_IMAGE" >/dev/null 2>&1 || docker build -q -t "$OBSERVATORY_IMAGE" "$APP" >/dev/null
-docker push -q "$OBSERVATORY_IMAGE" >/dev/null
+docker image inspect "$OBSERVATORY_IMAGE" >/dev/null 2>&1 || docker build -q -t "$OBSERVATORY_IMAGE" "$APP" >/dev/null \
+  || die "building $OBSERVATORY_IMAGE failed"
+docker push -q "$OBSERVATORY_IMAGE" >/dev/null || die "pushing $OBSERVATORY_IMAGE failed"
 ok "$OBSERVATORY_IMAGE"
 
 step "Platform identity: Keycloak realm ops (ops-identity)"
-K create secret generic kc-secrets -n ops-identity \
-  --from-literal=KC_BOOTSTRAP_ADMIN_USERNAME=admin \
-  --from-literal=KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret OPS_KC_ADMIN_PASSWORD)" \
-  --from-literal=OBSERVATORY_CLIENT_SECRET="$(lab_secret OBSERVATORY_CLIENT_SECRET)" \
-  --from-literal=GRAFANA_CLIENT_SECRET="$(lab_secret OPS_GRAFANA_CLIENT_SECRET)" \
-  --from-literal=KIALI_CLIENT_SECRET="$(lab_secret OPS_KIALI_CLIENT_SECRET)" \
-  --dry-run=client -o yaml | K apply -f - >/dev/null
+secret_apply ops-identity kc-secrets \
+  KC_BOOTSTRAP_ADMIN_USERNAME=admin \
+  KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret OPS_KC_ADMIN_PASSWORD)" \
+  OBSERVATORY_CLIENT_SECRET="$(lab_secret OBSERVATORY_CLIENT_SECRET)" \
+  GRAFANA_CLIENT_SECRET="$(lab_secret OPS_GRAFANA_CLIENT_SECRET)" \
+  KIALI_CLIENT_SECRET="$(lab_secret OPS_KIALI_CLIENT_SECRET)"
 deploy_keycloak ops-identity "$OPS_DOMAIN" https-ops "$D/realm-ops.json"
-K create secret generic observatory-oidc -n observatory \
-  --from-literal=client-secret="$(lab_secret OBSERVATORY_CLIENT_SECRET)" \
-  --dry-run=client -o yaml | K apply -f - >/dev/null
+secret_apply observatory observatory-oidc client-secret="$(lab_secret OBSERVATORY_CLIENT_SECRET)"
 # its S&V service account, for Agent Substrate's status from kagent
-K create secret generic kagent-client -n observatory \
-  --from-literal=client-secret="$(lab_secret SV_OBSERVATORY_CLIENT_SECRET)" \
-  --dry-run=client -o yaml | K apply -f - >/dev/null
+secret_apply observatory kagent-client client-secret="$(lab_secret SV_OBSERVATORY_CLIENT_SECRET)"
 ok "issuer https://idp.$OPS_DOMAIN/realms/ops  (admin: ops / ops-demo)"
 
 step "Platform UIs on the edge, behind the admins' sign-in"
-K create secret generic grafana-sso -n observability --from-literal=client-secret="$(lab_secret OPS_GRAFANA_CLIENT_SECRET)" \
-  --dry-run=client -o yaml | K apply -f - >/dev/null
-K create secret generic kiali-sso -n kiali --from-literal=client-secret="$(lab_secret OPS_KIALI_CLIENT_SECRET)" \
-  --dry-run=client -o yaml | K apply -f - >/dev/null
+secret_apply observability grafana-sso client-secret="$(lab_secret OPS_GRAFANA_CLIENT_SECRET)"
+secret_apply kiali kiali-sso client-secret="$(lab_secret OPS_KIALI_CLIENT_SECRET)"
 apply_tmpl "$D/platform-uis.yaml"
 ok "https://grafana.$OPS_DOMAIN  https://kiali.$OPS_DOMAIN  (ops / ops-demo)"
 

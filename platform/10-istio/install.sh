@@ -13,11 +13,13 @@ chart() {  # chart <base|istiod|cni|ztunnel>
   if [ ! -d "$root" ]; then
     local tgz="$LAB_STATE/cache/istio-$ISTIO_VERSION.tgz" arch; arch=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
     local os; os=$([ "$(uname -s)" = Darwin ] && echo osx || echo linux)
-    local url="https://github.com/istio/istio/releases/download/$ISTIO_VERSION/istio-$ISTIO_VERSION-$os-$arch.tar.gz"
-    [ -s "$tgz" ] || curl -fsSL -o "$tgz" "$url"
-    (cd "$LAB_STATE/cache" && curl -fsSL "$url.sha256" | awk -v f="istio-$ISTIO_VERSION.tgz" '{print $1"  "f}' | sha256 -c >/dev/null) \
-      || die "istio tarball checksum mismatch"
-    tar xzf "$tgz" -C "$LAB_STATE/cache" "istio-$ISTIO_VERSION/manifests/charts"
+    local url="https://github.com/istio/istio/releases/download/$ISTIO_VERSION/istio-$ISTIO_VERSION-$os-$arch.tar.gz" sum
+    # the tarball is used only once it matches the release's published checksum
+    sum=$(curl -fsSL --retry 3 "$url.sha256" | awk '{print $1}') || die "no checksum at $url.sha256"
+    [ -n "$sum" ] || die "empty checksum at $url.sha256"
+    istio_ok() { [ "$(sha256 "$1" | awk '{print $1}')" = "$sum" ]; }
+    [ -s "$tgz" ] && istio_ok "$tgz" || fetch "$url" "$tgz" istio_ok
+    tar xzf "$tgz" -C "$LAB_STATE/cache" "istio-$ISTIO_VERSION/manifests/charts" || { rm -rf "$LAB_STATE/cache/istio-$ISTIO_VERSION"; die "unpacking $tgz failed"; }
   fi
   case $1 in
     base) echo "$root/base" ;; istiod) echo "$root/istio-control/istio-discovery" ;;

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
+	"strconv"
 	"strings"
 
 	v1 "github.com/nickgamb/solo-lab/apps/continuity/api/v1alpha1"
@@ -16,7 +18,9 @@ type Broker interface {
 	Users(ctx context.Context, first, max int) ([]keycloak.User, error)
 	FederatedIdentity(ctx context.Context, userID, alias string) (string, error)
 	HasRealmRole(ctx context.Context, userID, role string) (bool, error)
-	UpdateUser(ctx context.Context, u keycloak.User) error
+	// UpdateUser reads the user afresh, has apply change it, and writes it
+	// back if apply reports a change.
+	UpdateUser(ctx context.Context, id string, apply func(keycloak.User) bool) (bool, error)
 }
 
 // IdP is one IdP in the chain with a directory, and its attribute mapping.
@@ -31,13 +35,16 @@ type IdP struct {
 type Result struct {
 	Users, Updated, Written, Created, Failed int
 	Errors                                   []string
-	// Notes: users created without a credential enrollment sent; they can't
-	// sign in at that IdP until they get one.
+	// Notes: users with no way to sign in at a failover yet: created there
+	// without a credential enrollment sent, or not there and the directory
+	// can't create them without a password.
 	Notes []string
 }
 
 const (
 	pageSize = 100
+	// maxPages bounds one run's listing of the broker's users.
+	maxPages = 1000
 	// LocalOnlyRole marks accounts never linked to, or synced with, an IdP.
 	LocalOnlyRole = "local-only"
 )
@@ -45,17 +52,28 @@ const (
 // Run syncs every employee the broker has: the primary's record into the
 // broker's profile (nil primary: none to read), then the broker's profile out
 // to each failover, creating the user there if the primary has them and the
-// failover doesn't. writable are the
-// broker attributes a mapping may carry; username never is.
+// failover doesn't. writable are the broker attributes a mapping may carry;
+// keycloak.NeverSynced never are.
 func Run(ctx context.Context, b Broker, primary *IdP, failovers []IdP, writable, lists []string, logf func(string, ...any)) Result {
 	var res Result
-	for first := 0; ; first += pageSize {
+	seen := map[string]bool{} // a user moved between pages is synced once
+	for n, first := 0, 0; ; n, first = n+1, first+pageSize {
+		if n == maxPages {
+			res.Errors = append(res.Errors, fmt.Sprintf("listing the broker's users: stopped after %d pages", maxPages))
+			return res
+		}
 		page, err := b.Users(ctx, first, pageSize)
 		if err != nil {
 			res.Errors = append(res.Errors, fmt.Sprintf("listing the broker's users: %v", err))
 			return res
 		}
 		for _, u := range page {
+			if id, _ := u["id"].(string); id != "" {
+				if seen[id] {
+					continue
+				}
+				seen[id] = true
+			}
 			syncUser(ctx, b, u, primary, failovers, writable, lists, logf, &res)
 		}
 		if len(page) < pageSize {
@@ -101,12 +119,21 @@ func syncUser(ctx context.Context, b Broker, u keycloak.User, primary *IdP, fail
 			inPrimary = err == nil
 			if err != nil {
 				fail("%s: %v", primary.Name, err)
-			} else if values := read(rec, primary.Attributes, writable, fit); apply(u, values) {
-				if err := b.UpdateUser(ctx, u); err != nil {
+			} else if values, verified := read(rec, primary.Attributes, writable, fit), emailVerified(rec); apply(clone(u), values, verified) {
+				var fresh keycloak.User
+				changed, err := b.UpdateUser(ctx, id, func(cur keycloak.User) bool {
+					fresh = cur
+					return apply(cur, values, verified)
+				})
+				switch {
+				case err != nil:
 					fail("broker update: %v", err)
-				} else {
+				case changed:
 					res.Updated++
 					logf("broker profile updated", "user", id, "attributes", sortedKeys(values))
+				}
+				if err == nil && fresh != nil {
+					u = fresh // what the broker has now goes out to the failovers
 				}
 			}
 		} else if !errors.Is(err, ErrNoUser) {
@@ -115,22 +142,23 @@ func syncUser(ctx context.Context, b Broker, u keycloak.User, primary *IdP, fail
 	}
 
 	// 2. the broker, out to each failover
-	mail := email(u)
+	mail, verified := email(u), emailVerified(u)
 	for _, f := range failovers {
 		want := map[string][]string{} // path -> values, from the broker's profile
 		for _, m := range f.Attributes {
-			if slices.Contains(writable, m.Attribute) && m.Attribute != "username" {
+			if slices.Contains(writable, m.Attribute) && !slices.Contains(keycloak.NeverSynced, m.Attribute) {
 				if v := brokerValue(u, m.Attribute); len(v) > 0 {
 					want[m.Path] = fit(m.Attribute, v)
 				}
 			}
 		}
+		folded := emailPaths(f.Attributes)
 		fid, err := locate(ctx, b, id, mail, f)
 		switch {
 		case errors.Is(err, ErrNoUser) && mail != "" && inPrimary: // only users the primary has
-			fid, err = f.Dir.Create(ctx, mail, want)
-			if errors.Is(err, ErrNoCreate) {
-				fail("%s: no account there, and it can't create one without a password", f.Name)
+			fid, err = f.Dir.Create(ctx, mail, want, verified)
+			if errors.Is(err, ErrNoCreate) { // a limit of that directory, not a failed run
+				res.Notes = append(res.Notes, fmt.Sprintf("user %s: no account at %s, which can't create one without a password", id, f.Name))
 				continue
 			}
 			if err != nil {
@@ -157,14 +185,14 @@ func syncUser(ctx context.Context, b Broker, u keycloak.User, primary *IdP, fail
 		}
 		set := map[string][]string{}
 		for p, v := range want {
-			if !slices.Equal(Values(Lookup(rec, p)), v) {
+			if !same(Values(Lookup(rec, p)), v, folded[p]) {
 				set[p] = v
 			}
 		}
 		if len(set) == 0 {
 			continue
 		}
-		if err := f.Dir.Update(ctx, fid, set); err != nil {
+		if err := f.Dir.Update(ctx, fid, set, verified); err != nil {
 			fail("%s: update: %v", f.Name, err)
 			continue
 		}
@@ -199,9 +227,10 @@ func verify(ctx context.Context, f IdP, id string, set map[string][]string, fail
 		fail("%s: reading back: %v", f.Name, err)
 		return
 	}
+	folded := emailPaths(f.Attributes)
 	var lost []string
 	for _, p := range sortedKeys(set) {
-		if !slices.Equal(Values(Lookup(rec, p)), set[p]) {
+		if !same(Values(Lookup(rec, p)), set[p], folded[p]) {
 			lost = append(lost, p)
 		}
 	}
@@ -210,24 +239,64 @@ func verify(ctx context.Context, f IdP, id string, set map[string][]string, fail
 	}
 }
 
-// read maps the primary's record onto broker attributes.
+// read maps the primary's record onto broker attributes. Emails are
+// lowercased, as the broker keeps them.
 func read(rec map[string]any, ms []v1.AttributeMapping, writable []string, fit func(string, []string) []string) map[string][]string {
 	values := map[string][]string{}
 	for _, m := range ms {
-		if !slices.Contains(writable, m.Attribute) || m.Attribute == "username" {
+		if !slices.Contains(writable, m.Attribute) || slices.Contains(keycloak.NeverSynced, m.Attribute) {
 			continue
 		}
-		if v := Values(Lookup(rec, m.Path)); len(v) > 0 {
+		v := Values(Lookup(rec, m.Path))
+		if m.Attribute == "email" {
+			for i := range v {
+				v[i] = normalEmail(v[i])
+			}
+		}
+		if len(v) > 0 {
 			values[m.Attribute] = fit(m.Attribute, v)
 		}
 	}
 	return values
 }
 
+func normalEmail(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
+
+// emailPaths are the IdP paths mapped from the broker's email: compared
+// without regard to case.
+func emailPaths(ms []v1.AttributeMapping) map[string]bool {
+	out := map[string]bool{}
+	for _, m := range ms {
+		if m.Attribute == "email" {
+			out[m.Path] = true
+		}
+	}
+	return out
+}
+
+// same compares attribute values, ignoring case when fold is set.
+func same(a, b []string, fold bool) bool {
+	if !fold {
+		return slices.Equal(a, b)
+	}
+	return slices.EqualFunc(a, b, func(x, y string) bool { return strings.EqualFold(strings.TrimSpace(x), strings.TrimSpace(y)) })
+}
+
+// clone copies a user deep enough for apply to change without touching u.
+func clone(u keycloak.User) keycloak.User {
+	c := maps.Clone(u)
+	if a, ok := u["attributes"].(map[string]any); ok {
+		c["attributes"] = maps.Clone(a)
+	}
+	return c
+}
+
 // apply writes values into the broker user's representation; email,
 // firstName and lastName are top-level fields, everything else an attribute.
+// With the email goes whether the primary verified it (verified); a new
+// address the primary doesn't say it verified is not marked verified.
 // Reports whether anything changed.
-func apply(u keycloak.User, values map[string][]string) bool {
+func apply(u keycloak.User, values map[string][]string, verified *bool) bool {
 	changed := false
 	attrs, _ := u["attributes"].(map[string]any)
 	if attrs == nil {
@@ -236,11 +305,14 @@ func apply(u keycloak.User, values map[string][]string) bool {
 	for a, v := range values {
 		switch a {
 		case "email", "firstName", "lastName":
-			if cur, _ := u[a].(string); cur != v[0] {
+			if cur, _ := u[a].(string); cur != v[0] && (a != "email" || !strings.EqualFold(cur, v[0])) {
 				u[a], changed = v[0], true
-				if a == "email" {
-					u["emailVerified"] = true // the primary verified it
+				if a == "email" && verified == nil {
+					u["emailVerified"] = false
 				}
+			}
+			if a == "email" && verified != nil && u["emailVerified"] != *verified {
+				u["emailVerified"], changed = *verified, true
 			}
 		default:
 			if !slices.Equal(Values(attrs[a]), v) {
@@ -268,3 +340,19 @@ func brokerValue(u keycloak.User, attr string) []string {
 }
 
 func email(u keycloak.User) string { s, _ := u["email"].(string); return s }
+
+// emailVerified is whether a record's email is verified, when it says:
+// email_verified (OIDC, Auth0) or emailVerified (Keycloak).
+func emailVerified(rec map[string]any) *bool {
+	for _, k := range []string{"email_verified", "emailVerified"} {
+		switch v := rec[k].(type) {
+		case bool:
+			return &v
+		case string:
+			if b, err := strconv.ParseBool(v); err == nil {
+				return &b
+			}
+		}
+	}
+	return nil
+}

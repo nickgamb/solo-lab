@@ -44,7 +44,7 @@ metadata:
 rules:
 - apiGroups: [""]
   resources: [secrets]
-  resourceNames: [continuity-controller, upstream-auth0, upstream-gluu]
+  resourceNames: [continuity-controller, upstream-okta, upstream-auth0, upstream-gluu, upstream-keycloak]
   verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -58,6 +58,83 @@ kind: RoleBinding
 metadata: {name: continuity-controller, namespace: sv-identity}
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: continuity-controller}
 subjects: [{kind: ServiceAccount, name: continuity-controller, namespace: sv-identity}]
+---
+# Creating a CronJob in sv-identity could otherwise mount any Secret there, so
+# what the controller may create is pinned: the sync, as its own
+# ServiceAccount, with no Secret reaching the pod except through the API.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: {name: continuity-sync-cronjob}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: sv-identity}}
+    resourceRules:
+    - {apiGroups: [batch], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [cronjobs]}
+  matchConditions:
+  - name: by-the-controller
+    expression: "request.userInfo.username == 'system:serviceaccount:sv-identity:continuity-controller'"
+  variables:
+  - name: pod
+    expression: "object.spec.jobTemplate.spec.template.spec"
+  validations:
+  - expression: "variables.pod.?serviceAccountName.orValue('') == 'continuity-sync'"
+    message: "the continuity controller creates only the profile sync, which runs as continuity-sync"
+  - expression: "!has(variables.pod.volumes) || variables.pod.volumes.all(v, !has(v.secret) && !has(v.projected) && !has(v.hostPath))"
+    message: "the profile sync mounts no Secret, projected or host volume"
+  - expression: "variables.pod.containers.all(c, !has(c.envFrom) && (!has(c.env) || c.env.all(e, !has(e.valueFrom) || !has(e.valueFrom.secretKeyRef)))) && !has(variables.pod.initContainers)"
+    message: "the profile sync takes no Secret through its environment"
+  - expression: "!variables.pod.?hostNetwork.orValue(false) && !variables.pod.?hostPID.orValue(false) && variables.pod.containers.all(c, !c.?securityContext.?privileged.orValue(false))"
+    message: "the profile sync is not privileged"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: {name: continuity-sync-cronjob}
+spec:
+  policyName: continuity-sync-cronjob
+  validationActions: [Deny]
+---
+# The sync records its runs in status.sync. Everything else in status (which
+# IdP is active, above all) is the controller's alone, and the egress reads
+# it to decide who vouches.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: {name: continuity-sync-status}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - {apiGroups: [continuity.lab.solo.io], apiVersions: [v1alpha1], operations: [UPDATE], resources: [identitycontinuities/status]}
+  matchConditions:
+  - name: by-the-sync
+    expression: "request.userInfo.username == 'system:serviceaccount:sv-identity:continuity-sync'"
+  validations:
+  - expression: >-
+      has(object.status) && has(oldObject.status) &&
+      has(object.status.observedGeneration) == has(oldObject.status.observedGeneration) &&
+      (!has(object.status.observedGeneration) || object.status.observedGeneration == oldObject.status.observedGeneration) &&
+      has(object.status.broker) == has(oldObject.status.broker) &&
+      (!has(object.status.broker) || object.status.broker == oldObject.status.broker) &&
+      has(object.status.active) == has(oldObject.status.active) &&
+      (!has(object.status.active) || object.status.active == oldObject.status.active) &&
+      has(object.status.activeSince) == has(oldObject.status.activeSince) &&
+      (!has(object.status.activeSince) || object.status.activeSince == oldObject.status.activeSince) &&
+      has(object.status.egressNamespace) == has(oldObject.status.egressNamespace) &&
+      (!has(object.status.egressNamespace) || object.status.egressNamespace == oldObject.status.egressNamespace) &&
+      has(object.status.tiers) == has(oldObject.status.tiers) &&
+      (!has(object.status.tiers) || object.status.tiers == oldObject.status.tiers) &&
+      has(object.status.transitions) == has(oldObject.status.transitions) &&
+      (!has(object.status.transitions) || object.status.transitions == oldObject.status.transitions) &&
+      has(object.status.conditions) == has(oldObject.status.conditions) &&
+      (!has(object.status.conditions) || object.status.conditions == oldObject.status.conditions)
+    message: "the profile sync may change status.sync only"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: {name: continuity-sync-status}
+spec:
+  policyName: continuity-sync-status
+  validationActions: [Deny]
 ---
 # The scheduled profile sync (a CronJob the controller keeps from spec.sync,
 # running this image's "sync" command): reads its instance, records its run

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -101,9 +102,9 @@ func profileAttr(owner string, a Attr, base map[string]any) map[string]any {
 	}
 	m["multivalued"] = a.Multivalued
 	m["permissions"] = map[string]any{"view": []any{"admin", "user"}, "edit": []any{"admin"}}
-	ann, _ := m["annotations"].(map[string]any)
-	if ann == nil {
-		ann = map[string]any{}
+	ann := map[string]any{} // a copy: base stays as fetched, so drift shows
+	if a, ok := m["annotations"].(map[string]any); ok {
+		maps.Copy(ann, a)
 	}
 	ann[OwnerAnnotation] = owner
 	delete(ann, "inputType")
@@ -142,14 +143,22 @@ func (c *Client) FederatedIdentity(ctx context.Context, userID, alias string) (s
 	return "", ErrNotFound
 }
 
-// UpdateUser writes the user's whole representation back (Keycloak drops
-// attributes left out of an update).
-func (c *Client) UpdateUser(ctx context.Context, u User) error {
-	id, _ := u["id"].(string)
+// UpdateUser reads the user, has apply change the representation, and writes
+// the whole of it back (Keycloak drops attributes left out of an update).
+// Reading right before the write keeps whatever changed since the user was
+// listed. Nothing is written when apply reports no change.
+func (c *Client) UpdateUser(ctx context.Context, id string, apply func(User) bool) (bool, error) {
 	if id == "" {
-		return errors.New("user without id")
+		return false, errors.New("user without id")
 	}
-	return c.do(ctx, http.MethodPut, "/users/"+url.PathEscape(id), u, nil)
+	var u User
+	if err := c.do(ctx, http.MethodGet, "/users/"+url.PathEscape(id), nil, &u); err != nil {
+		return false, err
+	}
+	if !apply(u) {
+		return false, nil
+	}
+	return true, c.do(ctx, http.MethodPut, "/users/"+url.PathEscape(id), u, nil)
 }
 
 // HasRealmRole reports whether the user holds a realm role, directly or

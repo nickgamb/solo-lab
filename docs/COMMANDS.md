@@ -16,7 +16,7 @@ the repo root: `bash -c '. scripts/lib.sh; ...'`.
 
 | Command | Shows |
 | --- | --- |
-| `make status` | nodes, pods that aren't running, the active sign-in tier, URLs and sign-ins |
+| `make status` | nodes, pods that aren't running, the active IdP, URLs and sign-ins |
 | `kubectl --context kind-solo-lab get nodes -L topology.kubernetes.io/zone` | the kind nodes and their zones |
 | `kubectl --context kind-solo-lab get pods -A` | every pod |
 | `kubectl --context kind-solo-lab get pods -A --field-selector=status.phase!=Running` | pods that aren't running |
@@ -86,12 +86,14 @@ with `--token <jwt>` and `--header name=value`.
 | `kubectl --context kind-solo-lab -n sv-identity logs deploy/keycloak --since=10m \| grep -i -E "claim\|IDENTITY_PROVIDER\|error"` | sign-in and broker errors (it names the claim or step that failed) |
 
 **Get Bob's tokens** (the scripted browser sign-in the checks use: kagent's
-SSO through the broker to S&V's workforce IdP, which must be the active IdP;
-lab test accounts only):
+SSO through the broker to S&V's own Keycloak; lab test accounts only):
 
 ```bash
-bash -c '. scripts/lib.sh; sso_token bob bob-demo' > /tmp/bob.json
+bash -c '. scripts/lib.sh; . scripts/idp.sh; prefer_tier keycloak >&2; sso_token bob bob-demo' > /tmp/bob.json
 ```
+
+`prefer_tier` drains the IdPs ahead of S&V's own Keycloak for the command and
+restores the chain on exit.
 
 **Decode a token's claims** (no verification; to see what it carries):
 
@@ -103,13 +105,18 @@ jq -r .access_token /tmp/bob.json | jq -R 'split(".")[1] | gsub("-";"+") | gsub(
 
 | Command | Shows |
 | --- | --- |
-| `kubectl --context kind-solo-lab get idc -A` | each IdentityContinuity and its active tier |
-| `kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o jsonpath='{range .status.tiers[*]}{.name}: {.reason} {.message}{"\n"}{end}'` | each tier's health |
+| `kubectl --context kind-solo-lab get idc -A` | each IdentityContinuity and its active IdP |
+| `kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o jsonpath='{range .status.tiers[*]}{.name}: {.reason} {.message}{"\n"}{end}'` | each IdP's health (and break-glass) |
 | `kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o jsonpath='{.status.transitions}' \| jq` | the last 20 failovers and failbacks |
-| `kubectl --context kind-solo-lab get events -n sv-identity --field-selector involvedObject.name=sterling-vance` | tier health and failover events |
+| `kubectl --context kind-solo-lab get events -n sv-identity --field-selector involvedObject.name=sterling-vance` | IdP health and failover events |
 | `kubectl --context kind-solo-lab -n sv-identity logs deploy/continuity-controller -f` | the controller |
 | `kubectl --context kind-solo-lab -n sv-egress get authorizationpolicy -L continuity.lab.solo.io/tier` | outages in effect (kill-switch policies) |
 | `kubectl --context kind-solo-lab -n sv-egress delete authorizationpolicy continuity-partition-auth0` | end a simulated Auth0 outage |
+| `kubectl --context kind-solo-lab -n sv-workforce get authorizationpolicy -L continuity.lab.solo.io/tier` | a cut of S&V's own Keycloak |
+| `kubectl --context kind-solo-lab -n sv-identity get cronjob,job -l app=continuity-sync` | the directory sync's schedule and runs |
+| `kubectl --context kind-solo-lab -n sv-identity create job --from=cronjob/sterling-vance-profile-sync sync-now` | run the directory sync now |
+| `kubectl --context kind-solo-lab -n sv-identity logs job/sync-now` | what it did (users by id only) |
+| `kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o jsonpath='{.status.sync}' \| jq` | the sync's last run, counts and detected attributes |
 | `make continuity-verify` | the failover, kill switch and live-rule checks |
 
 The kill switch itself is in [IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#kill-switch).
@@ -148,6 +155,6 @@ Grafana and Kiali are at https://grafana.ops.lab and https://kiali.ops.lab
 | `kubectl --context kind-solo-lab logs <pod> -n <ns> --previous` | the logs of a container that crashed |
 | `kubectl --context kind-solo-lab rollout restart deploy/<name> -n <ns>` | restart a workload |
 | `make layer-NN` | re-apply one layer (idempotent); e.g. `make layer-80` restores the S&V mesh policy |
-| `make preflight` | tools, Docker memory and inotify limits (Docker Desktop: reset when it restarts) |
+| `make preflight` | tools, Docker memory and inotify limits (Docker VMs: reset when the VM restarts), free ports, `*.lab` DNS |
 | `make reset` | rewind the demos without a rebuild |
 | `make down && make up` | rebuild the cluster; caches and the CA survive |

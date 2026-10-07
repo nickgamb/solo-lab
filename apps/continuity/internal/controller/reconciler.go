@@ -49,6 +49,8 @@ const (
 	// cleanupGrace: how long deletion waits for Keycloak before giving up on
 	// cleaning it (so a gone broker never wedges namespace deletion).
 	cleanupGrace = 5 * time.Minute
+	// maxMessage bounds a condition's message.
+	maxMessage = 4096
 )
 
 var (
@@ -108,8 +110,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	egressErr := r.reconcileEgress(ctx, &ic, ic.Spec.Tiers)
 	broker := r.probeAll(ctx, &ic, creds, kc != nil, interval)
+	// after the probes, so each tier's ServiceEntry covers the endpoints its
+	// discovery names
+	egressErr := r.reconcileEgress(ctx, &ic, ic.Spec.Tiers)
 	r.markPartitions(ctx, &ic)
 
 	byName := map[string]*v1.TierStatus{}
@@ -273,6 +277,7 @@ func (r *Reconciler) probeAll(ctx context.Context, ic *v1.IdentityContinuity, cr
 		}()
 	}
 	wg.Wait()
+	r.pruneDiscovery(ic)
 
 	now := metav1.Now()
 	out := make([]v1.TierStatus, 0, len(ic.Spec.Tiers))
@@ -333,6 +338,25 @@ func (r *Reconciler) cachedDiscovery(ic *v1.IdentityContinuity, t v1.Tier) *prob
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.discovery[discoveryKey(ic, t)]
+}
+
+// pruneDiscovery drops the instance's cached discovery for tiers (or
+// issuers) no longer in the spec.
+func (r *Reconciler) pruneDiscovery(ic *v1.IdentityContinuity) {
+	keep := map[string]bool{}
+	for _, t := range ic.Spec.Tiers {
+		if t.OIDC != nil {
+			keep[discoveryKey(ic, t)] = true
+		}
+	}
+	prefix := client.ObjectKeyFromObject(ic).String() + "/"
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for k := range r.discovery {
+		if strings.HasPrefix(k, prefix) && !keep[k] {
+			delete(r.discovery, k)
+		}
+	}
 }
 
 // markPartitions flags tiers that have a partition policy. Informational only.
@@ -429,8 +453,17 @@ func (r *Reconciler) setConditions(ic *v1.IdentityContinuity, st map[string]*v1.
 	}
 	for _, c := range []metav1.Condition{ready, degraded, rules} {
 		c.ObservedGeneration = ic.Generation
+		c.Message = truncate(c.Message, maxMessage)
 		meta.SetStatusCondition(&ic.Status.Conditions, c)
 	}
+}
+
+// truncate cuts s to at most n bytes, on a character boundary.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return strings.ToValidUTF8(s[:n-3], "") + "..."
 }
 
 // setProfileCondition reports the profile, the attribute mappings and the
@@ -444,6 +477,7 @@ func (r *Reconciler) setProfileCondition(ic *v1.IdentityContinuity, err error) {
 	case ic.Spec.Profile == nil && ic.Spec.Sync == nil && !hasMappings(ic):
 		c.Reason, c.Message = "NotConfigured", "no profile, attribute mappings or sync"
 	}
+	c.Message = truncate(c.Message, maxMessage)
 	meta.SetStatusCondition(&ic.Status.Conditions, c)
 }
 
@@ -512,8 +546,14 @@ func (r *Reconciler) reconcileKeycloak(ctx context.Context, ic *v1.IdentityConti
 			if !exists {
 				err = kc.CreateIdP(ctx, want)
 			} else if !sameIdP(cur, want) {
-				for k, v := range want {
-					cur[k] = v
+				// only what the controller manages: other fields and config
+				// keys set in Keycloak stay
+				for _, k := range idpManaged {
+					cur[k] = want[k]
+				}
+				cc := cur.Config()
+				for k, v := range want.Config() {
+					cc[k] = v
 				}
 				err = kc.UpdateIdP(ctx, t.Name, cur)
 			}
@@ -627,11 +667,15 @@ func desiredIdP(ic *v1.IdentityContinuity, t v1.Tier, c credential, d *probe.Dis
 	return p
 }
 
+// idpManaged are the top-level IdP fields the controller sets (besides its
+// config keys).
+var idpManaged = []string{"displayName", "providerId", "enabled", "hideOnLogin", "trustEmail", "storeToken", "firstBrokerLoginFlowAlias"}
+
 // sameIdP compares what the controller manages on an IdP with what Keycloak
 // has now, so a change made in Keycloak by hand is put back. The client
 // secret comes back masked; the hash (which covers it) stands in for it.
 func sameIdP(cur, want keycloak.IdP) bool {
-	for _, k := range []string{"displayName", "providerId", "enabled", "hideOnLogin", "trustEmail", "storeToken", "firstBrokerLoginFlowAlias"} {
+	for _, k := range idpManaged {
 		if fmt.Sprint(cur[k]) != fmt.Sprint(want[k]) {
 			return false
 		}
@@ -757,10 +801,17 @@ func isInternal(domains []string, host string) bool {
 }
 
 func serviceEntry(e *v1.Egress, callerNS, instance, tier string, hosts []string) *unstructured.Unstructured {
+	// "." is the egress namespace itself: named once, every other namespace once
+	exportTo := []string{"."}
+	for _, ns := range append([]string{callerNS}, e.ExportTo...) {
+		if ns != "" && ns != e.Namespace && !slices.Contains(exportTo, ns) {
+			exportTo = append(exportTo, ns)
+		}
+	}
 	se := &unstructured.Unstructured{Object: map[string]any{
 		"spec": map[string]any{
 			"hosts":      toAny(hosts),
-			"exportTo":   toAny(append([]string{".", callerNS}, e.ExportTo...)),
+			"exportTo":   toAny(exportTo),
 			"location":   "MESH_EXTERNAL",
 			"resolution": "DNS",
 			"ports":      []any{map[string]any{"number": int64(443), "name": "tls", "protocol": "TLS"}},
@@ -791,9 +842,9 @@ func (r *Reconciler) finalize(ctx context.Context, ic *v1.IdentityContinuity, kc
 	err := brokerErr
 	if err == nil {
 		err = r.cleanup(ctx, ic, kc)
-	} else {
-		err = errors.Join(err, r.cleanupEgress(ctx, ic))
 	}
+	// the egress is the cluster's own: cleaned whatever Keycloak's state
+	err = errors.Join(err, r.cleanupEgress(ctx, ic))
 	if err != nil {
 		if time.Since(ic.DeletionTimestamp.Time) < cleanupGrace {
 			log.FromContext(ctx).Info("cleanup failed, retrying", "err", err.Error())
@@ -807,10 +858,11 @@ func (r *Reconciler) finalize(ctx context.Context, ic *v1.IdentityContinuity, kc
 	return ctrl.Result{}, r.Update(ctx, ic)
 }
 
-// cleanup puts the realm back to plain local login and removes what this
-// instance created.
+// cleanup puts the realm back to plain local login and removes the
+// identity providers and profile attributes this instance created.
 func (r *Reconciler) cleanup(ctx context.Context, ic *v1.IdentityContinuity, kc *keycloak.Client) error {
-	if _, err := kc.SetRedirector(ctx, ic.Spec.Broker.Keycloak.BrowserFlow, ""); err != nil {
+	// a flow already gone has no redirector to clear
+	if _, err := kc.SetRedirector(ctx, ic.Spec.Broker.Keycloak.BrowserFlow, ""); err != nil && !errors.Is(err, keycloak.ErrNotFound) {
 		return err
 	}
 	if err := cleanupProfile(ctx, ic, kc); err != nil {
@@ -828,7 +880,7 @@ func (r *Reconciler) cleanup(ctx context.Context, ic *v1.IdentityContinuity, kc 
 			}
 		}
 	}
-	return r.cleanupEgress(ctx, ic)
+	return nil
 }
 
 func (r *Reconciler) cleanupEgress(ctx context.Context, ic *v1.IdentityContinuity) error {

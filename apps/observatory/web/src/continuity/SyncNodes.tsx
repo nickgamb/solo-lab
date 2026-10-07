@@ -46,12 +46,13 @@ function AttrForm({ attr, taken, onDone, onCancel }: {
   return (
     <div className="cm-attr-form nodrag nowheel" onKeyDown={e => {
       if (e.key === 'Escape') { e.stopPropagation(); onCancel() }
-      if (e.key === 'Enter') { e.preventDefault(); submit() }
+      // Enter in a text field submits; buttons and the checkbox keep their own Enter
+      if (e.key === 'Enter' && e.target instanceof HTMLInputElement && e.target.type === 'text') { e.preventDefault(); submit() }
     }}>
       {attr ? <div className="mono small">{attr.name}</div>
-        : <input className={`field${nameErr ? ' invalid' : ''}`} autoFocus placeholder="name (e.g. department)" aria-label="Attribute name" value={name} onChange={e => setName(e.target.value)} />}
+        : <input type="text" className={`field${nameErr ? ' invalid' : ''}`} autoFocus placeholder="name (e.g. department)" aria-label="Attribute name" value={name} onChange={e => setName(e.target.value)} />}
       {nameErr && <span className="small danger-text">{nameErr}</span>}
-      <input className="field" placeholder="display name (optional)" aria-label="Display name" value={displayName} onChange={e => setDisplayName(e.target.value)} />
+      <input type="text" className="field" placeholder="display name (optional)" aria-label="Display name" value={displayName} onChange={e => setDisplayName(e.target.value)} />
       <div className="row">
         <label className="small grow">type
           <select className="field" value={type} onChange={e => setType(e.target.value as AttributeType)}>
@@ -85,11 +86,13 @@ export const IdpNode = memo(({ id, data }: NodeProps) => {
       <div className="cm-head">
         <div className="row">
           <span className="order">{d.order}</span>
-          <b className="grow ellipsis" title={t.name}>{t.displayName || t.name}</b>
+          <b className="grow ellipsis" title={t.displayName ? `${t.displayName} (${t.name})` : t.name}>{t.displayName || t.name}</b>
+        </div>
+        <div className="row">
+          <span className="mono subtle small ellipsis grow" title={t.oidc?.issuer}>{host(t.oidc?.issuer) || 'no issuer'}</span>
           <span className="chip" title={primary ? 'Read into S&V\'s profile' : 'Written from S&V\'s profile; users the primary has are created here'}>
             {primary ? 'primary · read' : 'failover · written'}</span>
         </div>
-        <div className="mono subtle small ellipsis" title={t.oidc?.issuer}>{host(t.oidc?.issuer) || 'no issuer'}</div>
       </div>
       <ul className="cm-rows">
         {d.paths.map(x => (

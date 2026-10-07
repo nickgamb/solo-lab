@@ -6,7 +6,7 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: sv-u4a
-  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient}
+  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -61,6 +61,11 @@ metadata: {name: strict, namespace: sv-u4a}
 spec: {mtls: {mode: STRICT}}
 ---
 # Bob's agent, and the kagent controller listing tools. Nobody else.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: default-deny, namespace: sv-u4a}
+spec: {}
+---
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata: {name: adapter-callers, namespace: sv-u4a}

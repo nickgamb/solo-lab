@@ -94,7 +94,12 @@ func TestHubResendsDroppedSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer res.Body.Close()
-	for len(h.subs) == 0 { // wait for the subscription
+	subscribed := func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return len(h.subs) > 0
+	}
+	for !subscribed() { // wait for the subscription
 		time.Sleep(5 * time.Millisecond)
 	}
 	// overflow the browser's buffer with traffic, then publish a graph

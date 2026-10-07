@@ -159,7 +159,7 @@ func main() {
 	api.HandleFunc("POST /api/resource", res.Apply)
 	api.HandleFunc("GET /api/continuity", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, cont.View(index.Load())) })
 	api.HandleFunc("PUT /api/continuity/{ns}/{name}", cont.PutSpec)
-	api.HandleFunc("PUT /api/continuity/{ns}/secret", cont.PutSecret)
+	api.HandleFunc("PUT /api/continuity/{ns}/secrets/{name}", cont.PutSecret)
 	api.HandleFunc("POST /api/continuity/partition", cont.Partition)
 	api.HandleFunc("POST /api/continuity/{ns}/{name}/sync", cont.RunSync)
 	api.HandleFunc("POST /api/continuity/{ns}/{name}/directory-test", cont.TestDirectory)

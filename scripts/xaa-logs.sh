@@ -31,7 +31,12 @@ logs ledgerline app.kubernetes.io/name=ledgerline-research '"event": "token' >"$
 logs ledgerline gateway.networking.k8s.io/gateway-name=waypoint >"$out/ledgerline-waypoint.log"
 K get "$AGW_BACKEND_KIND" -n agentgateway-system xaa-ledgerline -o yaml 2>/dev/null \
   | yq '{"spec": {"crossAppAccess": .spec.mcp.targets[0].static.policies.auth.crossAppAccess}}' >"$out/xaa-config.yaml"
-for n in $(idp_xaa_upstreams); do idp_discover "$(_idp_var "$n" ISSUER)" >"$out/discovery-$n.json"; done
-[ "$RESOURCE_AS" = gluu ] && idp_discover "$RESOURCE_AS_ISSUER" >"$out/discovery-resource-as.json"
+# an IdP that doesn't answer is noted, and the rest of the trail still written
+for n in $(idp_xaa_upstreams); do
+  (idp_discover "$(_idp_var "$n" ISSUER)") >"$out/discovery-$n.json" || warn "no discovery from $n: $out/discovery-$n.json is empty"
+done
+if [ "$RESOURCE_AS" = gluu ]; then
+  (idp_discover "$RESOURCE_AS_ISSUER") >"$out/discovery-resource-as.json" || warn "no discovery from Ledgerline's AS: $out/discovery-resource-as.json is empty"
+fi
 for f in "$out"/*; do printf '  %-28s %s lines\n' "$(basename "$f")" "$(wc -l <"$f" | tr -d ' ')"; done
 ok "Cross App Access trail: $out"

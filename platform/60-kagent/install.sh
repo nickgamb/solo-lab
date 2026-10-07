@@ -26,8 +26,7 @@ if [ "$ED" = enterprise ]; then
 fi
 # kagent's OpenAI client insists on a key. agentgateway ignores it and injects
 # the real provider credential, so this placeholder is all kagent ever holds.
-K create secret generic kagent-llm -n kagent --from-literal=API_KEY=via-agentgateway \
-  --dry-run=client -o yaml | K apply -f - >/dev/null
+secret_apply kagent kagent-llm API_KEY=via-agentgateway
 # The ops worker pool's identity (the chart's WorkerPool runs as it)
 K create serviceaccount kagent-ops -n kagent --dry-run=client -o yaml | K apply -f - >/dev/null
 helm_up kagent-crds "$KAGENT_CRDS_CHART" "$KAGENT_VERSION" kagent

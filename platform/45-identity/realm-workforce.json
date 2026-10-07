@@ -190,7 +190,8 @@
       "bearerOnly": true,
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": false
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false
     },
     {
       "clientId": "ledgerline",
@@ -232,7 +233,8 @@
       "serviceAccountsEnabled": true,
       "attributes": {
         "access.token.lifespan": "120"
-      }
+      },
+      "fullScopeAllowed": false
     }
   ],
   "clientScopes": [
@@ -926,5 +928,16 @@
         "display.on.consent.screen": "false"
       }
     }
-  ]
+  ],
+  "clientScopeMappings": {
+    "realm-management": [
+      {
+        "client": "continuity-directory",
+        "roles": [
+          "view-users",
+          "manage-users"
+        ]
+      }
+    ]
+  }
 }

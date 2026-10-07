@@ -82,16 +82,18 @@ type ProfileAttribute struct {
 	Multivalued bool `json:"multivalued,omitempty"`
 }
 
-// Sync schedules the directory sync. For each user linked at the broker:
-// the primary IdP's profile (the chain's first tier) is read into the
-// broker's, then the broker's is written to each failover IdP that has the
-// user, through each tier's attribute mapping. Passwords and credentials are
-// never read or written; neither are the identity keys username and email;
-// no user is created or deleted.
+// Sync schedules the directory sync. For each employee the broker has: the
+// primary IdP's record (the chain's first tier) is read into the broker's
+// profile, then the broker's profile is written to each failover IdP,
+// creating the user there (with an enrollment email) if the primary has them.
+// Passwords and credentials are never read or written, the username is never
+// written, and no user is deleted.
+// +kubebuilder:validation:XValidation:rule="(has(self.suspend) && self.suspend) || (has(self.schedule) && size(self.schedule) > 0)",message="a schedule, unless suspended"
 type Sync struct {
-	// Standard cron, in UTC (e.g. "0 2 * * *" daily at 02:00).
-	// +kubebuilder:validation:MinLength=9
-	Schedule string `json:"schedule"`
+	// Standard cron, in UTC (e.g. "0 2 * * *" daily at 02:00). Empty only
+	// while suspended.
+	// +optional
+	Schedule string `json:"schedule,omitempty"`
 	Suspend  bool   `json:"suspend,omitempty"`
 	// A Secret with client-id and client-secret of the broker's realm client
 	// the sync writes users as (view-users and manage-users; nothing else).
@@ -143,7 +145,9 @@ type Broker struct {
 }
 
 type KeycloakBroker struct {
-	// In-cluster base URL of Keycloak (admin API and token endpoint).
+	// In-cluster base URL of Keycloak (admin API and token endpoint): a
+	// cluster Service, e.g. http://keycloak.sv-identity.svc.
+	// +kubebuilder:validation:Pattern=`^https?://[a-z0-9.-]+\.svc(\.cluster\.local)?(:[0-9]+)?/?$`
 	URL   string `json:"url"`
 	Realm string `json:"realm"`
 	// Secret with client-id and client-secret of a service-account client

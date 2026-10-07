@@ -55,15 +55,14 @@ metadata:
 spec:
   mtls: {mode: STRICT}
 ---
-# L4, enforced by ztunnel on the pods: the waypoint is the only way in.
+# L4, enforced by ztunnel on every pod in the namespace: the waypoint is the
+# only way in, for bob-workspace and for any MCP server added beside it.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata:
-  name: bob-workspace-pods-only-from-waypoint
+  name: pods-only-from-waypoint
   namespace: sv-mcp
 spec:
-  selector:
-    matchLabels: {app.kubernetes.io/name: bob-workspace}
   action: ALLOW
   rules:
   - from: [{source: {principals: ["cluster.local/ns/sv-mcp/sa/mcp-waypoint"]}}]

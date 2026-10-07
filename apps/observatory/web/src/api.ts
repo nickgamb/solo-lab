@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 // Mirrors server/model.go.
 export type Ref = { apiVersion: string; kind: string; namespace?: string; name: string }
@@ -76,7 +76,7 @@ export type ContinuitySpec = {
   sync?: Sync
 }
 export type IdentityContinuity = {
-  metadata: { name: string; namespace: string }
+  metadata: { name: string; namespace: string; resourceVersion?: string }
   spec: ContinuitySpec
   status?: { active?: string; activeSince?: string; broker?: { issuer?: string }; tiers?: TierStatus[]; transitions?: { time: string; from: string; to: string; reason: string }[]; sync?: SyncStatus }
 }
@@ -129,21 +129,25 @@ export function useLab(): Lab {
       if (!pending.current.length) return
       const batch = pending.current.reverse()
       pending.current = []
-      setTraffic(prev => [...batch, ...prev].slice(0, TRAFFIC_KEEP))
+      setTraffic(prev => dedupe([...batch, ...prev]))
     }, 250)
     return () => { es.close(); clearInterval(flush) }
   }, [])
 
-  const onTraffic = (fn: (t: Traffic) => void) => {
+  // stable, so subscribers don't resubscribe on every render
+  const onTraffic = useCallback((fn: (t: Traffic) => void) => {
     listeners.current.add(fn)
     return () => { listeners.current.delete(fn) }
-  }
+  }, [])
   return { connected, graph, stats, substrate, continuity, traffic, onTraffic }
 }
 
+// one row per id, newest first (times can differ in precision, so compare
+// them as instants, not text)
 function dedupe(ts: Traffic[]) {
   const seen = new Set<string>()
-  return ts.filter(t => (seen.has(t.id) ? false : (seen.add(t.id), true))).sort((a, b) => b.time.localeCompare(a.time)).slice(0, TRAFFIC_KEEP)
+  return ts.filter(t => (seen.has(t.id) ? false : (seen.add(t.id), true)))
+    .sort((a, b) => (Date.parse(b.time) || 0) - (Date.parse(a.time) || 0)).slice(0, TRAFFIC_KEEP)
 }
 
 // An API call that failed, with its HTTP status (409: a conflict to resolve).
@@ -163,5 +167,19 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const ct = r.headers.get('content-type') ?? ''
   return (ct.includes('json') ? JSON.parse(text) : text) as T
 }
+
+// Writes an IdentityContinuity's spec. The resourceVersion it was read at
+// makes the server refuse (409) if someone else changed it since; the
+// result is the stored object, with its new resourceVersion.
+export const putContinuity = (ns: string, name: string, resourceVersion: string | undefined, spec: ContinuitySpec) =>
+  api<IdentityContinuity>(`/api/continuity/${ns}/${name}`, { method: 'PUT', body: JSON.stringify({ resourceVersion, spec }) })
+
+// a write refused because the object changed since it was read
+export const isConflict = (e: unknown) => e instanceof ApiError && e.status === 409
+
+// Writes keys of a Secret in an IdentityContinuity's namespace. Write-only:
+// nothing reads a Secret's values back.
+export const putSecret = (ns: string, name: string, body: { key?: string; value?: string; data?: Record<string, string>; for?: string }) =>
+  api(`/api/continuity/${ns}/secrets/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(body) })
 
 export const refKey = (r: Ref) => `${r.apiVersion}/${r.kind}/${r.namespace ?? ''}/${r.name}`

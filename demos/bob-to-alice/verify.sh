@@ -1,18 +1,24 @@
 #!/usr/bin/env bash
 # Story 2 checks. Drives the real path (kagent -> bob-assistant -> U4A adapter
 # -> edge -> Meridian -> Alice's AS) and plays Alice's decisions through her
-# owner API; in the demo she clicks them in her portal. Run after `make reset`.
+# owner API; in the demo she clicks them in her portal. Starts from a first
+# run: make alice-verify and make verify run make reset first.
 . "$(dirname "$0")/../../scripts/lib.sh"
 need_cluster; need_password_grant
-pass=0 fail=0
+pass=0 fail=0 skip=0
 res() { if [ "$1" = ok ]; then ok "$2"; pass=$((pass+1)); else warn "$2"; echo "      got: ${3:0:300}"; fail=$((fail+1)); fi; }
 expect() { echo "$3" | tr '\n' ' ' | grep -qiE "$1" && res ok "$2" || res no "$2" "$(echo "$3" | tr '\n' ' ')"; }
+skipped() { printf '  - skipped: %s\n' "$*"; skip=$((skip+1)); }
+TMPD=$(umask 077; mktemp -d); on_exit "rm -rf $TMPD"   # every temp file, gone on exit
+# probe_ran <output>: the probe's last line is its JSON result (it ran)
+probe_ran() { echo "$1" | jq -e 'has("http")' >/dev/null 2>&1; }
 
 . "$LAB_ROOT/scripts/idp.sh"
 prefer_tier keycloak   # Bob signs in through S&V's own IdP, which a script can drive
-BOB=$(sso_token bob bob-demo | jq -r .access_token)
-ALICE=$(user_token alice-identity alice alice-portal "" alice alice-demo)
-[ -n "$BOB" ] && [ -n "$ALICE" ] || die "sign-in failed"
+BOB=$(sso_token bob bob-demo | jq -r '.access_token // empty') || BOB=""
+[ -n "$BOB" ] || die "could not sign Bob in"
+ALICE=$(user_token alice-identity alice alice-portal "" alice alice-demo) || ALICE=""
+[ -n "$ALICE" ] || die "could not sign Alice in (alice-portal, password grant)"
 probe_pod kagent kagent-ui; probe_pod sv-agents
 AS="https://as.$ALICE_DOMAIN"; CA=(--cacert "$LAB_CA_DIR/ca.crt")
 
@@ -21,9 +27,10 @@ ask_bob() {  # ask_bob <question> -> the agent's last reply (what the UI shows),
   a2a_send "$BOB" "$body" | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"'
 }
 alice_decides() {  # alice_decides approved|denied: waits for her next pending ask
-  local p fam kind i
-  ALICE=$(user_token alice-identity alice alice-portal "" alice alice-demo)   # 5-minute tokens
-  for i in $(seq 1 60); do
+  local p fam kind
+  ALICE=$(user_token alice-identity alice alice-portal "" alice alice-demo) || ALICE=""   # 5-minute tokens
+  [ -n "$ALICE" ] || { echo "no token for Alice"; return; }
+  for _ in $(seq 1 60); do
     p=$(with_bearer "$ALICE" curl -s "${CA[@]}" "$AS/owner/pending")
     fam=$(echo "$p" | jq -r '(if type=="array" then . else .pending end)[0].family // empty' 2>/dev/null)
     [ -n "$fam" ] && break; sleep 2
@@ -35,12 +42,20 @@ alice_decides() {  # alice_decides approved|denied: waits for her next pending a
   echo "$kind"
 }
 ask_with_alice() {  # ask_with_alice <decision> <question> -> "<pend kind> | <reply>"
-  local out pend; out=$(mktemp)
-  ask_bob "$2" > "$out" & local pid=$!
-  pend=$(alice_decides "$1"); wait $pid
+  local out="$TMPD/reply" pend pid
+  ask_bob "$2" > "$out" & pid=$!
+  on_exit "kill $pid 2>/dev/null"
+  pend=$(alice_decides "$1"); wait $pid || true
   echo "$pend | $(cat "$out")"; rm -f "$out"
 }
 
+# Bob's questions go through his agent, so through the model: without one
+# answering, these are skipped (counted), not failed or left to time out
+if ! why=$(llm_ready); then
+  for c in "tier 1: held for Alice, approved, holdings returned" "tier 2: held at a new tier, approved" \
+           "tier 2: same ask again, on her standing terms" "tier 3: held per operation, Alice denied it" \
+           "tier 3: Alice's ledger, denied and never executed"; do skipped "$c (needs the model: $why)"; done
+else
 step "Tier 1: holdings. A first contact waits for Alice"
 r=$(ask_with_alice approved "What is in Alice's portfolio? Use get_positions.")
 expect '^connection/tier1 .*VTI' "held for Alice, approved, holdings returned" "$r"
@@ -48,7 +63,7 @@ expect '^connection/tier1 .*VTI' "held for Alice, approved, holdings returned" "
 step "Tier 2: transactions. A new tier asks again, then her terms cover it"
 r=$(ask_with_alice approved "Show Alice's transaction history. Use get_transactions with no account argument.")
 expect 'tier2.*(buy|sell|dividend|VTI|AAPL)' "held at a new tier, approved, history returned" "$r"
-r=$(ask_bob "Show Alice's transaction history again. Use get_transactions with no account argument.")
+r=$(ask_bob "Show Alice's transaction history again. Use get_transactions with no account argument.") || true
 expect '(buy|sell|dividend|VTI|AAPL)' "same ask again: through on her standing terms" "$r"
 
 step "Tier 3: a trade always asks, and she can say no"
@@ -56,10 +71,11 @@ r=$(ask_with_alice denied "Sell 200 shares of Alice's AAPL. Use execute_trade wi
 expect '^operation/tier3 ' "held per operation, and Alice denied it" "$r"
 # what happened, from Alice's own ledger rather than the model's words: her
 # denial is recorded and the trade never touched her account
-ALICE=$(user_token alice-identity alice alice-portal "" alice alice-demo)
+ALICE=$(user_token alice-identity alice alice-portal "" alice alice-demo) || ALICE=""
 l=$(with_bearer "$ALICE" curl -s "${CA[@]}" "$AS/owner/ledger" | jq -r '[.[] | select(.tier == "tier3")] | group_by(.family)
-  | max_by(map(.ts) | max) // [] | map(.kind) | if index("denied") and (index("touched") | not) then "denied, never executed" else join(",") end')
+  | max_by(map(.ts) | max) // [] | map(.kind) | if index("denied") and (index("touched") | not) then "denied, never executed" else join(",") end' 2>&1) || true
 expect '^denied, never executed' "Alice's ledger: the trade was denied and never executed" "$l"
+fi
 
 step "Refused (real identities, no model involved)"
 c=$(curl -s -o /dev/null -w '%{http_code}' "${CA[@]}" -X POST "https://gateway.$MERIDIAN_DOMAIN/mcp" -H 'content-type: application/json' \
@@ -68,11 +84,15 @@ c=$(curl -s -o /dev/null -w '%{http_code}' "${CA[@]}" -X POST "https://gateway.$
 expect '401' "no grant: Meridian answers 401 + UMA challenge" "$c"
 c=$(curl -s -o /dev/null -w '%{http_code}' "${CA[@]}" "$AS/owner/pending")
 expect '401|403' "Alice's owner API without her token" "$c"
-o=$(probe_exec sv-agents http://u4a-adapter.sv-u4a:9030/mcp list 2>&1 | tail -1)
+o=$(probe_exec sv-agents http://u4a-adapter.sv-u4a:9030/mcp list 2>&1 | tail -1) || true
+probe_ran "$o" || o="probe did not run: $o"
 expect 'connection failed|http": 0' "another S&V workload can't use Bob's agent's adapter" "$o"
-o=$(probe_exec sv-agents http://alice-vault.meridian:9020/mcp list 2>&1 | tail -1)
+o=$(probe_exec sv-agents http://alice-vault.meridian:9020/mcp list 2>&1 | tail -1) || true
+probe_ran "$o" || o="probe did not run: $o"
 expect 'connection failed|http": 0' "straight to Alice's vault, skipping Meridian's gateway" "$o"
-o=$(K exec -n sv-agents probe -- curl -s -m 5 -o /dev/null -w '%{http_code}' http://uma-as.alice:9000/owner/pending 2>&1 || true)
-expect '000|403|503' "straight to Alice's AS, skipping the edge" "$o"
+# curl's own failure (000) is the expected outcome; kubectl's is not
+o=$(K exec -n sv-agents probe -- sh -c 'curl -s -m 5 -o /dev/null -w "%{http_code}" http://uma-as.alice:9000/owner/pending; true' 2>&1) \
+  || o="probe did not run: $o"
+expect '^(000|403|503)( |$)' "straight to Alice's AS, skipping the edge" "$o"
 
-echo; [ $fail -eq 0 ] && ok "story 2: $pass/$((pass+fail)) checks passed" || die "story 2: $fail of $((pass+fail)) checks failed"
+echo; [ $fail -eq 0 ] && ok "story 2: $pass/$((pass+fail)) checks passed$([ "$skip" -eq 0 ] || echo ", $skip skipped")" || die "story 2: $fail of $((pass+fail)) checks failed"

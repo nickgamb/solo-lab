@@ -2,7 +2,10 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -49,6 +52,18 @@ func TestMarkPartitions(t *testing.T) {
 	for _, s := range ic.Status.Tiers {
 		if s.Partitioned {
 			t.Errorf("%s: partitioned with no egress", s.Name)
+		}
+	}
+}
+
+func TestConditionMessagesBounded(t *testing.T) {
+	ic := &v1.IdentityContinuity{}
+	long := strings.Repeat("é", maxMessage)
+	(&Reconciler{}).setConditions(ic, nil, "", errors.New(long), nil)
+	(&Reconciler{}).setProfileCondition(ic, errors.New(long))
+	for _, c := range ic.Status.Conditions {
+		if len(c.Message) > maxMessage || !utf8.ValidString(c.Message) {
+			t.Errorf("%s: %d bytes, valid UTF-8 %v", c.Type, len(c.Message), utf8.ValidString(c.Message))
 		}
 	}
 }

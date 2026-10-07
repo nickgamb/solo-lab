@@ -15,12 +15,13 @@ import (
 	"time"
 )
 
-// staleAfter: how long the last read of the active tier stays good
-var staleAfter = 30 * time.Second
+// defaultStaleAfter: how long the last read of the active tier stays good
+const defaultStaleAfter = 30 * time.Second
 
 // watchActive polls the IdentityContinuity (CONTINUITY, "<namespace>/<name>")
 // through the Kubernetes API with the pod's service account, and records
-// status.active. Polling keeps it to one read-only GET.
+// status.active. Polling keeps it to one read-only GET. Every successful read
+// is authoritative, an empty status.active included.
 func (x *exchanger) watchActive(ctx context.Context, api *http.Client, base, token, ic string, every time.Duration) {
 	ns, name, _ := strings.Cut(ic, "/")
 	u := base + "/apis/continuity.lab.solo.io/v1alpha1/namespaces/" + url.PathEscape(ns) + "/identitycontinuities/" + url.PathEscape(name)
@@ -28,10 +29,10 @@ func (x *exchanger) watchActive(ctx context.Context, api *http.Client, base, tok
 	for {
 		if tier, err := readActive(ctx, api, u, token); err != nil {
 			slog.Warn("identity continuity", "err", err)
-			if time.Since(last) > staleAfter { // not ready, and no answers, on stale state
-				x.setActive("")
+			if time.Since(last) > x.staleAfter { // not ready, and no answers, on stale state
+				x.forget()
 			}
-		} else if tier != "" {
+		} else {
 			last = time.Now()
 			x.setActive(tier)
 		}
@@ -101,5 +102,7 @@ func caClient(caFile string) (*http.Client, error) {
 			return nil, fmt.Errorf("no certificates in %s", caFile)
 		}
 	}
-	return &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}}, nil
+	return &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}},
+		// a redirect would re-POST the client's credentials elsewhere
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, nil
 }

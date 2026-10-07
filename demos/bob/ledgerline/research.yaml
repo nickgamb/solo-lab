@@ -41,11 +41,11 @@ kind: PeerAuthentication
 metadata: {name: strict, namespace: ledgerline}
 spec: {mtls: {mode: STRICT}}
 ---
+# L4, every pod in the namespace: the waypoint is the only way in.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata: {name: pods-only-from-waypoint, namespace: ledgerline}
 spec:
-  selector: {matchLabels: {app.kubernetes.io/name: ledgerline-research}}
   action: ALLOW
   rules:
   - from: [{source: {principals: ["cluster.local/ns/ledgerline/sa/waypoint"]}}]

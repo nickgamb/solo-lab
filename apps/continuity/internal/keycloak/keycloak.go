@@ -33,7 +33,9 @@ type Client struct {
 }
 
 func New(base, realm string) *Client {
-	return &Client{base: strings.TrimSuffix(base, "/"), realm: realm, http: &http.Client{Timeout: 10 * time.Second}}
+	return &Client{base: strings.TrimSuffix(base, "/"), realm: realm, http: &http.Client{Timeout: 10 * time.Second,
+		// a redirect would re-POST the client secret elsewhere
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
 func (c *Client) Base() string  { return c.base }
@@ -72,8 +74,38 @@ func (c *Client) accessToken(ctx context.Context) (string, error) {
 	if resp.StatusCode != http.StatusOK || t.AccessToken == "" {
 		return "", fmt.Errorf("service-account token: HTTP %d %s", resp.StatusCode, t.Error)
 	}
-	c.token, c.expires = t.AccessToken, time.Now().Add(time.Duration(t.ExpiresIn)*time.Second-30*time.Second)
+	life := time.Duration(t.ExpiresIn) * time.Second
+	if life <= 0 {
+		life = time.Minute
+	}
+	c.token, c.expires = t.AccessToken, time.Now().Add(life*9/10)
 	return c.token, nil
+}
+
+// maxErrorDetail bounds what an error carries of Keycloak's answer.
+const maxErrorDetail = 256
+
+// apiError is a failed admin API call: the method, the path without its
+// query, the status, and Keycloak's own error message (never the request).
+func apiError(method, path string, status int, body []byte) error {
+	var e struct {
+		ErrorMessage string `json:"errorMessage"`
+		Error        string `json:"error"`
+	}
+	_ = json.Unmarshal(body, &e)
+	detail := e.ErrorMessage
+	if detail == "" {
+		detail = e.Error
+	}
+	if len(detail) > maxErrorDetail {
+		detail = strings.ToValidUTF8(detail[:maxErrorDetail], "") + "..."
+	}
+	path, _, _ = strings.Cut(path, "?")
+	msg := fmt.Sprintf("%s %s: HTTP %d", method, path, status)
+	if detail != "" {
+		msg += ": " + detail
+	}
+	return errors.New(msg)
 }
 
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
@@ -105,7 +137,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 		case resp.StatusCode == http.StatusNotFound:
 			return ErrNotFound
 		case resp.StatusCode >= 300:
-			return fmt.Errorf("%s %s: HTTP %d %s", method, path, resp.StatusCode, strings.TrimSpace(string(b)))
+			return apiError(method, path, resp.StatusCode, b)
 		}
 		if out != nil && len(b) > 0 {
 			return json.Unmarshal(b, out)
@@ -165,12 +197,19 @@ func (c *Client) EnsureUsernameFromEmail(ctx context.Context, alias string) erro
 	}, nil)
 }
 
+// DeleteIdP removes an upstream IdP, and with it every user's link to it.
+// Keycloak drops the links from its store but not from its user cache, and
+// a later sign-in through an IdP of the same alias then fails on the stale
+// link; so the realm's user cache is cleared after a delete.
 func (c *Client) DeleteIdP(ctx context.Context, alias string) error {
 	err := c.do(ctx, http.MethodDelete, "/identity-provider/instances/"+url.PathEscape(alias), nil, nil)
 	if errors.Is(err, ErrNotFound) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPost, "/clear-user-cache", nil, nil)
 }
 
 // SetRedirector points the flow's Identity Provider Redirector at an IdP

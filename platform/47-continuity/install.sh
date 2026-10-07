@@ -11,39 +11,42 @@ D="$(cd "$(dirname "$0")" && pwd)"
 APP="$LAB_ROOT/apps/continuity"
 need_cluster
 
+# The chain (ENTERPRISE_IDP) is checked before anything is built or changed:
+# known IdPs only, each once, at least one with an issuer.
+. "$LAB_ROOT/scripts/idp.sh"
+CHAIN=$(idp_chain) || exit 1
+# Auth0 as a directory (the directory sync) takes both halves of its Machine to
+# Machine app's credentials, or neither
+AUTH0_DIRECTORY=
+if [ -n "${AUTH0_DIRECTORY_CLIENT_ID:-}" ] && [ -n "${AUTH0_DIRECTORY_CLIENT_SECRET:-}" ]; then AUTH0_DIRECTORY=1
+elif [ -n "${AUTH0_DIRECTORY_CLIENT_ID:-}${AUTH0_DIRECTORY_CLIENT_SECRET:-}" ]; then
+  die "Auth0 as a directory needs both AUTH0_DIRECTORY_CLIENT_ID and AUTH0_DIRECTORY_CLIENT_SECRET in .env (or neither)"
+fi
+
 step "continuity-controller image (local registry)"
 # tagged by source content, so a code change is a new image and a rollout
-tag=$(cd "$APP" && find . -type f -not -name .DS_Store | LC_ALL=C sort | xargs cat | sha1 | cut -c1-12)
+tag=$(src_hash "$APP")
 export CONTINUITY_IMAGE="localhost:$LAB_REGISTRY_PORT/lab/continuity-controller:$tag"
-docker image inspect "$CONTINUITY_IMAGE" >/dev/null 2>&1 || docker build -q -t "$CONTINUITY_IMAGE" "$APP" >/dev/null
-docker push -q "$CONTINUITY_IMAGE" >/dev/null
+docker image inspect "$CONTINUITY_IMAGE" >/dev/null 2>&1 || docker build -q -t "$CONTINUITY_IMAGE" "$APP" >/dev/null \
+  || die "building $CONTINUITY_IMAGE failed"
+docker push -q "$CONTINUITY_IMAGE" >/dev/null || die "pushing $CONTINUITY_IMAGE failed"
 ok "$CONTINUITY_IMAGE (unit tests ran in the build)"
 
 step "Credentials"
 # the controller's own realm client (defined in realm-sterling-vance.json)
-K create secret generic continuity-controller -n sv-identity \
-  --from-literal=client-id=continuity-controller \
-  --from-literal=client-secret="$(lab_secret SV_CONTINUITY_CLIENT_SECRET)" \
-  --dry-run=client -o yaml | K apply -f - >/dev/null
+secret_apply sv-identity continuity-controller \
+  client-id=continuity-controller client-secret="$(lab_secret SV_CONTINUITY_CLIENT_SECRET)"
 # the scheduled profile sync's realm client (users' profile attributes only)
-K create secret generic continuity-sync -n sv-identity \
-  --from-literal=client-id=continuity-sync \
-  --from-literal=client-secret="$(lab_secret SV_CONTINUITY_SYNC_CLIENT_SECRET)" \
-  --dry-run=client -o yaml | K apply -f - >/dev/null
-# Auth0 as a directory (the directory sync): a Machine to Machine app for its
-# Management API, in .env
-if [ -n "${AUTH0_DIRECTORY_CLIENT_ID:-}" ] && [ -n "${AUTH0_DIRECTORY_CLIENT_SECRET:-}" ]; then
-  K create secret generic directory-auth0 -n sv-identity \
-    --from-literal=client-id="$AUTH0_DIRECTORY_CLIENT_ID" --from-literal=client-secret="$AUTH0_DIRECTORY_CLIENT_SECRET" \
-    --dry-run=client -o yaml | K apply -f - >/dev/null
+secret_apply sv-identity continuity-sync \
+  client-id=continuity-sync client-secret="$(lab_secret SV_CONTINUITY_SYNC_CLIENT_SECRET)"
+# Auth0 as a directory: its Management API app, in .env
+if [ -n "$AUTH0_DIRECTORY" ]; then
+  secret_apply sv-identity directory-auth0 \
+    client-id="$AUTH0_DIRECTORY_CLIENT_ID" client-secret="$AUTH0_DIRECTORY_CLIENT_SECRET"
 fi
 # the sync reads S&V's workforce IdP's users with its view-users client there
-K create secret generic directory-keycloak -n sv-identity \
-  --from-literal=client-id=continuity-directory \
-  --from-literal=client-secret="$(lab_secret SV_WORKFORCE_DIRECTORY_SECRET)" \
-  --dry-run=client -o yaml | K apply -f - >/dev/null
-. "$LAB_ROOT/scripts/idp.sh"
-CHAIN=$(idp_chain)
+secret_apply sv-identity directory-keycloak \
+  client-id=continuity-directory client-secret="$(lab_secret SV_WORKFORCE_DIRECTORY_SECRET)"
 for n in $IDP_UPSTREAMS; do
   case " $CHAIN " in *" $n "*) ;; *) continue ;; esac
   N=$(echo "$n" | tr '[:lower:]' '[:upper:]')
@@ -53,9 +56,8 @@ for n in $IDP_UPSTREAMS; do
     K delete secret "upstream-$n" -n sv-identity --ignore-not-found >/dev/null
     ok "$n: private_key_jwt with S&V's broker key (make xaa-keys for its JWKS)"
   else
-    K create secret generic "upstream-$n" -n sv-identity \
-      --from-literal=client-id="$(_idp_var "$n" CLIENT_ID)" --from-literal=client-secret="$(_idp_var "$n" CLIENT_SECRET)" \
-      --dry-run=client -o yaml | K apply -f - >/dev/null
+    secret_apply sv-identity "upstream-$n" \
+      client-id="$(_idp_var "$n" CLIENT_ID)" client-secret="$(_idp_var "$n" CLIENT_SECRET)"
     ok "$n: client_secret_post (sv-identity/upstream-$n)"
   fi
 done
@@ -76,7 +78,7 @@ K delete clusterrolebinding,clusterrole continuity-controller-partitions --ignor
 rollout sv-identity deploy/continuity-controller
 # The tiers follow ENTERPRISE_IDP: which IdPs and in what order, then the
 # broker's break-glass accounts (platform admins only). Each existing tier
-# keeps its failover rules, claim mappings and directory (the operators' and
+# keeps its failover rules, attribute mappings and directory (the operators' and
 # the Observatory's); issuers and token settings follow .env. For an IdP that
 # issues ID-JAGs the broker keeps the user's tokens (storeTokens) so the
 # egress can have it vouch for them (docs/IDENTITY-FLOWS.md). No offline
@@ -86,7 +88,7 @@ rollout sv-identity deploy/continuity-controller
 desired=$({ for n in $CHAIN; do
   store=false; if echo " $IDP_ISSUES_IDJAG " | grep -q " $n "; then store=true; fi
   dir=null
-  if [ "$n" = auth0 ] && [ -n "${AUTH0_DIRECTORY_CLIENT_ID:-}" ]; then
+  if [ "$n" = auth0 ] && [ -n "$AUTH0_DIRECTORY" ]; then
     a=${AUTH0_ISSUER%/}
     dir=$(jq -nc --arg a "$a" '{directory: {type: "auth0", url: "\($a)/api/v2", audience: "\($a)/api/v2/", credentialsRef: {name: "directory-auth0"}}}')
   fi
@@ -110,7 +112,8 @@ if ! K get identitycontinuity sterling-vance -n sv-identity >/dev/null 2>&1; the
 else
   cur=$(K get idc sterling-vance -n sv-identity -o json | jq -c '.spec.tiers')
   # an existing tier keeps what operators set (display name, enabled, failover
-  # rules); .env sets its type, issuer, secret and token settings
+  # rules, attribute mappings, directory); .env sets its type, issuer, secret
+  # and token settings
   merged=$(jq -nc --argjson d "$desired" --argjson c "$cur" '$d | map(. as $t
     | ([$c[] | select(.name == $t.name and .type == $t.type)][0]) as $old
     | if $old == null then $t
@@ -136,4 +139,4 @@ fix=$(K get idc sterling-vance -n sv-identity -o json | jq -c '((.spec.health.ti
 if [ "$fix" != "[]" ]; then K patch idc sterling-vance -n sv-identity --type json -p "$fix" >/dev/null; ok "latencyAboveMs brought under the probe timeout"; fi
 wait_for "sterling-vance continuity Ready" 30 2 \
   sh -c "kubectl --context $KCTX get idc sterling-vance -n sv-identity -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}' | grep -q True"
-ok "active tier: $(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}')  (kubectl get idc -n sv-identity)"
+ok "active IdP: $(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}')  (kubectl get idc -n sv-identity)"

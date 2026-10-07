@@ -7,6 +7,11 @@ spec: {mtls: {mode: STRICT}}
 ---
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
+metadata: {name: default-deny, namespace: alice-identity}
+spec: {}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
 metadata: {name: keycloak-callers, namespace: alice-identity}
 spec:
   selector: {matchLabels: {app: keycloak}}

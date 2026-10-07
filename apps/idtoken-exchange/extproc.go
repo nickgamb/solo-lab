@@ -48,6 +48,10 @@ func (p *processor) Process(stream extproc.ExternalProcessor_ProcessServer) erro
 			resp = &extproc.ProcessingResponse{Response: &extproc.ProcessingResponse_ResponseHeaders{ResponseHeaders: &extproc.HeadersResponse{}}}
 		case *extproc.ProcessingRequest_ResponseBody:
 			resp = &extproc.ProcessingResponse{Response: &extproc.ProcessingResponse_ResponseBody{ResponseBody: &extproc.BodyResponse{}}}
+		case *extproc.ProcessingRequest_RequestTrailers:
+			resp = &extproc.ProcessingResponse{Response: &extproc.ProcessingResponse_RequestTrailers{RequestTrailers: &extproc.TrailersResponse{}}}
+		case *extproc.ProcessingRequest_ResponseTrailers:
+			resp = &extproc.ProcessingResponse{Response: &extproc.ProcessingResponse_ResponseTrailers{ResponseTrailers: &extproc.TrailersResponse{}}}
 		default:
 			continue
 		}

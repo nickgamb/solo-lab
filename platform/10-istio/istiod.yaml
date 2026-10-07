@@ -13,10 +13,6 @@ meshConfig:
     opentelemetry:
       service: otel-collector.observability.svc.cluster.local
       port: 4317
-  - name: otel-als
-    envoyOtelAls:
-      service: otel-collector.observability.svc.cluster.local
-      port: 4317
 pilot:
   # HA control plane: 2 replicas spread across zones, HPA to 4
   autoscaleEnabled: true

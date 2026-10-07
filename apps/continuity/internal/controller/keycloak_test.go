@@ -96,9 +96,10 @@ func TestClientAuth(t *testing.T) {
 // adminAPI is a small in-memory Keycloak admin API: identity providers, their
 // mappers, and one browser flow with a redirector.
 type adminAPI struct {
-	idps     map[string]keycloak.IdP
-	deleted  []string
-	redirect string
+	idps         map[string]keycloak.IdP
+	deleted      []string
+	cacheCleared int // clear-user-cache calls
+	redirect     string
 }
 
 func (a *adminAPI) serve(t *testing.T) *httptest.Server {
@@ -134,6 +135,9 @@ func (a *adminAPI) serve(t *testing.T) *httptest.Server {
 				delete(a.idps, alias)
 				a.deleted = append(a.deleted, alias)
 			}
+		case p == pre+"/clear-user-cache" && r.Method == http.MethodPost:
+			a.cacheCleared++
+			w.WriteHeader(http.StatusNoContent)
 		case strings.HasSuffix(p, "/executions"):
 			w.Write([]byte(`[{"id":"e1","providerId":"identity-provider-redirector","authenticationConfig":"c1"}]`))
 		case p == pre+"/authentication/config/c1" && r.Method == http.MethodGet:
@@ -194,5 +198,58 @@ func TestReconcileKeycloakMissingSecretKeepsIdP(t *testing.T) {
 	}
 	if _, ok := api.idps["auth0"]; ok {
 		t.Error("a tier removed from the spec keeps its IdP")
+	}
+}
+
+// An update puts back what the controller manages and leaves the rest of
+// the IdP as Keycloak has it.
+func TestReconcileKeycloakKeepsUnmanagedConfig(t *testing.T) {
+	owner := "sv-identity/sterling-vance"
+	api := &adminAPI{idps: map[string]keycloak.IdP{
+		"auth0": {"alias": "auth0", "guiOrder": "3", "config": map[string]any{cfgInstance: owner,
+			"tokenUrl": "https://attacker.example/token", "prompt": "login"}},
+	}}
+	srv := api.serve(t)
+	defer srv.Close()
+	kc := keycloak.New(srv.URL, "r")
+	kc.SetCredentials("id", "secret")
+	ic := &v1.IdentityContinuity{Spec: v1.IdentityContinuitySpec{
+		Broker: v1.Broker{Keycloak: v1.KeycloakBroker{BrowserFlow: "continuity-browser"}},
+		Tiers:  []v1.Tier{{Name: "auth0", Type: "oidc", OIDC: &v1.OIDCUpstream{Issuer: "https://tenant.example/"}}},
+	}}
+	ic.Namespace, ic.Name = "sv-identity", "sterling-vance"
+	r := &Reconciler{discovery: map[string]*probe.Discovery{}}
+	r.discovery[discoveryKey(ic, ic.Spec.Tiers[0])] = &probe.Discovery{AuthorizationEndpoint: "https://tenant.example/authorize",
+		TokenEndpoint: "https://tenant.example/oauth/token", JWKSURI: "https://tenant.example/jwks"}
+	st := map[string]*v1.TierStatus{"auth0": {Configured: true, Healthy: true}}
+	if _, _, _, err := r.reconcileKeycloak(context.Background(), ic, kc, map[string]credential{"auth0": {id: "c", secret: "s"}}, st, "auth0"); err != nil {
+		t.Fatal(err)
+	}
+	p := api.idps["auth0"]
+	cfg := p.Config()
+	if cfg["tokenUrl"] != "https://tenant.example/oauth/token" || p["enabled"] != true {
+		t.Fatalf("managed fields not put back: %v", p)
+	}
+	if cfg["prompt"] != "login" || p["guiOrder"] != "3" {
+		t.Fatalf("a field set in Keycloak was dropped: %v", p)
+	}
+}
+
+func TestPruneDiscovery(t *testing.T) {
+	ic := &v1.IdentityContinuity{Spec: v1.IdentityContinuitySpec{Tiers: []v1.Tier{
+		{Name: "auth0", Type: "oidc", OIDC: &v1.OIDCUpstream{Issuer: "https://tenant.example/"}}}}}
+	ic.Namespace, ic.Name = "sv-identity", "sterling-vance"
+	other := &v1.IdentityContinuity{Spec: ic.Spec}
+	other.Namespace, other.Name = "sv-identity", "other"
+	gone := v1.Tier{Name: "gluu", Type: "oidc", OIDC: &v1.OIDCUpstream{Issuer: "https://gluu.example"}}
+	moved := v1.Tier{Name: "auth0", Type: "oidc", OIDC: &v1.OIDCUpstream{Issuer: "https://old.example/"}}
+	d := &probe.Discovery{}
+	r := &Reconciler{discovery: map[string]*probe.Discovery{
+		discoveryKey(ic, ic.Spec.Tiers[0]): d, discoveryKey(ic, gone): d, discoveryKey(ic, moved): d,
+		discoveryKey(other, gone): d,
+	}}
+	r.pruneDiscovery(ic)
+	if len(r.discovery) != 2 || r.discovery[discoveryKey(ic, ic.Spec.Tiers[0])] == nil || r.discovery[discoveryKey(other, gone)] == nil {
+		t.Fatalf("cache %v: this instance's tiers and other instances' entries only", r.discovery)
 	}
 }

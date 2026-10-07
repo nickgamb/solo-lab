@@ -4,6 +4,7 @@
 # Inserted between markers so re-runs replace rather than stack.
 . "$(dirname "$0")/../../scripts/lib.sh"
 K get cm coredns -n kube-system -o jsonpath='{.data.Corefile}' > "$LAB_STATE/Corefile.cluster"
+cp "$LAB_STATE/Corefile.cluster" "$LAB_STATE/Corefile.cluster.before"
 LAB_TLD="$LAB_TLD" python3 - "$LAB_STATE/Corefile.cluster" <<'PY'
 import os, re, sys
 p = sys.argv[1]; tld = re.escape(os.environ["LAB_TLD"])
@@ -17,6 +18,11 @@ block = ("    # solo-lab:begin\n"
 s = s.replace(".:53 {", ".:53 {\n" + block, 1)
 open(p, "w").write(s)
 PY
+# CoreDNS restarts only for a Corefile that changed
+if cmp -s "$LAB_STATE/Corefile.cluster" "$LAB_STATE/Corefile.cluster.before"; then
+  rm -f "$LAB_STATE/Corefile.cluster.before"; exit 0
+fi
+rm -f "$LAB_STATE/Corefile.cluster.before"
 K create cm coredns -n kube-system --from-file=Corefile="$LAB_STATE/Corefile.cluster" --dry-run=client -o yaml | K apply -f - >/dev/null
 K rollout restart deploy/coredns -n kube-system >/dev/null
 rollout kube-system deploy/coredns

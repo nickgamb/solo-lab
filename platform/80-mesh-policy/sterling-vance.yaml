@@ -47,6 +47,19 @@ kind: PeerAuthentication
 metadata: {name: strict, namespace: sv-egress}
 spec: {mtls: {mode: STRICT}}
 ---
+# sv-identity: nothing takes a connection unless a policy below names the
+# caller. The broker holds every session and the controller's secrets sit
+# beside it.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: default-deny, namespace: sv-identity}
+spec: {}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: default-deny, namespace: sv-workforce}
+spec: {}
+---
 # Keycloak: the edge (browsers, SSO token calls), the firm's gateways (JWKS,
 # token exchange), agentregistry, the continuity controller (admin API:
 # upstream IdPs, login redirector, profile) and its profile sync (users).
@@ -74,8 +87,9 @@ spec:
 ---
 # S&V's workforce IdP: browsers, and every in-lab caller of
 # https://login.sterling.lab (the broker, the continuity controller, the
-# egress, Ledgerline), arrive through the edge; the profile sync reads users
-# over the admin API directly. Its kill switch is a DENY in sv-workforce.
+# egress, Ledgerline), arrive through the edge; the profile sync reads and
+# writes users over the admin API directly. Its kill switch is a DENY in
+# sv-workforce.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata: {name: keycloak-callers, namespace: sv-workforce}
@@ -105,9 +119,10 @@ spec:
   selector: {matchLabels: {app: continuity-sync}}
   action: ALLOW
 ---
-# The firm's way out: only its IdP (brokered logins' back-channel), the
-# continuity controller (health probes) and its profile sync (upstream
-# directories) may reach upstream IdPs on the internet.
+# The firm's way out: only its broker (brokered logins' back-channel), the
+# continuity controller (health probes), its profile sync (upstream
+# directories), idtoken-exchange and xaa-relay (Cross App Access at the
+# vouching upstream) may reach upstream IdPs on the internet.
 # A tier's partition is a DENY on its ServiceEntry, evaluated before this.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
@@ -122,7 +137,6 @@ spec:
         - cluster.local/ns/sv-identity/sa/keycloak
         - cluster.local/ns/sv-identity/sa/continuity-controller
         - cluster.local/ns/sv-identity/sa/continuity-sync
-        - cluster.local/ns/observatory/sa/observatory    # its service-account token for kagent
         - cluster.local/ns/agentgateway-system/sa/idtoken-exchange   # Cross App Access: renews at the vouching upstream
         - cluster.local/ns/agentgateway-system/sa/xaa-relay          # Cross App Access: ID-JAG from the vouching upstream
 ---
@@ -140,7 +154,9 @@ spec: {}
 # access token the edge verified, and the agents' worker pools calling back
 # with the token the controller handed their turn. The lab's checks call as
 # the UI's ServiceAccount (a probe pod deleted when they exit). A new agent
-# pool adds its ServiceAccount here.
+# pool adds its ServiceAccount here. Every principal here can act as any user
+# the controller is told about, so nothing joins for convenience: metrics are
+# read from the mesh, not from the controller.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata: {name: kagent-controller-callers, namespace: kagent}
@@ -156,7 +172,6 @@ spec:
         - cluster.local/ns/sv-agents/sa/bob-assistant   # Bob's agent's workers
         - cluster.local/ns/sv-agents/sa/advisor-desk    # the advisor desk's workers
         - cluster.local/ns/observatory/sa/observatory   # Agent Substrate status, as its own service account
-        - cluster.local/ns/observability/sa/kps-prometheus
 ---
 # kagent-tools can act on the cluster: only the agents that use it (the ops
 # agents) and the controller (tool discovery).

@@ -12,10 +12,16 @@
 //	                  Only that exchange, for this connection (AUDIENCE,
 //	                  SCOPES), is relayed; the ID-JAG must also name S&V's
 //	                  client at the resource AS (RAS_CLIENT_ID), the subject
-//	                  token's sub, and live at most 300 s.
+//	                  token's sub, and live at most 300 s. Its scopes are
+//	                  within SCOPES plus the OIDC identity scopes an IdP adds
+//	                  by default (openid, profile, email).
 //	POST /ras/token   ID-JAG -> access token (RFC 7523) at Ledgerline's
 //	                  authorization server (RAS_TOKEN_URL), relayed as sent:
-//	                  the gateway authenticates with private_key_jwt.
+//	                  the gateway authenticates with private_key_jwt. The
+//	                  client assertion is checked first: iss and sub S&V's
+//	                  client there (RAS_CLIENT_ID), aud that authorization
+//	                  server (its token endpoint or AUDIENCE), exp at most
+//	                  300 s away, jti used once. Scopes are within SCOPES.
 //
 // Each request is logged with its parameters; credential values (tokens,
 // assertions, secrets) are replaced by <redacted>, with a JWT's jti kept.
@@ -55,7 +61,11 @@ const (
 	tokenExchange  = "urn:ietf:params:oauth:grant-type:token-exchange"
 	jwtBearer      = "urn:ietf:params:oauth:grant-type:jwt-bearer"
 	requestedIDJAG = "urn:ietf:params:oauth:token-type:id-jag"
+	assertionJWT   = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 	maxBody        = 1 << 20
+	maxAssertion   = 5 * time.Minute // a client assertion's furthest exp
+	maxJTIs        = 100000          // client assertion ids remembered at once
+	skew           = 5 * time.Second
 )
 
 // secret form parameters: logged as <redacted>, a JWT's jti kept
@@ -87,6 +97,9 @@ type relay struct {
 	audience, rasClientID string
 	scopes                map[string]bool
 	now                   func() time.Time
+
+	mu   sync.Mutex
+	jtis map[string]time.Time // client assertions used, until they expire
 }
 
 const (
@@ -97,6 +110,9 @@ const (
 // opRequest admits only the token request crossAppAccess makes for this
 // connection: anything else never reaches an IdP with S&V's credentials.
 func (x *relay) opRequest(form url.Values) error {
+	if err := single(form); err != nil {
+		return err
+	}
 	switch {
 	case form.Get("grant_type") != tokenExchange:
 		return fmt.Errorf("grant_type %q", form.Get("grant_type"))
@@ -107,9 +123,97 @@ func (x *relay) opRequest(form url.Values) error {
 	case form.Get("audience") != x.audience:
 		return fmt.Errorf("audience %q, not the resource AS", form.Get("audience"))
 	}
-	for _, sc := range strings.Fields(form.Get("scope")) {
+	return x.allowedScopes(form.Get("scope"))
+}
+
+// identityScopes: an IdP adds its default OIDC scopes to an ID-JAG whatever
+// was asked for. They name who the user is, not what the agent may do there.
+var identityScopes = map[string]bool{"openid": true, "profile": true, "email": true}
+
+func (x *relay) allowedScopes(scope string) error {
+	for _, sc := range strings.Fields(scope) {
 		if !x.scopes[sc] {
 			return fmt.Errorf("scope %q not allowed", sc)
+		}
+	}
+	return nil
+}
+
+// rasRequest admits only the JWT authorization grant this connection makes,
+// authenticated by a client assertion from S&V's client at the resource AS.
+func (x *relay) rasRequest(r *http.Request, form url.Values) error {
+	if err := single(form); err != nil {
+		return err
+	}
+	switch {
+	case form.Get("grant_type") != jwtBearer || form.Get("assertion") == "":
+		return errors.New("not a JWT authorization grant")
+	case r.Header.Get("Authorization") != "":
+		return errors.New("client authentication by header: only a client assertion is relayed")
+	case form.Get("client_assertion_type") != assertionJWT || form.Get("client_assertion") == "":
+		return errors.New("no client assertion")
+	case form.Get("client_id") != "" && form.Get("client_id") != x.rasClientID:
+		return fmt.Errorf("client_id %q, want %q", form.Get("client_id"), x.rasClientID)
+	}
+	if err := x.allowedScopes(form.Get("scope")); err != nil {
+		return err
+	}
+	return x.checkClientAssertion(form.Get("client_assertion"))
+}
+
+// checkClientAssertion checks a private_key_jwt assertion's claims (RFC 7523
+// 3); the resource AS verifies its signature. Its jti is used up here, so a
+// replay never reaches the AS.
+func (x *relay) checkClientAssertion(tok string) error {
+	_, c := split(tok)
+	if c == nil {
+		return errors.New("client assertion: not a JWT")
+	}
+	iss, _ := c["iss"].(string)
+	sub, _ := c["sub"].(string)
+	jti, _ := c["jti"].(string)
+	exp, _ := c["exp"].(float64)
+	now, until := x.now(), time.Unix(int64(exp), 0)
+	switch {
+	case iss != x.rasClientID || sub != x.rasClientID:
+		return fmt.Errorf("client assertion: iss %q sub %q, want %q", iss, sub, x.rasClientID)
+	case !hasAud(c["aud"], x.rasTokenURL) && !hasAud(c["aud"], x.audience):
+		return fmt.Errorf("client assertion: aud %v, not the resource AS", c["aud"])
+	case exp == 0 || now.After(until.Add(skew)):
+		return errors.New("client assertion: expired, or no exp")
+	case until.Sub(now) > maxAssertion+skew:
+		return fmt.Errorf("client assertion: exp %s away, at most %s", until.Sub(now).Round(time.Second), maxAssertion)
+	case jti == "":
+		return errors.New("client assertion: no jti")
+	}
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	if x.jtis == nil {
+		x.jtis = map[string]time.Time{}
+	}
+	if _, used := x.jtis[jti]; used {
+		return fmt.Errorf("client assertion: jti %q already used", jti)
+	}
+	if len(x.jtis) >= maxJTIs {
+		for k, t := range x.jtis {
+			if now.After(t.Add(skew)) {
+				delete(x.jtis, k)
+			}
+		}
+		if len(x.jtis) >= maxJTIs { // every one still live: refuse rather than forget one
+			return errors.New("client assertion: too many live assertions")
+		}
+	}
+	x.jtis[jti] = until
+	return nil
+}
+
+// single refuses a repeated parameter: the relay checks one value and the
+// token endpoint might read another.
+func single(form url.Values) error {
+	for k, v := range form {
+		if len(v) != 1 {
+			return fmt.Errorf("%s given %d times", k, len(v))
 		}
 	}
 	return nil
@@ -142,9 +246,13 @@ func (x *relay) routes() http.Handler {
 	return mux
 }
 
-// readForm reads the request's form body.
+// readForm reads the request's form body, at most maxBody bytes.
 func readForm(w http.ResponseWriter, r *http.Request) (url.Values, bool) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
+	if mbe := (*http.MaxBytesError)(nil); errors.As(err, &mbe) {
+		http.Error(w, "body too large", http.StatusRequestEntityTooLarge)
+		return nil, false
+	}
 	if err != nil {
 		http.Error(w, "read", http.StatusBadRequest)
 		return nil, false
@@ -271,8 +379,8 @@ func (x *relay) ras(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if form.Get("grant_type") != jwtBearer || form.Get("assertion") == "" {
-		slog.Warn("token request refused", "leg", "ras", "params", redact(form), "reason", "not a JWT authorization grant")
+	if err := x.rasRequest(r, form); err != nil {
+		slog.Warn("token request refused", "leg", "ras", "params", redact(form), "reason", err.Error())
 		writeErr(w, http.StatusBadRequest, "invalid_request", "not the request this connection makes")
 		return
 	}
@@ -304,8 +412,8 @@ func (x *relay) ras(w http.ResponseWriter, r *http.Request) {
 }
 
 // checkIDJAG verifies an ID-JAG from o as the requesting side (ID-JAG
-// draft): typ, signature, iss, aud, sub, client_id, exp. It returns the header and claims
-// for the log either way.
+// draft): typ, signature, iss, aud, sub, client_id, scope, exp. It returns the
+// header and claims for the log either way.
 func (x *relay) checkIDJAG(ctx context.Context, o *op, tok string, subject any) (map[string]any, map[string]any, error) {
 	h, c := split(tok)
 	hc := pick(h, "typ", "alg", "kid")
@@ -330,6 +438,12 @@ func (x *relay) checkIDJAG(ctx context.Context, o *op, tok string, subject any) 
 	}
 	if cid, _ := c["client_id"].(string); cid != x.rasClientID {
 		return hc, cc, fmt.Errorf("client_id %q, want %q", cid, x.rasClientID)
+	}
+	scope, _ := c["scope"].(string)
+	for _, sc := range strings.Fields(scope) {
+		if !x.scopes[sc] && !identityScopes[sc] {
+			return hc, cc, fmt.Errorf("scope %q not allowed", sc)
+		}
 	}
 	exp, _ := c["exp"].(float64)
 	iat, _ := c["iat"].(float64)
@@ -629,7 +743,9 @@ func httpClient(caFile string) (*http.Client, error) {
 	}
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
-	return &http.Client{Timeout: 15 * time.Second, Transport: t}, nil
+	return &http.Client{Timeout: 15 * time.Second, Transport: t,
+		// a redirect would re-POST the client's credentials elsewhere
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, nil
 }
 
 func main() {

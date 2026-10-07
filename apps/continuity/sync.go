@@ -28,10 +28,13 @@ import (
 	"github.com/nickgamb/solo-lab/apps/continuity/internal/profilesync"
 )
 
-// runSync is one scheduled profile sync (the CronJob's command): read each
-// linked user's record from each tier's directory and write the mapped
-// attributes into the broker, the chain's earlier tiers winning. It records
-// the outcome in status.sync and exits non-zero if any user failed.
+// runSync is one scheduled directory sync (the CronJob's command). For each
+// employee the broker has: the primary IdP's record (the chain's first tier)
+// is read into the broker's profile, then the broker's profile is written to
+// each failover IdP, creating the user there (with an enrollment email) if
+// the primary has them. Passwords and credentials are never read or written,
+// the username is never written, and no user is deleted. It records the
+// outcome in status.sync and exits non-zero if any user failed.
 func runSync(args []string) int {
 	fs := flag.NewFlagSet("sync", flag.ExitOnError)
 	instance := fs.String("instance", "", "namespace/name of the IdentityContinuity")
@@ -81,11 +84,12 @@ func runSync(args []string) int {
 	case res.Failed > 0 || len(res.Errors) > 0:
 		st.Message = summarize(res.Errors)
 	default:
-		st.LastSuccess, st.Message = &started, fmt.Sprintf("%d users: %d broker profiles updated, %d failover accounts written, %d created", res.Users, res.Updated, res.Written, res.Created)
+		st.LastSuccess, st.Message = &started, fmt.Sprintf("%d users. S&V profiles updated: %d. Failover accounts written: %d, created: %d", res.Users, res.Updated, res.Written, res.Created)
 		if len(res.Notes) > 0 {
 			st.Message += "; " + summarize(res.Notes)
 		}
 	}
+	st.Message = truncate(st.Message, maxMessage)
 	ic.Status.Sync = st
 	if perr := c.Status().Patch(ctx, &ic, client.MergeFrom(orig)); perr != nil {
 		log.Error("status", "err", perr.Error())
@@ -245,15 +249,26 @@ type failed struct{ err error }
 // failed is a directory that couldn't be set up: every call says why.
 func (f failed) User(context.Context, string) (map[string]any, error) { return nil, f.err }
 func (f failed) Find(context.Context, string) (string, error)         { return "", f.err }
-func (f failed) Update(context.Context, string, map[string][]string) error {
+func (f failed) Update(context.Context, string, map[string][]string, *bool) error {
 	return f.err
 }
-func (f failed) Create(context.Context, string, map[string][]string) (string, error) {
+func (f failed) Create(context.Context, string, map[string][]string, *bool) (string, error) {
 	return "", f.err
 }
 func (f failed) Enroll(context.Context, string) error     { return f.err }
 func (f failed) Check(context.Context) (int, error)       { return 0, f.err }
 func (f failed) Schema(context.Context) ([]string, error) { return nil, f.err }
+
+// maxMessage bounds status.sync.message.
+const maxMessage = 4096
+
+// truncate cuts s to at most n bytes, on a character boundary.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return strings.ToValidUTF8(s[:n-3], "") + "..."
+}
 
 // summarize keeps status short: the first few errors and a count.
 func summarize(errs []string) string {

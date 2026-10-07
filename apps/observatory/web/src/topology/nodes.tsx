@@ -17,6 +17,7 @@ export type CardData = {
   compact?: boolean
   lit?: boolean // highlighted by the product rail
   outage?: boolean // an IdP whose network path is cut (Identity Continuity)
+  caption?: string // a second line under the kind (an IdP's issuer host)
   ins?: number // wires arriving (one handle each)
   outs?: number
   [key: string]: unknown
@@ -78,7 +79,7 @@ export const Tile = memo(({ data }: NodeProps) => {
   return (
     <div className={cls.join(' ')}>
       <div className="tbox">
-        <Slots d={d} />
+        <Slots />
         {lead ? <ProductIcon id={lead} size={hero ? 50 : 38} /> : <NodeIcon n={n} size={hero ? 50 : 38} />}
         {members && <span className="count">{members.length}</span>}
         {!members && (n.pods?.length ?? 0) > 1 && <span className="replicas" title={`${n.pods!.length} replicas`}>×{n.pods!.length}</span>}
@@ -92,13 +93,14 @@ export const Tile = memo(({ data }: NodeProps) => {
         {hero ? `${fmt(rps)} req/s · ${((d.err ?? 0) * 100).toFixed(1)}% · ${d.p95 ? `${Math.round(d.p95)}ms` : '— ms'}`
           : n.kind === 'substrate' && d.workers ? `${busy}/${d.workers.length} busy` : kindLabel[n.kind] ?? n.kind}
       </div>
+      {d.caption && <div className="tsub ellipsis" title={d.caption}>{d.caption}</div>}
     </div>
   )
 })
 
 // Slots: wires leave from the right and arrive on the left; a call to
 // something further left leaves from the left and arrives on the right.
-function Slots(_: { d: CardData }) {
+function Slots() {
   return (
     <>
       <Handle id="i0" type="target" position={Position.Left} className="h" />
@@ -136,7 +138,7 @@ export const DoorPillar = memo(({ data }: NodeProps) => {
   const lead = PRODUCTS.find(p => n.products?.includes(p.id))?.id
   return (
     <div className={['door', `s-${n.status}`, d.selected ? 'selected' : '', d.fog ? 'fog' : '', d.lit ? 'lit' : ''].join(' ')}>
-      <Slots d={d} />
+      <Slots />
       <div className="door-cap">
         {lead ? <ProductIcon id={lead} size={40} /> : <NodeIcon n={n} size={40} />}
         {(d.rps ?? 0) > 0 && <span className="trps">{fmt(d.rps)}/s</span>}

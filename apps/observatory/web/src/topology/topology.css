@@ -167,6 +167,7 @@
 
 /* tiles (n8n-style): icon tile, name under it */
 .tile { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; gap: 6px; transition: filter .35s ease, opacity .35s ease; }
+.tile > * { flex-shrink: 0; }  /* lines never squeeze into each other */
 .tile .tbox {
   position: relative; width: 84px; height: 84px; border-radius: 22px; display: grid; place-items: center;
   background: linear-gradient(160deg, color-mix(in hsl, var(--surface-3) 70%, var(--surface-solid)), var(--surface-solid));
@@ -206,7 +207,7 @@
 .trps { position: absolute; top: -9px; left: 50%; transform: translateX(-50%); font: 500 10px/1 var(--font-mono); padding: 3px 6px; border-radius: 99px; background: var(--accent); color: #fff; white-space: nowrap; }
 .tlabel { font: 600 16px/1.2 var(--font-heading); text-align: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile.hero .tlabel { font-size: 19px; }
-.tsub { font: 400 12px/1.2 var(--font-mono); color: var(--text-subtle); text-align: center; white-space: nowrap; }
+.tsub { font: 400 12px/1.2 var(--font-mono); color: var(--text-subtle); text-align: center; white-space: nowrap; max-width: 100%; }
 .chipnode { width: 100%; height: 100%; display: flex; align-items: center; gap: 7px; padding: 0 10px; border-radius: 99px;
   border: 1px solid var(--border-soft); background: var(--surface); font: 400 11.5px/1 var(--font-mono); color: var(--text-muted); transition: opacity .3s; }
 .chipnode.fog { opacity: .2; }

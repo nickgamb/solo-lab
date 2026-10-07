@@ -17,7 +17,10 @@ export function ScheduleTab({ ic, spec, setSpec, dirty }: {
   const on = !!sync && !sync.suspend
   const schedule = sync?.schedule ?? DEFAULT
   const p = detectPreset(schedule)
-  const [kind, setKind] = useState<Kind>(p.kind)
+  // the preset follows the schedule (a reset, the live object), except
+  // that Custom, once chosen, stays until another preset is
+  const [custom, setCustom] = useState(false)
+  const kind: Kind = custom ? 'custom' : p.kind
   const [run, setRun] = useState<{ ok: boolean; text: string }>()
   const [running, setRunning] = useState(false)
   const [now, setNow] = useState(() => new Date())
@@ -38,7 +41,7 @@ export function ScheduleTab({ ic, spec, setSpec, dirty }: {
   const hours = p.kind === 'hours' ? p.n : 6
   const weekly = { d: p.kind === 'weekly' ? p.d : 1, ...daily }
   const pick = (k: Kind) => {
-    setKind(k)
+    setCustom(k === 'custom')
     if (k === 'daily') setSchedule(presetCron({ kind: 'daily', ...daily }))
     if (k === 'hours') setSchedule(presetCron({ kind: 'hours', n: hours }))
     if (k === 'weekly') setSchedule(presetCron({ kind: 'weekly', ...weekly }))
@@ -94,7 +97,7 @@ export function ScheduleTab({ ic, spec, setSpec, dirty }: {
             )}
             {kind === 'custom' && (
               <label className="small cm-stack">Cron (minute hour day-of-month month day-of-week, UTC)
-                <input className={`field mono${err ? ' invalid' : ''}`} value={schedule} onChange={e => setSchedule(e.target.value)} spellCheck={false} />
+                <input className={`field mono${err ? ' invalid' : ''}`} value={schedule} aria-invalid={!!err} onChange={e => setSchedule(e.target.value)} spellCheck={false} />
               </label>
             )}
             {err ? <div className="note bad">{err}</div> : (

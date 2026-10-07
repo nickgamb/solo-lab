@@ -1,5 +1,8 @@
 # Every namespace declares its party. Mesh membership, edge route admission
-# and mesh policy all key off these labels. See docs/ARCHITECTURE.md. One
+# and mesh policy all key off these labels. See docs/ARCHITECTURE.md. Pod
+# Security Admission: baseline enforced everywhere (restricted warned and
+# audited), except where a workload needs more: Agent Substrate's worker pools
+# (gVisor sandboxes) and the observability stack's node exporters. One
 # namespace per party also names it for the observatory.
 #
 # Platform (neutral "cloud")
@@ -7,14 +10,14 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: kgateway-system
-  labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient}
+  labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
   annotations: {observatory.solo.io/party-name: "Platform"}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: observability
-  labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient}
+  labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: privileged}
 ---
 # Kiali, in the mesh (istio-system is not: istio-cni excludes it), so its
 # callers are named by identity like everything else's.
@@ -22,33 +25,33 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: kiali
-  labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient}
+  labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: observatory
-  labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient}
+  labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: ops-identity
-  labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient}
+  labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
 ---
 # Agent Substrate: control plane and router (workers run in each agent namespace)
 apiVersion: v1
 kind: Namespace
 metadata:
   name: ate-system
-  labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient}
+  labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: privileged}
 ---
 # Sterling & Vance — Bob's firm, runs the Solo AI platform
 apiVersion: v1
 kind: Namespace
 metadata:
   name: sv-identity
-  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient}
+  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
   annotations: {observatory.solo.io/party-name: "Sterling & Vance"}
 ---
 # S&V's own workforce IdP (the keycloak in ENTERPRISE_IDP), apart from the
@@ -57,45 +60,45 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: sv-workforce
-  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient, continuity.lab.solo.io/tier: keycloak}
+  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient, continuity.lab.solo.io/tier: keycloak, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: kagent
-  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient}
+  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: privileged}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: agentgateway-system
-  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient}
+  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: agentregistry
-  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient}
+  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: sv-agents
-  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient}
+  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: privileged}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: sv-mcp
   # S&V's tools sit behind an agentgateway waypoint (demos/bob/manifests/20-waypoint.yaml)
-  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient, istio.io/use-waypoint: mcp-waypoint}
+  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient, istio.io/use-waypoint: mcp-waypoint, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: sv-egress
   # the firm's way out to internet services (egress waypoint, ServiceEntries)
-  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient}
+  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
 ---
 # Alice — resource owner
 apiVersion: v1
@@ -103,14 +106,14 @@ kind: Namespace
 metadata:
   name: alice
   # waypoint opt-in is per workload (only uma-as needs L7 path rules)
-  labels: {lab.solo.io/party: alice, istio.io/dataplane-mode: ambient}
+  labels: {lab.solo.io/party: alice, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
   annotations: {observatory.solo.io/party-name: "Alice"}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: alice-identity
-  labels: {lab.solo.io/party: alice, istio.io/dataplane-mode: ambient}
+  labels: {lab.solo.io/party: alice, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
 ---
 # Meridian Wealth — Alice's brokerage (resource server)
 apiVersion: v1
@@ -118,7 +121,7 @@ kind: Namespace
 metadata:
   name: meridian
   # waypoint opt-in is per workload (only uma-pep needs L7 path rules)
-  labels: {lab.solo.io/party: meridian, istio.io/dataplane-mode: ambient}
+  labels: {lab.solo.io/party: meridian, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
   annotations: {observatory.solo.io/party-name: "Meridian Wealth"}
 ---
 # Ledgerline Research — a SaaS research provider S&V subscribes to (Cross App Access)
@@ -126,18 +129,18 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: ledgerline
-  labels: {lab.solo.io/party: ledgerline, istio.io/dataplane-mode: ambient, istio.io/use-waypoint: waypoint}
+  labels: {lab.solo.io/party: ledgerline, istio.io/dataplane-mode: ambient, istio.io/use-waypoint: waypoint, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
   annotations: {observatory.solo.io/party-name: "Ledgerline Research"}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: ledgerline-identity
-  labels: {lab.solo.io/party: ledgerline, istio.io/dataplane-mode: ambient}
+  labels: {lab.solo.io/party: ledgerline, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: ledgerline-egress
   # Ledgerline's way out to internet services: the keys of the IdPs it trusts
-  labels: {lab.solo.io/party: ledgerline, istio.io/dataplane-mode: ambient}
+  labels: {lab.solo.io/party: ledgerline, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}

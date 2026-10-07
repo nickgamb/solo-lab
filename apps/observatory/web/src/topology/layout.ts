@@ -32,7 +32,7 @@ export type Placed = {
   wires: Wire[]
 }
 
-export const TILE = 84, HERO = 112, LABEL_W = 180, LABEL_H = 44
+export const TILE = 84, HERO = 112, LABEL_W = 180, LABEL_H = 44, CAPTION_H = 22  // a tile's second sub-line
 export const OUTSIDE = 'outside'
 
 export const rootLevel = (n: LabNode) => n.kind === 'external' || n.kind === 'llm'

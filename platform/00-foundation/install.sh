@@ -7,7 +7,10 @@ need_cluster
 
 step "Gateway API CRDs $GATEWAY_API_VERSION ($GATEWAY_API_CHANNEL)"
 f="$LAB_STATE/cache/gateway-api-$GATEWAY_API_VERSION-$GATEWAY_API_CHANNEL.yaml"
-[ -s "$f" ] || curl -fsSL -o "$f" "https://github.com/kubernetes-sigs/gateway-api/releases/download/$GATEWAY_API_VERSION/$GATEWAY_API_CHANNEL-install.yaml"
+# a download is used only once it is whole: CRDs, and the version asked for
+gwapi_ok() { grep -q "gateway.networking.k8s.io/bundle-version: $GATEWAY_API_VERSION" "$1" && yq -e 'select(.kind == "CustomResourceDefinition")' "$1" >/dev/null; }
+[ -s "$f" ] && gwapi_ok "$f" \
+  || fetch "https://github.com/kubernetes-sigs/gateway-api/releases/download/$GATEWAY_API_VERSION/$GATEWAY_API_CHANNEL-install.yaml" "$f" gwapi_ok
 # server-side: several CRDs exceed the 256KB last-applied annotation limit
 K apply --server-side --force-conflicts -f "$f" >/dev/null
 ok "applied"

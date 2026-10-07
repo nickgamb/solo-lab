@@ -65,8 +65,9 @@ func (p *Prober) HTTPClient(timeout time.Duration) *http.Client {
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
-// OIDC probes an upstream issuer. The discovery document is returned only
-// when the whole probe succeeded.
+// OIDC probes an upstream issuer. The discovery document is returned once it
+// is valid (issuer, https endpoints), even if the JWKS then fails: the
+// result says how the probe went.
 func (p *Prober) OIDC(ctx context.Context, issuer string, timeout time.Duration) (tiers.Result, *Discovery) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -96,10 +97,12 @@ func (p *Prober) OIDC(ctx context.Context, issuer string, timeout time.Duration)
 		Keys []json.RawMessage `json:"keys"`
 	}
 	if kind, err := p.getJSON(ctx, d.JWKSURI, &jwks); err != nil {
-		return fail(kind, "jwks: %v", err)
+		res, _ := fail(kind, "jwks: %v", err)
+		return res, &d
 	}
 	if len(jwks.Keys) == 0 {
-		return fail(tiers.InvalidDiscovery, "jwks has no keys")
+		res, _ := fail(tiers.InvalidDiscovery, "jwks has no keys")
+		return res, &d
 	}
 	return tiers.Result{Kind: tiers.Healthy, Message: "discovery and jwks ok", Latency: time.Since(start)}, &d
 }

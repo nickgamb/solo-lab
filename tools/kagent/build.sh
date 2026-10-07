@@ -7,28 +7,34 @@
 #   golang-adk-full  the released index, mirrored here by digest (one registry
 #                    serves both Go variants: controller.goAgentImage.registry)
 #   controller       built from the patched source (0002), digests baked in
-set -euo pipefail
-cd "$(dirname "$0")"
+#
+# The checkout goes to .lab/cache/kagent-build (LAB_BUILD_SRC moves the parent,
+# which must be under .lab: it is emptied first).
+. "$(dirname "$0")/../../scripts/lib.sh"
+cd "$(dirname "$0")" || exit 1
 TAG=${TAG:-${KAGENT_LAB_TAG:-0.10.2-lab.4}}
 REG=${REG:-localhost:${LAB_REGISTRY_PORT:-5001}}
 IMG=${IMG:-$REG/kagent-dev/kagent/controller:$TAG}
 ADK=$REG/kagent-dev/kagent/golang-adk
-SRC=${SRC:-../../.lab/cache/kagent-build}
-rm -rf "$SRC"; git -c advice.detachedHead=false clone -q --depth 1 --branch v0.10.2 https://github.com/kagent-dev/kagent.git "$SRC"
-git -C "$SRC" -c user.name=lab -c user.email=lab@solo.lab am -q "$PWD"/patches/*.patch
+SRC=$(build_src kagent-build)
+git -c advice.detachedHead=false clone -q --depth 1 --branch v0.10.2 https://github.com/kagent-dev/kagent.git "$SRC" \
+  || die "cloning kagent v0.10.2 failed"
+git -C "$SRC" -c user.name=lab -c user.email=lab@solo.lab am -q "$PWD"/patches/*.patch || die "kagent patches don't apply"
 set -a; . ./released-digests.env; set +a
 V=github.com/kagent-dev/kagent/go/core/internal/version
 LDF="-X $V.Version=v$TAG -X $V.GitCommit=$(git -C "$SRC" rev-parse --short HEAD) -X $V.BuildDate=$(date -u +%Y-%m-%d)"
 
 docker build -q --build-arg LDFLAGS="$LDF" --build-arg BUILD_PACKAGE=adk/cmd/main.go \
-  -t "$ADK:$TAG" -f "$SRC/go/Dockerfile" "$SRC/go" >/dev/null
-docker push -q "$ADK:$TAG" >/dev/null
-docker buildx imagetools create -t "$ADK:$TAG-full" "$GOLANG_ADK_FULL_IMG" >/dev/null 2>&1
+  -t "$ADK:$TAG" -f "$SRC/go/Dockerfile" "$SRC/go" >/dev/null || die "building $ADK:$TAG failed"
+docker push -q "$ADK:$TAG" >/dev/null || die "pushing $ADK:$TAG failed"
+docker buildx imagetools create -t "$ADK:$TAG-full" "$GOLANG_ADK_FULL_IMG" >/dev/null 2>&1 \
+  || die "mirroring $GOLANG_ADK_FULL_IMG to $ADK:$TAG-full failed"
 GOLANG_ADK_IMG=$ADK:$TAG GOLANG_ADK_FULL_IMG=$ADK@${GOLANG_ADK_FULL_IMG##*@}
 echo "built $ADK:$TAG (+ $TAG-full mirrored)"
 
-DIG=$(cd "$SRC" && GOLANG_ADK_IMG=$GOLANG_ADK_IMG GOLANG_ADK_FULL_IMG=$GOLANG_ADK_FULL_IMG bash scripts/controller-digest-ldflags.sh)
+DIG=$(cd "$SRC" && GOLANG_ADK_IMG=$GOLANG_ADK_IMG GOLANG_ADK_FULL_IMG=$GOLANG_ADK_FULL_IMG bash scripts/controller-digest-ldflags.sh) \
+  || die "resolving the runtime image digests failed"
 docker build -q --build-arg LDFLAGS="$LDF$DIG" --build-arg BUILD_PACKAGE=core/cmd/controller/main.go \
-  -t "$IMG" -f "$SRC/go/Dockerfile" "$SRC/go" >/dev/null
-docker push -q "$IMG" >/dev/null
+  -t "$IMG" -f "$SRC/go/Dockerfile" "$SRC/go" >/dev/null || die "building $IMG failed"
+docker push -q "$IMG" >/dev/null || die "pushing $IMG failed"
 echo "built $IMG"

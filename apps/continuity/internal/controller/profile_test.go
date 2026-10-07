@@ -59,3 +59,29 @@ func TestWritable(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckCron(t *testing.T) {
+	for _, s := range []string{"0 2 * * *", "*/15 * * * *", "0 0-6/2 1,15 * MON-FRI", "0 0 1 jan *", "@daily", "0 3 ? * 7"} {
+		if err := checkCron(s); err != nil {
+			t.Errorf("%q: %v", s, err)
+		}
+	}
+	for _, s := range []string{"", "* * * *", "60 * * * *", "0 24 * * *", "0 0 0 * *", "*/0 * * * *", "0 0 * mon *", "@every 5m", "a b c d e"} {
+		if err := checkCron(s); err == nil {
+			t.Errorf("%q accepted", s)
+		}
+	}
+}
+
+func TestSuspendedSyncNeedsNoSchedule(t *testing.T) {
+	ic := &v1.IdentityContinuity{}
+	ic.Name = "x"
+	ic.Spec.Sync = &v1.Sync{Suspend: true}
+	cj := (&Reconciler{SyncImage: "img"}).syncCronJob(ic)
+	if cj.Spec.Schedule != noSchedule || !*cj.Spec.Suspend {
+		t.Fatalf("schedule %q suspend %v", cj.Spec.Schedule, *cj.Spec.Suspend)
+	}
+	if cj.Spec.JobTemplate.Labels["app"] != "continuity-sync" || cj.Spec.JobTemplate.Spec.Template.Spec.ServiceAccountName != "continuity-sync" {
+		t.Error("the job template carries app=continuity-sync and runs as continuity-sync")
+	}
+}

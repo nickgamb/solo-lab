@@ -30,9 +30,12 @@ next() {
 
 step "Signing in (Bob at S&V, Alice at her own IdP)"
 . "$LAB_ROOT/scripts/idp.sh"
-prefer_tier keycloak   # Bob signs in through S&V's own IdP, which a script can drive
-BOB=$(sso_token bob bob-demo | jq -r .access_token)
-[ -n "$BOB" ] && [ "$BOB" != null ] || die "could not get Bob's token"
+# Bob signs in through S&V's own IdP, which a script can drive; for that step
+# only: the chain goes back as it was (scene 5 cuts the IdP ahead of it)
+prefer_tier keycloak
+BOB=$(sso_token bob bob-demo | jq -r '.access_token // empty') || BOB=""
+restore_tiers wait
+[ -n "$BOB" ] || die "could not get Bob's token"
 probe_pod kagent kagent-ui; probe_pod sv-agents bob-assistant; probe_pod sv-agents; probe_pod observability
 AGENT=sv-agents/probe-bob-assistant   # Bob's agent's workload identity
 on_exit 'kill $(jobs -p) 2>/dev/null'
@@ -43,7 +46,8 @@ ask() {  # ask <question>: Bob asks his agent through kagent, prints its reply
   local body reply
   say "Bob: ${_B}$1${_N}"
   body=$(jq -nc --arg q "$1" --arg c "$CTX" '{jsonrpc:"2.0",id:"1",method:"message/send",params:{message:{role:"user",kind:"message",messageId:(now|tostring),contextId:$c,parts:[{kind:"text",text:$q}]}}}')
-  reply=$(a2a_send "$BOB" "$body" | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"')
+  reply=$(a2a_send "$BOB" "$body" | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"' 2>/dev/null) \
+    || reply="no reply (the call to the agent failed)"
   say "Agent: $(echo "$reply" | tr '\n' ' ' | cut -c1-240)"
 }
 probe() {  # probe <ns>[/<pod>] <label> <url> <args...>: one call from a probe pod's identity
@@ -60,6 +64,8 @@ probe() {  # probe <ns>[/<pod>] <label> <url> <args...>: one call from a probe p
   esac
   printf '   %-52s %s\n' "$label" "$what"
 }
+
+if ! why=$(llm_ready); then warn "Bob's agent has no model to answer with ($why): its replies will be empty (make llm)"; fi
 
 cat <<EOF
 
@@ -105,7 +111,8 @@ if scene 4 "Bob to Alice (UMA for agents)"; then
   if ! K get deploy uma-as -n alice >/dev/null 2>&1; then warn "story 2 isn't installed: skipping"; else
     look "Topology: bob-assistant → u4a-adapter → Meridian's gateway → uma-pep → Alice's authorization server"
     look "Alice's lane lights up. On a first contact the call waits for her; the tour approves as her."
-    ALICE=$(user_token alice-identity alice alice-portal "" alice alice-demo)
+    ALICE=$(user_token alice-identity alice alice-portal "" alice alice-demo) || ALICE=""
+    [ -n "$ALICE" ] || warn "could not sign Alice in: her approval won't come, the call waits and times out"
     AS="https://as.$ALICE_DOMAIN"
     ( for _ in $(seq 1 45); do   # approve her next pending ask, if one comes
         fam=$(with_bearer "$ALICE" curl -s "${CA[@]}" "$AS/owner/pending" \
@@ -129,6 +136,7 @@ if scene 5 "An IdP outage (identity continuity)"; then
     warn "the upstream IdP isn't signing people in (docs/IDENTITY-CONTINUITY.md#auth0-setup): skipping"
   else
     look "Identity Continuity tab. The network to the upstream IdP is cut now, at S&V's egress."
+    on_exit "K delete authorizationpolicy continuity-partition-auth0 -n sv-egress --ignore-not-found >/dev/null 2>&1"
     K apply -f - >/dev/null <<YAML
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy

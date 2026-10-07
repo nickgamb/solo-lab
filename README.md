@@ -38,7 +38,7 @@ Enterprise editions, trial licences and support: [solo.io/get-started](https://w
 ## Requirements
 
 - macOS, Linux or Windows with WSL2 (developed on macOS on Apple silicon; x86_64 and arm64 images throughout)
-- Docker Desktop, or Docker Engine with buildx on Linux, with 24 GB or more for Docker (`make preflight` refuses under 16 GB; the full lab uses about 17 GB)
+- Docker Desktop, OrbStack or Colima on macOS, or Docker Engine with buildx on Linux, with 24 GB or more for Docker (`make preflight` refuses under 16 GB; the full lab uses about 17 GB)
 - kind v0.32 or newer, kubectl, helm, jq, [yq v4](https://github.com/mikefarah/yq), envsubst (gettext), openssl, python3, git, curl
   - macOS: `brew install kind kubectl helm jq yq gettext openssl`
   - Debian/Ubuntu: `sudo apt-get install jq gettext-base openssl python3 git curl docker-buildx-plugin libnss3-tools`, then kind, kubectl, helm and yq from their release pages
@@ -46,10 +46,11 @@ Enterprise editions, trial licences and support: [solo.io/get-started](https://w
 - Ports 80 and 443 free on 127.0.0.1, or set `LAB_HTTP_PORT`/`LAB_HTTPS_PORT` in `.env`
 - A model: [Ollama](https://ollama.com) on the host (`ollama pull qwen3.8:27b`), or an Anthropic or OpenAI key
 
-`make preflight` checks all of this. With Docker Desktop it also raises the
-inotify limits inside Docker's VM, which reset whenever Docker Desktop
-restarts. With Docker Engine they are the host's own, and preflight says what
-to run if they're too low.
+`make preflight` checks all of this, and `make up` runs it first. On a
+Docker VM (Docker Desktop, OrbStack, Colima) it also raises the inotify
+limits inside the VM, which reset whenever the VM restarts. With Docker
+Engine they are the host's own, and preflight says what to run if they're
+too low.
 
 `make machine-setup` makes `*.lab` resolve to 127.0.0.1 and trusts the lab CA:
 `/etc/resolver` and the System keychain on macOS; systemd-resolved (or a
@@ -63,7 +64,7 @@ prints the two commands for a browser on Windows.
 cp .env.example .env          # optional: model provider, keys, Auth0, enterprise
 make machine-setup            # once per machine, sudo: *.lab DNS and the lab CA
 make up                       # cluster, platform and every demo (~30 min cold)
-make verify                   # every demo's enforcement checks
+make verify                   # rewinds the demos, then every enforcement check
 make status                   # pods, active IdP, URLs and sign-ins
 ```
 
@@ -74,6 +75,11 @@ clones the pinned commit into `.lab/uma4agents`.
 
 `make up` is idempotent. Image caches and the lab CA outlive the cluster, so
 a rebuild after `make down` is much faster than the first.
+
+**Updating an existing lab.** After pulling, `make platform` re-applies every
+layer and demo. A lab from before S&V's own Keycloak needs at least
+`make layer-45 layer-47 layer-95`: the `workforce` realm, and the chain
+ending in `break-glass`.
 
 What it leaves running in Docker: pull-through mirrors for each upstream
 registry (`lab-mirror-*`), a push registry for lab-built images
@@ -88,11 +94,12 @@ workers in zones a, b and c). The full lab uses about 17 GB of memory.
 | URL | What | Sign in |
 | --- | --- | --- |
 | https://observatory.ops.lab | Observatory: topology, traffic, identity continuity | `ops` / `ops-demo` |
-| https://kagent.sterling.lab | kagent, where Bob's agents run | Bob at S&V's active IdP (`bob` / `bob-demo` at S&V's own Keycloak) |
+| https://kagent.sterling.lab | kagent, where Bob's agents run | Bob at S&V's active IdP: Auth0 (`bob@sterling.lab`, your password) or S&V's own Keycloak (`bob` / `bob-demo`) |
 | https://registry.sterling.lab | agentregistry | S&V sign-in, as for kagent |
 | https://portal.alice.lab | Alice's portal (her grants and terms) | `alice` / `alice-demo` |
 | https://grafana.ops.lab | Grafana | `ops` / `ops-demo` |
 | https://kiali.ops.lab | Kiali mesh graph (view-only) | `ops` / `ops-demo` |
+| https://idp.sterling.lab/realms/sterling-vance/account | S&V broker account: sign-in through S&V's active IdP | S&V sign-in, as for kagent |
 | https://login.sterling.lab/realms/workforce/account | S&V's own Keycloak (an IdP in `ENTERPRISE_IDP`): a user's own account | `bob` / `bob-demo` |
 
 APIs on the edge, for agents and the checks rather than browsers:
@@ -102,10 +109,14 @@ APIs on the edge, for agents and the checks rather than browsers:
 `https://idp.<party>.lab/realms/<realm>` (`sterling-vance`, `alice`,
 `ledgerline`, `ops`).
 
-Demo accounts: `bob` (S&V, group `advisors`), `ops` (S&V and realm `ops`,
-group `platform-admins` / `observatory-admins`), `alice` (her own realm). No
-user is in S&V's `compliance` group, which the `export_book` tool needs; add
-one in S&V's Keycloak to try it.
+Demo accounts: `bob` (`bob-demo`, S&V group `advisors`); `carol`
+(`carol-demo`, S&V's own Keycloak): another S&V employee; `ops` (`ops-demo`,
+groups `platform-admins` / `observatory-admins`): realm `ops` for the
+Observatory, Grafana and Kiali, and S&V's break-glass platform admin at the
+broker, the only sign-in when every IdP is down; `alice` (`alice-demo`, her
+own realm). No user is in S&V's `compliance` group, which the `export_book`
+tool needs; add one to group `compliance` at the broker (realm
+`sterling-vance`) to try it.
 
 Generated secrets (Keycloak admin passwords, client secrets) are in
 `.lab/secrets.env`, created on first install and gitignored. The edge publishes
@@ -159,7 +170,7 @@ on a schedule or on demand.
 
 [![Observatory walkthrough at 4x speed: topology views, hover, details and live YAML, traffic with token claims, and an IdP outage with failover and failback](docs/videos/observatory.gif)](https://youtu.be/Y3P4a7HRvVs)
 
-The full walkthrough at normal speed, on YouTube: [Solo.io Observatory](https://youtu.be/Y3P4a7HRvVs) (3 min).
+The full walkthrough at normal speed, on YouTube: [solo-lab Observatory](https://youtu.be/Y3P4a7HRvVs) (3 min).
 
 See [docs/OBSERVATORY.md](docs/OBSERVATORY.md).
 
@@ -172,11 +183,17 @@ See [docs/OBSERVATORY.md](docs/OBSERVATORY.md).
 | `LLM_PROVIDER` | `ollama` (default), `anthropic` or `openai`; apply with `make llm` |
 | `OLLAMA_MODEL`, `OLLAMA_URL` | the local model and where the cluster reaches it |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL` | hosted models (held by agentgateway only) |
-| `ENTERPRISE_IDP` | S&V's IdPs in failover order, `keycloak` last (default `auth0,keycloak`): who signs Bob in and vouches for him to Ledgerline |
+| `ENTERPRISE_IDP` | S&V's IdPs in failover order (`okta`, `auth0`, `gluu`, `keycloak`; default `auth0,keycloak`): who signs Bob in and, for an IdP that issues ID-JAGs, who vouches for him to Ledgerline; the broker vouches otherwise |
 | `RESOURCE_AS`, `RESOURCE_AS_ISSUER` | Ledgerline's authorization server: `keycloak` (default) or `gluu` |
 | `AUTH0_ISSUER`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | the auth0 IdP (your Auth0 tenant); left out without an issuer |
+| `AUTH0_DIRECTORY_CLIENT_ID`, `AUTH0_DIRECTORY_CLIENT_SECRET` | Auth0's Management API, for the directory sync |
+| `OKTA_ISSUER`, `OKTA_CLIENT_ID` | the okta IdP; the broker vouches for its users |
 | `GLUU_ISSUER`, `GLUU_CLIENT_ID` | the gluu IdP, authenticated with S&V's keys ([GLUU.md](docs/GLUU.md)) |
+| `KEYCLOAK_ISSUER`, `KEYCLOAK_CLIENT_ID` | the keycloak IdP; default S&V's own at `login.sterling.lab` |
+| `<NAME>_CLIENT_SECRET` | optional per IdP; without it S&V authenticates with its keys (`make xaa-keys`) |
 | `EDITION`, `<PRODUCT>_EDITION`, `SOLO_LICENSE_KEY` | Solo Enterprise, all products or one at a time |
+| `SOLO_<PRODUCT>_LICENSE_KEY` | a licence for one product, in place of `SOLO_LICENSE_KEY` |
+| `LAB_PASSWORD_GRANT` | (`config/lab.env`) the password grant on Alice's portal client |
 
 `config/lab.env` holds the lab's shape: cluster name, node image, worker
 count, host ports, party domains, registry port; `config/oss.env` and
@@ -193,14 +210,17 @@ count, host ports, party domains, registry port; `config/oss.env` and
 | `cluster` | kind cluster, registry caches, cloud-provider-kind, lab DNS |
 | `platform` | every layer under `platform/` in order |
 | `layer-NN` | one layer, e.g. `make layer-90` (Observatory) |
-| `verify` | `bob-verify`, `alice-verify`, `continuity-verify` |
+| `verify` | `reset`, then `bob-verify`, `alice-verify`, `continuity-verify` |
+| `bob-verify` | story 1 checks only (delegation, per-tool policy, Cross App Access) |
+| `alice-verify` | story 2 checks only (Bob to Alice, UMA for agents), after a `reset` |
+| `continuity-verify` | identity continuity checks only (failover, kill switch, live rules, directory sync) |
 | `tour` | drive every story end to end, paced, to watch in the Observatory |
 | `reset` | rewind the demos (grants, terms, agent key, follow-ups) |
 | `llm` | switch the model: `make llm LLM_PROVIDER=anthropic` |
 | `xaa-logs` | the Cross App Access trail (both token requests, claims, checks), tokens redacted: `make xaa-logs SINCE=2h` |
-| `xaa-keys` | the public keys other parties register: S&V's clients at upstream IdPs and at Ledgerline, S&V's IdP, Ledgerline's SSO client |
-| `status` | pods, the active sign-in tier, URLs |
-| `preflight` | tools, Docker resources, Ollama |
+| `xaa-keys` | the public keys other parties register, in `.lab/xaa/keys/`: S&V's clients at upstream IdPs and at Ledgerline, S&V's broker (`sv-idp.jwks.json`) and own Keycloak (`sv-workforce.jwks.json`), Ledgerline's SSO client |
+| `status` | pods, the active IdP, URLs |
+| `preflight` | tools, Docker resources, free ports, `*.lab` DNS, Ollama and its model |
 | `help` | every target, with its one-line description |
 | `down` | delete the cluster (keeps caches and the CA) |
 | `nuke` | delete the cluster and every `lab-*` container and volume: registry caches, the local registry with every image built into it, lab DNS (`make up` recreates them) |
@@ -209,12 +229,15 @@ count, host ports, party domains, registry port; `config/oss.env` and
 
 ```
 config/          lab shape (lab.env) and edition pins (oss.env, enterprise.env)
+cluster/         kind config template
 scripts/         cluster lifecycle, DNS, CA, machine setup, preflight, helpers (lib.sh),
                  status, reset, llm, tour
 platform/NN-*/   one install.sh per layer, applied in order by make platform
 demos/           each story: install.sh, verify.sh, manifests, agents, tools
 apps/observatory Observatory: Go server (server/) and React UI (web/)
-apps/continuity  IdentityContinuity CRD and controller
+apps/continuity  IdentityContinuity CRD, controller and directory sync
+apps/idtoken-exchange, apps/xaa-relay
+                 Cross App Access at S&V's egress (ID token, ID-JAG relay and checks)
 tools/           patched upstream builds (kagent, Substrate, Keycloak), the probe
                  toolbox image and mcp-probe.py (MCP calls from a pod, for the checks)
 docs/            architecture, per-app docs, commands, demo cards, images and videos
@@ -228,9 +251,9 @@ Layers:
 | `10-istio` | Istio ambient: base, istiod, istio-cni, ztunnel |
 | `20-observability` | kube-prometheus-stack, Tempo, OTel collector, Kiali |
 | `30-kgateway` | the edge: per-party TLS listeners on NodePorts 30080/30443 |
-| `40-agentgateway` | ai-gateway: LLM backend, MCP, A2A |
-| `45-identity` | S&V's mesh baseline, S&V Keycloak and the client secrets S&V components use |
-| `47-continuity` | IdentityContinuity CRD and controller, S&V egress waypoint |
+| `40-agentgateway` | ai-gateway: LLM backend, MCP |
+| `45-identity` | S&V's mesh baseline, S&V's broker (Keycloak, `idp.sterling.lab`), S&V's own Keycloak (`login.sterling.lab`, realm `workforce`), client secrets for S&V components |
+| `47-continuity` | IdentityContinuity CRD and controller, the directory sync, S&V egress waypoint |
 | `50-substrate` | Agent Substrate (patched), in the mesh |
 | `60-kagent` | kagent + kmcp (patched), ops agents on Substrate, edge SSO |
 | `70-agentregistry` | agentregistry behind S&V SSO |
@@ -246,6 +269,6 @@ Layers:
 | [COMMANDS.md](docs/COMMANDS.md) | terminal commands for every part of the running lab: cluster, mesh, gateways, identity, agents, observability |
 | [IDENTITY-FLOWS.md](docs/IDENTITY-FLOWS.md) | acting for a user (RFC 8693 token exchange), Cross App Access (ID-JAG), UMA for agents: every hop, policy and check |
 | [OBSERVATORY.md](docs/OBSERVATORY.md) | using the Observatory, how it derives the map, access model, local development |
-| [IDENTITY-CONTINUITY.md](docs/IDENTITY-CONTINUITY.md) | the IdentityContinuity API, the controller, Auth0 setup, the kill switch |
+| [IDENTITY-CONTINUITY.md](docs/IDENTITY-CONTINUITY.md) | the IdP chain and break-glass, the IdentityContinuity API and controller, the directory sync, Auth0/Okta/S&V Keycloak setup, the kill switch |
 | [ENTERPRISE.md](docs/ENTERPRISE.md) | switching products to Solo Enterprise |
 | [GLUU.md](docs/GLUU.md) | Gluu (experimental) as S&V's enterprise IdP and Ledgerline's authorization server: settings, registration, logs, roadmap |
