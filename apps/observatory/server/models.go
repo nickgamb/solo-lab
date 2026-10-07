@@ -146,8 +146,8 @@ type ModelCaller struct {
 }
 
 type EnterpriseModels struct {
-	Budgets    []string `json:"budgets"`
-	RateLimits []string `json:"rateLimits"`
+	Budgets    []BudgetRule `json:"budgets"`
+	RateLimits []TokenLimit `json:"rateLimits"`
 }
 
 // served resolves a kind through discovery, remembered for a minute: the
@@ -257,7 +257,7 @@ func (m *Models) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Models) view(ctx context.Context, cl dynamic.Interface) (ModelView, error) {
-	v := ModelView{Edition: m.edition(), Providers: []ModelProvider{}, Enterprise: EnterpriseModels{Budgets: []string{}, RateLimits: []string{}}}
+	v := ModelView{Edition: m.edition(), Providers: []ModelProvider{}, Enterprise: EnterpriseModels{Budgets: []BudgetRule{}, RateLimits: []TokenLimit{}}}
 	ns, name, gw := m.chain(ctx, cl)
 	v.Gateway = gw
 	v.External = external(ctx, cl, ns, name)
@@ -273,7 +273,8 @@ func (m *Models) view(ctx context.Context, cl dynamic.Interface) (ModelView, err
 		}
 	}
 	if v.Edition == "enterprise" {
-		v.Enterprise.Budgets, v.Enterprise.RateLimits = m.names(ctx, cl, budgetKind), m.names(ctx, cl, rateLimitKind)
+		v.Enterprise.Budgets = budgetRules(m.list(ctx, cl, budgetKind))
+		v.Enterprise.RateLimits = tokenLimits(m.list(ctx, cl, rateLimitKind))
 	}
 	be, err := cl.Resource(gvrAGWBackend).Namespace(ns).Get(ctx, name, metav1.GetOptions{})
 	if isNotFound(err) {
@@ -319,20 +320,82 @@ func (m *Models) view(ctx context.Context, cl dynamic.Interface) (ModelView, err
 }
 
 // names lists a kind's objects as ns/name, everywhere; none if not served.
-func (m *Models) names(ctx context.Context, cl dynamic.Interface, k [2]string) []string {
-	out := []string{}
+func (m *Models) list(ctx context.Context, cl dynamic.Interface, k [2]string) []unstructured.Unstructured {
 	gvr, ok := m.served(k[0], k[1])
 	if !ok {
-		return out
+		return nil
 	}
 	l, err := cl.Resource(gvr).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return out
+		return nil
 	}
-	for _, o := range l.Items {
-		out = append(out, o.GetNamespace()+"/"+o.GetName())
+	slices.SortFunc(l.Items, func(a, b unstructured.Unstructured) int {
+		return strings.Compare(a.GetNamespace()+"/"+a.GetName(), b.GetNamespace()+"/"+b.GetName())
+	})
+	return l.Items
+}
+
+// BudgetRule is one entry of an EnterpriseAgentgatewayBudget.
+type BudgetRule struct {
+	Resource string            `json:"resource"` // namespace/name
+	Name     string            `json:"name"`
+	Subject  map[string]string `json:"subject,omitempty"`
+	Amount   int64             `json:"amount"`
+	Unit     string            `json:"unit"`   // Tokens | USD
+	Window   string            `json:"window"` // Day | Week | Month | Year
+	Action   string            `json:"action"` // Block | Audit
+}
+
+func budgetRules(items []unstructured.Unstructured) []BudgetRule {
+	out := []BudgetRule{}
+	for _, o := range items {
+		for _, b := range slice(o.Object, "spec", "budgets") {
+			e, _ := b.(map[string]any)
+			r := BudgetRule{Resource: o.GetNamespace() + "/" + o.GetName(), Name: str(e, "name"),
+				Amount: i64(e, "limit", "amount"), Unit: str(e, "limit", "unit"), Window: str(e, "window", "unit"), Action: str(e, "onBudgetExceeded")}
+			if sub, ok := e["subject"].(map[string]any); ok && len(sub) > 0 {
+				r.Subject = map[string]string{}
+				for k, v := range sub {
+					r.Subject[k] = fmt.Sprint(v)
+				}
+			}
+			out = append(out, r)
+		}
 	}
-	slices.Sort(out)
+	return out
+}
+
+// TokenLimit is one limit of a RateLimitConfig: a descriptor (key, and the
+// value it applies to, or every value) and its allowance per unit.
+type TokenLimit struct {
+	Resource string `json:"resource"`
+	Key      string `json:"key"`
+	Value    string `json:"value,omitempty"` // empty: every other value
+	PerUnit  int64  `json:"perUnit"`
+	Unit     string `json:"unit"` // SECOND | MINUTE | HOUR | DAY
+	Tokens   bool   `json:"tokens"`
+}
+
+// tokenLimits reads the operators' rate limits; the configs the budget
+// controller generates (agw-budget-*) are the budgets, shown as such.
+func tokenLimits(items []unstructured.Unstructured) []TokenLimit {
+	out := []TokenLimit{}
+	for _, o := range items {
+		if strings.HasPrefix(o.GetName(), "agw-budget-") {
+			continue
+		}
+		tokens := false
+		for _, rl := range slice(o.Object, "spec", "raw", "rateLimits") {
+			if m, _ := rl.(map[string]any); str(m, "type") == "TOKEN" {
+				tokens = true
+			}
+		}
+		for _, d := range slice(o.Object, "spec", "raw", "descriptors") {
+			m, _ := d.(map[string]any)
+			out = append(out, TokenLimit{Resource: o.GetNamespace() + "/" + o.GetName(), Key: str(m, "key"), Value: str(m, "value"),
+				PerUnit: i64(m, "rateLimit", "requestsPerUnit"), Unit: str(m, "rateLimit", "unit"), Tokens: tokens})
+		}
+	}
 	return out
 }
 

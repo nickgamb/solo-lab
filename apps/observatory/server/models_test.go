@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -458,5 +459,30 @@ func TestUSD(t *testing.T) {
 	a := map[string]string{"gen_ai.request.model": "m", "gen_ai.usage.input_tokens": "1", "gen_ai.usage.output_tokens": "2", "agw.ai.usage.cost.total": "0.0012"}
 	if got := summarize(Traffic{Kind: "llm", Attrs: a}, a, ""); got != "LLM m · 1 in / 2 out · $0.0012" {
 		t.Errorf("summary %q", got)
+	}
+}
+
+// Budgets and token limits read as rules; the configs the budget controller
+// generates are not limits of their own.
+func TestEnterpriseRules(t *testing.T) {
+	obj := func(name string, spec map[string]any) unstructured.Unstructured {
+		return unstructured.Unstructured{Object: map[string]any{"metadata": map[string]any{"name": name, "namespace": "agentgateway-system"}, "spec": spec}}
+	}
+	bs := budgetRules([]unstructured.Unstructured{obj("llm-budgets", map[string]any{"budgets": []any{
+		map[string]any{"name": "dev", "subject": map[string]any{"virtualKey": "developer"}, "limit": map[string]any{"unit": "USD", "amount": int64(5)},
+			"window": map[string]any{"unit": "Day"}, "onBudgetExceeded": "Block"}}})})
+	if len(bs) != 1 || bs[0].Subject["virtualKey"] != "developer" || bs[0].Amount != 5 || bs[0].Unit != "USD" || bs[0].Window != "Day" || bs[0].Action != "Block" {
+		t.Fatalf("budgets %+v", bs)
+	}
+	ls := tokenLimits([]unstructured.Unstructured{
+		obj("agw-budget-llm-budgets-1", map[string]any{"raw": map[string]any{"descriptors": []any{map[string]any{"key": "x"}}}}),
+		obj("llm-tokens-per-agent", map[string]any{"raw": map[string]any{
+			"descriptors": []any{
+				map[string]any{"key": "caller", "rateLimit": map[string]any{"unit": "MINUTE", "requestsPerUnit": int64(100000)}},
+				map[string]any{"key": "caller", "value": "sv-agents/advisor-desk", "rateLimit": map[string]any{"unit": "MINUTE", "requestsPerUnit": int64(2000)}}},
+			"rateLimits": []any{map[string]any{"type": "TOKEN"}}}}),
+	})
+	if len(ls) != 2 || !ls[0].Tokens || ls[1].Value != "sv-agents/advisor-desk" || ls[1].PerUnit != 2000 || ls[0].Unit != "MINUTE" {
+		t.Fatalf("limits %+v", ls)
 	}
 }

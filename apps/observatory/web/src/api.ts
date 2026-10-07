@@ -95,6 +95,8 @@ export type FailoverRules = {
   on5xx: boolean; on429: boolean; condition: string; custom: boolean
   consecutiveFailures: number; duration: string; retryAttempts: number; retryCodes: number[]
 }
+export type BudgetRule = { resource: string; name: string; subject?: Record<string, string>; amount: number; unit: string; window: string; action: string }
+export type TokenLimit = { resource: string; key: string; value?: string; perUnit: number; unit: string; tokens: boolean }
 export type ModelView = {
   edition: 'enterprise' | 'oss'
   backend: { namespace: string; name: string; resourceVersion: string; policies: string[] } | null
@@ -105,7 +107,7 @@ export type ModelView = {
   callers?: { namespace: string; serviceAccount: string; nodes?: string[] }[]
   declared?: { provider?: string; model?: string; fallback?: string }
   unattributed: ModelStats
-  enterprise: { budgets: string[]; rateLimits: string[] }
+  enterprise: { budgets: BudgetRule[]; rateLimits: TokenLimit[] }
 }
 // what a save writes: the providers in priority order, and the failover rules
 export type ProviderIn = { name: string; kind: 'openai' | 'anthropic' | 'ollama'; model: string; host?: string; port?: number; secret?: string }
