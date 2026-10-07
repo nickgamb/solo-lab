@@ -228,4 +228,70 @@ else
   restore_llm
 fi
 
+step "Assurance rules: assurance through failover (the assurance gate)"
+wlp() { K get wlp "$1" -n sv-identity -o jsonpath="{.status.$2}" 2>/dev/null; }
+claim() { echo "$1" | cut -d. -f2 | python3 -c 'import base64,json,sys; s=sys.stdin.read().strip(); print(json.loads(base64.urlsafe_b64decode(s+"="*(-len(s)%4))).get(sys.argv[1],""))' "$2"; }
+# what the gate said, as the caller sees it
+gate_says() {  # gate_says <token> <url> [tool]: "<status> <x-continuity-decision>"
+  printf '%s\n' "$1" | K exec -i -n sv-agents probe-bob-assistant -- sh -c 'read -r t; curl -s -m 20 -o /dev/null -D - -X POST "$0" \
+    -H "authorization: Bearer $t" -H "content-type: application/json" -H "accept: application/json, text/event-stream" \
+    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"verify\",\"version\":\"1\"}}}"' "$2" \
+    | awk 'NR==1{s=$2} tolower($1)=="x-continuity-decision:"{sub(/^[^:]*: /,""); d=$0} END{gsub(/\r/,"",d); print s, d}'
+}
+if ! K get ns sv-contingency >/dev/null 2>&1 || ! K get idc sterling-vance -n sv-identity -o json | jq -e '.spec.tiers | any(.name == "contingency")' >/dev/null; then
+  skipped "failover to a weaker IdP: S&V's contingency IdP isn't in ENTERPRISE_IDP"
+else
+  expect_res() { if echo "$3" | grep -qE "$1"; then res ok "$2"; else res no "$2" "$3"; fi; }
+  expect_res '^aal2 pwd otp$' "Bob's sign-in at S&V's own Keycloak took a second factor: idp_acr aal2, idp_amr pwd otp" "$(claim "$BOB" idp_acr) $(claim "$BOB" idp_amr)"
+  expect_res '^200 allow advisor-workspace: AAL2 via keycloak' "advisor-workspace (Critical, AAL2): Bob's agent allowed" "$(gate_says "$BOB" "$GW")"
+  expect_res '^200 allow ledgerline-research: AAL2 via keycloak' "ledgerline-research (High, AAL2): allowed before anything is exchanged" "$(gate_says "$BOB" "$XAA")"
+  # S&V's own Keycloak off the network: the chain fails over to the
+  # password-only contingency IdP
+  heal_kc() { K delete authorizationpolicy continuity-partition-keycloak -n sv-workforce --ignore-not-found >/dev/null; }
+  on_exit heal_kc
+  K apply -f - >/dev/null <<YAML
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: continuity-partition-keycloak, namespace: sv-workforce, labels: {continuity.lab.solo.io/tier: keycloak}, annotations: {continuity.lab.solo.io/cut-by: make bob-verify}}
+spec: {action: DENY, rules: [{}]}
+YAML
+  is_phase() { [ "$(wlp advisor-workspace phase)" = "$1" ] && [ "$(wlp advisor-workspace serving)" = "$2" ]; }
+  t=0; until is_phase FailedClosed contingency || [ $t -ge 40 ]; do sleep 1; t=$((t+1)); done
+  expect_res '^FailedClosed contingency AAL1$' "keycloak cut: advisor-workspace FailedClosed, serving contingency (at most AAL1)" \
+    "$(wlp advisor-workspace phase) $(wlp advisor-workspace serving) $(wlp advisor-workspace servingLevel)"
+  expect_res '^FailedClosed Degraded$' "ledgerline-research FailedClosed; agent-console (Standard, AAL1) keeps serving, Degraded" \
+    "$(wlp ledgerline-research phase) $(wlp agent-console phase)"
+  WEAK=$(sso_token bob bob-demo | jq -r '.access_token // empty') || WEAK=""
+  expect_res '^contingency aal1$' "Bob signs in again: through contingency, password only (idp_acr aal1)" "$(claim "$WEAK" idp) $(claim "$WEAK" idp_acr)"
+  expect_res '^401 deny advisor-workspace: assurance AAL1 below AAL2: session from contingency' \
+    "his new session at advisor-workspace: refused (401 insufficient_user_authentication), fail closed" "$(gate_says "$WEAK" "$GW")"
+  expect_res '^401 deny ledgerline-research: assurance AAL1 below AAL2' "and at Ledgerline: refused before any ID-JAG is asked for" "$(gate_says "$WEAK" "$XAA")"
+  expect_res '^200 allow advisor-workspace: AAL2 via keycloak' "his session from before the outage (AAL2, sessions Any) keeps working" "$(gate_says "$BOB" "$GW")"
+  expect_res '^403 deny ledgerline-research: session from keycloak.*sign in again' "except where only the active IdP's sessions count (ledgerline-research)" "$(gate_says "$BOB" "$XAA")"
+  # the rule is policy: change it, and the gate follows with no gateway change
+  WLP0=$(K get wlp advisor-workspace -n sv-identity -o json | jq -c '{spec: {assurance: .spec.assurance, allowedIdPs: (.spec.allowedIdPs // null), mode: (.spec.mode // "Enforce")}}')
+  on_exit "K patch wlp advisor-workspace -n sv-identity --type merge -p '$WLP0' >/dev/null 2>&1"
+  K patch wlp advisor-workspace -n sv-identity --type merge -p '{"spec":{"assurance":{"minimum":"AAL1"}}}' >/dev/null; sleep 4
+  expect_res '^200 allow advisor-workspace: AAL1 via contingency' "minimum lowered to AAL1 on the rule: his contingency session allowed, no policy changed" "$(gate_says "$WEAK" "$GW")"
+  K patch wlp advisor-workspace -n sv-identity --type merge -p '{"spec":{"allowedIdPs":["keycloak"]}}' >/dev/null; sleep 4
+  expect_res '^403 deny advisor-workspace: .*keycloak only, not contingency' "allowedIdPs [keycloak]: a contingency session refused (403)" "$(gate_says "$WEAK" "$GW")"
+  K patch wlp advisor-workspace -n sv-identity --type merge -p "$WLP0" >/dev/null
+  K patch wlp advisor-workspace -n sv-identity --type merge -p '{"spec":{"mode":"ReportOnly"}}' >/dev/null; sleep 4
+  expect_res '^200 would-deny advisor-workspace: assurance AAL1 below AAL2' "mode ReportOnly: his contingency session let through, the gate saying it would refuse it" "$(gate_says "$WEAK" "$GW")"
+  K patch wlp advisor-workspace -n sv-identity --type merge -p "$WLP0" >/dev/null
+  # the gate itself: replicated, and never fails open
+  gate_ok() { [ "$(gate_says "$BOB" "$GW" | cut -d' ' -f1)" = 200 ]; }
+  K delete pod -n sv-identity "$(K get pods -n sv-identity -l app=assurance-gate -o jsonpath='{.items[0].metadata.name}')" --wait=false >/dev/null
+  expect_res '^200 ' "one gate replica gone: decisions go on" "$(gate_says "$BOB" "$GW")"
+  K scale deploy assurance-gate -n sv-identity --replicas=0 >/dev/null
+  on_exit "K scale deploy assurance-gate -n sv-identity --replicas=3 >/dev/null 2>&1"
+  K wait pods -n sv-identity -l app=assurance-gate --for=delete --timeout=60s >/dev/null 2>&1
+  expect_res '^(403|500|502|503) ' "no gate at all: refused, never let through (FailClosed)" "$(gate_says "$BOB" "$GW")"
+  K scale deploy assurance-gate -n sv-identity --replicas=3 >/dev/null
+  K rollout status deploy/assurance-gate -n sv-identity --timeout=120s >/dev/null
+  heal_kc
+  t=0; until is_phase Degraded keycloak || is_phase Available keycloak || [ $t -ge 60 ]; do sleep 1; t=$((t+1)); done
+  expect_res '^(Available|Degraded) keycloak$' "keycloak healed: advisor-workspace serves again" "$(wlp advisor-workspace phase) $(wlp advisor-workspace serving)"
+fi
+
 echo; [ $fail -eq 0 ] && ok "story 1: $pass/$((pass+fail)) checks passed$([ "$skip" -eq 0 ] || echo ", $skip skipped")" || die "story 1: $fail of $((pass+fail)) checks failed"

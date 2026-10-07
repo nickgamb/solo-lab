@@ -20,6 +20,8 @@ spec:
         - {name: mcp.tool.name, expression: 'mcp.tool.name'}
         # a user's ID token riding along for cross-app access: noted, not logged
         - {name: token.x-id-token, expression: '"x-id-token" in request.headers'}
+        # the assurance gate's decision on a workload profile, when it was asked
+        - {name: continuity.decision, expression: 'response.headers["x-continuity-decision"]'}
       otlp:
         # a Service backend, not a URL: the export then leaves over the mesh
         # with the gateway's own identity, which the collector's policy names
@@ -41,6 +43,8 @@ spec:
         - {name: mcp.tool.name, expression: 'mcp.tool.name'}
         # a user's ID token riding along for cross-app access: noted, not logged
         - {name: token.x-id-token, expression: '"x-id-token" in request.headers'}
+        # the assurance gate's decision on a workload profile, when it was asked
+        - {name: continuity.decision, expression: 'response.headers["x-continuity-decision"]'}
       otlp:
         # a Service backend, not a URL: the export then leaves over the mesh
         # with the gateway's own identity, which the collector's policy names
