@@ -68,6 +68,8 @@ const (
 	typeIDToken     = "urn:ietf:params:oauth:token-type:id_token"
 	// how long an upstream ID token is reused before the upstream is asked again
 	upstreamTTL = time.Minute
+	// how many ID tokens are cached at most
+	maxCached = 10000
 )
 
 func env(k, def string) string {
@@ -90,15 +92,17 @@ type op struct {
 
 // exchanger turns access tokens into ID tokens, caching each for a while.
 type exchanger struct {
-	keycloak  op   // S&V's Keycloak, as kagent: the ID token, the floor
-	broker    op   // S&V's Keycloak, as the client that may read stored upstream tokens
-	upstreams []op // ID-JAG-issuing upstreams, in failover order
-	brokerURL string
-	hc        *http.Client
-	now       func() time.Time
+	keycloak   op   // S&V's Keycloak, as kagent: the ID token, the floor
+	broker     op   // S&V's Keycloak, as the client that may read stored upstream tokens
+	upstreams  []op // ID-JAG-issuing upstreams, in failover order
+	brokerURL  string
+	hc         *http.Client
+	now        func() time.Time
+	staleAfter time.Duration // how long the last read of the active tier stays good
 
 	mu     sync.Mutex
-	active string // the active tier; "" until known
+	known  bool   // the active tier has been read, and isn't stale
+	active string // the active tier; "" when no upstream is active
 	cache  map[[32]byte]cached
 }
 
@@ -117,17 +121,38 @@ var (
 	errNoActive = errors.New("active tier unknown")
 )
 
-// setActive records the active tier; a change drops every cached ID token,
-// so nothing from the previous IdP is handed out after failover.
+// setActive records the active tier read from the IdentityContinuity; a
+// change drops every cached ID token, so nothing from the previous IdP is
+// handed out after failover.
 func (x *exchanger) setActive(tier string) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
-	if tier == x.active {
+	if x.known && tier == x.active {
 		return
 	}
 	slog.Info("active tier", "from", x.active, "to", tier)
-	x.active = tier
+	x.known, x.active = true, tier
 	x.cache = map[[32]byte]cached{}
+}
+
+// forget drops the active tier when the last read of it went stale: no
+// answers until it is read again.
+func (x *exchanger) forget() {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	if !x.known {
+		return
+	}
+	slog.Warn("active tier stale", "was", x.active)
+	x.known, x.active = false, ""
+	x.cache = map[[32]byte]cached{}
+}
+
+// ready: the active tier is known.
+func (x *exchanger) ready() bool {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	return x.known
 }
 
 func (x *exchanger) idToken(ctx context.Context, accessToken string) (id, source string, err error) {
@@ -135,7 +160,7 @@ func (x *exchanger) idToken(ctx context.Context, accessToken string) (id, source
 	now := x.now()
 	x.mu.Lock()
 	active := x.active
-	if active == "" {
+	if !x.known {
 		x.mu.Unlock()
 		return "", "", errNoActive
 	}
@@ -152,6 +177,9 @@ func (x *exchanger) idToken(ctx context.Context, accessToken string) (id, source
 
 	source, ttl := x.keycloak.Name, time.Duration(0)
 	if sess := payload(accessToken).IdP; sess != "" {
+		if active == "" {
+			return "", sess, fmt.Errorf("%w: the session came from %s, and no upstream IdP is active: sign in again", errRefused, sess)
+		}
 		if sess != active {
 			return "", sess, fmt.Errorf("%w: the session came from %s, which is no longer the active IdP (%s): sign in again", errRefused, sess, active)
 		}
@@ -178,12 +206,35 @@ func (x *exchanger) idToken(ctx context.Context, accessToken string) (id, source
 	}
 	if exp.After(now) {
 		x.mu.Lock()
-		if x.active == active { // not if failover happened meanwhile
-			x.cache[key] = cached{idToken: id, exp: exp}
+		if x.known && x.active == active { // not if failover happened meanwhile
+			x.store(key, cached{idToken: id, exp: exp}, now)
 		}
 		x.mu.Unlock()
 	}
 	return id, source, nil
+}
+
+// store caches c under key, keeping at most maxCached entries: expired ones
+// go first, then the one expiring soonest. x.mu is held.
+func (x *exchanger) store(key [32]byte, c cached, now time.Time) {
+	if _, ok := x.cache[key]; !ok && len(x.cache) >= maxCached {
+		for k, e := range x.cache {
+			if !now.Before(e.exp) {
+				delete(x.cache, k)
+			}
+		}
+		for len(x.cache) >= maxCached {
+			var oldest [32]byte
+			first := true
+			for k, e := range x.cache {
+				if first || e.exp.Before(x.cache[oldest].exp) {
+					oldest, first = k, false
+				}
+			}
+			delete(x.cache, oldest)
+		}
+	}
+	x.cache[key] = c
 }
 
 // exchange gets the ID token from S&V's Keycloak (RFC 8693).
@@ -393,13 +444,14 @@ func main() {
 		os.Exit(1)
 	}
 	x := &exchanger{
-		keycloak:  keycloak,
-		broker:    broker,
-		upstreams: upstreams,
-		brokerURL: env("BROKER_URL", "http://keycloak.sv-identity/realms/sterling-vance/broker"),
-		hc:        hc,
-		now:       time.Now,
-		cache:     map[[32]byte]cached{},
+		keycloak:   keycloak,
+		broker:     broker,
+		upstreams:  upstreams,
+		brokerURL:  env("BROKER_URL", "http://keycloak.sv-identity/realms/sterling-vance/broker"),
+		hc:         hc,
+		now:        time.Now,
+		staleAfter: defaultStaleAfter,
+		cache:      map[[32]byte]cached{},
 	}
 	names := []string{}
 	for _, u := range upstreams {
@@ -417,10 +469,7 @@ func main() {
 	// readiness: not ready until it knows which IdP vouches
 	health := &http.Server{Addr: env("HEALTH_LISTEN", ":8081"), ReadHeaderTimeout: 5 * time.Second,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			x.mu.Lock()
-			known := x.active != ""
-			x.mu.Unlock()
-			if !known {
+			if !x.ready() {
 				http.Error(w, "active tier unknown", http.StatusServiceUnavailable)
 				return
 			}

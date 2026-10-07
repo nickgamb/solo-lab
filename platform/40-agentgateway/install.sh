@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# agentgateway — the AI gateway: LLM egress, MCP federation, A2A.
+# agentgateway — the AI gateway: LLM egress and MCP federation.
 # The agents' worker pools reach models and cross-company tools only through
 # here, so provider credentials, per-caller policy and access logs live in one
 # place. (Rate limits and prompt guards would go here too; the lab sets none.)
@@ -42,5 +42,10 @@ apply_tmpl "$D/ai-gateway.yaml"
 wait_for "ai-gateway Programmed" 60 3 \
   K wait -n agentgateway-system gateway/ai-gateway --for=condition=Programmed --timeout=2s
 ok "ai-gateway programmed — in-cluster: http://ai-gateway.agentgateway-system"
+# ai-gateway itself reaches the LLM providers. S&V's ID-token exchange and XAA
+# relay (demos/bob) beside it reach upstream IdPs only through the egress
+# waypoint, so they get the cluster and nothing else.
+deny_internet_pods agentgateway-system idtoken-exchange xaa-relay
+ok "no direct internet from idtoken-exchange, xaa-relay (agentgateway-system)"
 
 "$LAB_ROOT/scripts/llm.sh"

@@ -18,18 +18,18 @@ IDTOKEN_EXCHANGE_IMAGE=$(lab_build lab/idtoken-exchange "$LAB_ROOT/apps/idtoken-
 XAA_RELAY_IMAGE=$(lab_build lab/xaa-relay "$LAB_ROOT/apps/xaa-relay"); export XAA_RELAY_IMAGE
 ok "$BOB_WORKSPACE_IMAGE  $LEDGERLINE_RESEARCH_IMAGE"
 ok "$IDTOKEN_EXCHANGE_IMAGE  $XAA_RELAY_IMAGE"
-ok "$(lab_build lab/toolbox "$LAB_ROOT/tools/toolbox")   (probe pods for the checks)"
+TOOLBOX_IMAGE=$(lab_build lab/toolbox "$LAB_ROOT/tools/toolbox")
+ok "$TOOLBOX_IMAGE   (probe pods for the checks)"
 
 step "Ledgerline Research (its own IdP, MCP server, Istio waypoint)"
 # S&V registered its public key with Ledgerline (private_key_jwt); Ledgerline
 # signs in to S&V's IdPs with its own key (its SSO client there)
 realm_signing_key ledgerline-sso-client
-K create secret generic kc-secrets -n ledgerline-identity \
-  --from-literal=KC_BOOTSTRAP_ADMIN_USERNAME=admin --from-literal=KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret LL_KC_ADMIN_PASSWORD)" \
-  --from-literal=SV_XAA_CLIENT_CERT="$SV_XAA_CLIENT_CERT" --from-literal=SV_XAA_CLIENT_KID="$SV_XAA_CLIENT_KID" \
-  --from-literal=LL_SSO_CLIENT_KEY="$(pem_body "$LAB_STATE/keys/ledgerline-sso-client.key")" \
-  --from-literal=LL_SSO_CLIENT_CERT="$(pem_body "$LAB_STATE/keys/ledgerline-sso-client.crt")" \
-  --dry-run=client -o yaml | K apply -f - >/dev/null
+secret_apply ledgerline-identity kc-secrets \
+  KC_BOOTSTRAP_ADMIN_USERNAME=admin KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret LL_KC_ADMIN_PASSWORD)" \
+  SV_XAA_CLIENT_CERT="$SV_XAA_CLIENT_CERT" SV_XAA_CLIENT_KID="$SV_XAA_CLIENT_KID" \
+  LL_SSO_CLIENT_KEY="$(pem_body "$LAB_STATE/keys/ledgerline-sso-client.key")" \
+  LL_SSO_CLIENT_CERT="$(pem_body "$LAB_STATE/keys/ledgerline-sso-client.crt")"
 # its Keycloak trusts each of S&V's IdPs that vouch, for S&V's domain only
 mkdir -p "$LAB_STATE/realm"
 ledgerline_realm "$D/ledgerline/realm-ledgerline.json" >"$LAB_STATE/realm/realm-ledgerline.json"

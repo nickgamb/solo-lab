@@ -43,10 +43,19 @@ spec:
         lab.solo.io/key-checksum: "${KC_KEY_SHA}"
     spec:
       serviceAccountName: keycloak
+      automountServiceAccountToken: false   # it never calls the API server
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
       containers:
       - name: keycloak
         image: ${KC_IMAGE}
         args: ["start-dev", "--import-realm", "--features=${KC_FEATURES}"]
+        # dev mode builds into its install directory at start, so the root
+        # filesystem stays writable
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities: {drop: [ALL]}
         env:
         - {name: KC_HOSTNAME, value: "https://${PARTY_HOST}.${PARTY_DOMAIN}"}
         - {name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC, value: "true"}

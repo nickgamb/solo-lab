@@ -8,9 +8,10 @@ machine-setup: ## one-time, sudo: *.lab resolves to the lab, trust the lab CA (m
 	@./scripts/machine-setup.sh
 
 ## ---- lifecycle ---------------------------------------------------------------
-up: cluster platform ## create the cluster and install the whole platform
+up: ## preflight, then create the cluster and install the whole platform
+	@./scripts/preflight.sh && LAB_PREFLIGHT_DONE=1 $(MAKE) --no-print-directory cluster && $(MAKE) --no-print-directory platform
 cluster: ## kind cluster + registry caches + cloud-provider-kind + lab DNS
-	@./scripts/dns.sh && ./scripts/ca.sh && ./scripts/cluster-up.sh
+	@{ [ "$${LAB_PREFLIGHT_DONE:-}" = 1 ] || ./scripts/preflight.sh; } && ./scripts/dns.sh && ./scripts/ca.sh && LAB_PREFLIGHT_DONE=1 ./scripts/cluster-up.sh
 platform: ## install every platform layer in order (idempotent)
 	@for l in $(LAYERS); do bash $$l || exit 1; done
 layer-%: ## install one layer, e.g. make layer-40 (agentgateway)
@@ -21,12 +22,12 @@ nuke: ## delete the cluster AND every lab container and volume (caches, registry
 	@./scripts/cluster-down.sh --all
 
 ## ---- demos (all installed by `make up`; cards in docs/cards) ---------------
-verify: ## every story's enforcement checks, then identity continuity
-	@./demos/bob/verify.sh && ./demos/bob-to-alice/verify.sh && ./platform/47-continuity/verify.sh
+verify: ## rewind the demos (make reset), every story's checks, then identity continuity
+	@./scripts/reset.sh && ./demos/bob/verify.sh && ./demos/bob-to-alice/verify.sh && ./platform/47-continuity/verify.sh
 bob-verify: ## story 1 checks only (delegation, per-tool policy, Cross App Access)
 	@./demos/bob/verify.sh
-alice-verify: ## story 2 checks only (Bob to Alice, UMA for agents)
-	@./demos/bob-to-alice/verify.sh
+alice-verify: ## story 2 checks only, from a first run (make reset first)
+	@./scripts/reset.sh && ./demos/bob-to-alice/verify.sh
 continuity-verify: ## identity continuity checks only (failover, kill switch, live rules)
 	@./platform/47-continuity/verify.sh
 tour: ## drive every story end to end, paced, to watch live in the Observatory
@@ -49,4 +50,4 @@ preflight: ## check tools and Docker resources
 help:
 	@awk 'BEGIN{FS=":.*## "} /^## ----/{printf "\n\033[1m%s\033[0m\n", substr($$0,9)} /^[a-zA-Z%_-]+:.*## /{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-.PHONY: machine-setup up cluster platform down nuke verify bob-verify alice-verify continuity-verify tour reset llm status preflight help
+.PHONY: machine-setup up cluster platform down nuke verify bob-verify alice-verify continuity-verify tour reset llm xaa-logs xaa-keys status preflight help

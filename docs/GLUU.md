@@ -7,7 +7,8 @@ default; two settings choose who plays each role
 ([IDENTITY-FLOWS.md](IDENTITY-FLOWS.md#2-cross-app-access-id-jag-to-a-saas)).
 
 - Demo card: [cards/gluu.html](cards/gluu.html)
-- Checks: `make bob-verify`, `make continuity-verify`
+- Checks: `make bob-verify` (Ledgerline's Gluu redeeming; Bob signs in
+  through S&V's own Keycloak), step 4 below for Gluu vouching
 - Logs and keys: `make xaa-logs`, `make xaa-keys`
 
 ## Settings
@@ -105,14 +106,14 @@ Not built. Each item, with what it needs.
 | Item | Needs |
 | --- | --- |
 | Keys for `kagent` too | kgateway OAuth2 with `private_key_jwt`; then `kagent` (edge and egress) authenticates with one key per component, and no secret is left |
-| Upstream logout reaching S&V | OIDC back-channel logout from the upstream to S&V's broker, ending the Keycloak session (offline tokens otherwise outlive it) |
+| Upstream logout reaching S&V | OIDC back-channel logout from the upstream to S&V's broker, ending the Keycloak session (the broker's session otherwise outlives it) |
 | CIMD client ID for S&V's client at the AS | an HTTPS-hosted client metadata document whose URL is the `client_id`, `jwks` from `make xaa-keys`; an AS that dereferences CIMD at the token endpoint |
 | Resource indicators (RFC 8707) | `crossAppAccess.resources: [https://mcp.ledgerline.lab/mcp]`; an AS that binds `aud` to `resource` |
 | Sender-constrained tokens (DPoP, RFC 9449) | agentgateway DPoP proofs on the RAS leg and the MCP call; an AS issuing `cnf.jkt`; Ledgerline's waypoint and server checking the proof |
 | MCP enterprise-managed authorization extension | agentgateway or kagent MCP client declaring it on `initialize` |
 | OAuth MCP flow (401 + `WWW-Authenticate` to Protected Resource Metadata) | the MCP server on a public HTTPS host; agentgateway serving the metadata and the challenge for `/mcp` |
 | ID-JAG checks and redacted token-request logs inside agentgateway | crossAppAccess validating the ID-JAG and logging both legs; then xaa-relay goes |
-| Path-level policy on S&V's Keycloak | a waypoint for `sv-identity`, so each caller reaches only its endpoints (the egress: token, certs, broker token; never admin) |
+| Path-level policy on S&V's broker | a waypoint for `sv-identity`, so each caller reaches only its endpoints (the egress: token, certs, broker token; never admin) |
 | Narrower rights for the continuity controller and its sync | the controller holds `manage-identity-providers` and `manage-realm` (the login redirector lives in an authentication flow); the sync `manage-users` at the broker and at each Keycloak directory: Keycloak fine-grained admin permissions scoped to the IdPs, that one flow and attribute writes, or each credential treated as tier 0 (rotation, monitoring) |
 | Token status list / revocation at the RS | Ledgerline's server checking `status` (Gluu `status_list_endpoint`) per call |
 | AuthZEN policy decision at the egress | an ext_proc calling the PDP's `/access/v1/evaluation` (subject Bob, action tool call, resource tool) before the XAA exchange |

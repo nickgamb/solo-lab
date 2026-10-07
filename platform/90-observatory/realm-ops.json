@@ -78,7 +78,8 @@
             "userinfo.token.claim": "true"
           }
         }
-      ]
+      ],
+      "fullScopeAllowed": false
     },
     {
       "clientId": "grafana",
@@ -122,7 +123,8 @@
             "userinfo.token.claim": "true"
           }
         }
-      ]
+      ],
+      "fullScopeAllowed": false
     },
     {
       "clientId": "kiali",
@@ -166,7 +168,8 @@
             "userinfo.token.claim": "true"
           }
         }
-      ]
+      ],
+      "fullScopeAllowed": false
     }
   ],
   "components": {

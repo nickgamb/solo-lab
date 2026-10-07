@@ -10,8 +10,7 @@ need_cluster
 NS=observability
 
 step "kube-prometheus-stack $KPS_VERSION"
-K create secret generic grafana-admin -n "$NS" --from-literal=admin-user=admin \
-  --from-literal=admin-password="$(lab_secret GRAFANA_ADMIN_PASSWORD)" --dry-run=client -o yaml | K apply -f - >/dev/null
+secret_apply "$NS" grafana-admin admin-user=admin admin-password="$(lab_secret GRAFANA_ADMIN_PASSWORD)"
 values_for "$D" kps oss
 HELM_TIMEOUT=15m helm_up kps kube-prometheus-stack "$KPS_VERSION" $NS \
   --repo https://prometheus-community.github.io/helm-charts ${VALS[@]+"${VALS[@]}"}
@@ -62,7 +61,7 @@ YAML
 ok "observability, kiali: no internet (Prometheus: the nodes' metrics ports too)"
 
 step "Mesh scrape targets"
-K apply -f "$D/monitors.yaml" >/dev/null
+apply_tmpl "$D/monitors.yaml"   # names the agentgateway class of this edition (AGW_CLASS)
 ok "istiod, ztunnel, waypoint/gateway proxies"
 
 # Grafana and Kiali are published on the edge with their sign-in, by

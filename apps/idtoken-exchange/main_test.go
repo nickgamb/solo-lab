@@ -78,7 +78,7 @@ func keycloakOK(t *testing.T, calls *int32) *httptest.Server {
 func newExchanger(keycloakURL string, upstreams ...op) *exchanger {
 	return &exchanger{keycloak: op{Name: "keycloak", TokenURL: keycloakURL, ClientID: "kagent", secret: "s3cret"},
 		upstreams: upstreams, hc: http.DefaultClient, now: time.Now, cache: map[[32]byte]cached{},
-		active: "keycloak"}
+		staleAfter: defaultStaleAfter, known: true, active: "keycloak"}
 }
 
 // result is what the gateway gets back for one request's headers.
@@ -329,7 +329,7 @@ func TestFailoverDropsCachedUpstreamTokens(t *testing.T) {
 func TestUnknownActiveTierFailsClosed(t *testing.T) {
 	var kc int32
 	x := newExchanger(keycloakOK(t, &kc).URL)
-	x.active = ""
+	x.known, x.active = false, ""
 	if w := check(x, jwtWithExp(time.Now().Add(time.Minute))); w.Code != 503 || kc != 0 {
 		t.Fatalf("got %d, keycloak calls %d; want 503", w.Code, kc)
 	}
@@ -352,7 +352,7 @@ func TestWatchActiveReadsTheControllersDecision(t *testing.T) {
 		t.Fatal(err)
 	}
 	x := newExchanger("http://unused")
-	x.active = ""
+	x.known, x.active = false, ""
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go x.watchActive(ctx, api.Client(), api.URL, tok, "sv-identity/sterling-vance", 10*time.Millisecond)
@@ -494,6 +494,14 @@ func TestProcessStream(t *testing.T) {
 	if resp, err := stream.Recv(); err != nil || resp.GetResponseHeaders() == nil {
 		t.Fatalf("response headers phase: %v %v", resp, err)
 	}
+	stream.Send(&extproc.ProcessingRequest{Request: &extproc.ProcessingRequest_RequestTrailers{RequestTrailers: &extproc.HttpTrailers{}}})
+	if resp, err := stream.Recv(); err != nil || resp.GetRequestTrailers() == nil {
+		t.Fatalf("request trailers phase: %v %v", resp, err)
+	}
+	stream.Send(&extproc.ProcessingRequest{Request: &extproc.ProcessingRequest_ResponseTrailers{ResponseTrailers: &extproc.HttpTrailers{}}})
+	if resp, err := stream.Recv(); err != nil || resp.GetResponseTrailers() == nil {
+		t.Fatalf("response trailers phase: %v %v", resp, err)
+	}
 	stream.CloseSend()
 }
 
@@ -540,21 +548,93 @@ func TestStaleContinuityStateStopsAnswers(t *testing.T) {
 	if err := writeFile(tok, "sa-token"); err != nil {
 		t.Fatal(err)
 	}
-	old := staleAfter
-	staleAfter = 20 * time.Millisecond
-	defer func() { staleAfter = old }()
 	x := newExchanger("http://unused") // active "keycloak", from an earlier read
+	x.staleAfter = 20 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go x.watchActive(ctx, api.Client(), api.URL, tok, "sv-identity/sterling-vance", 5*time.Millisecond)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		x.watchActive(ctx, api.Client(), api.URL, tok, "sv-identity/sterling-vance", 5*time.Millisecond)
+	}()
+	defer func() { cancel(); <-done }()
 	for i := 0; i < 200; i++ {
-		x.mu.Lock()
-		a := x.active
-		x.mu.Unlock()
-		if a == "" {
+		if !x.ready() {
+			if w := check(x, jwtWithExp(time.Now().Add(time.Minute))); w.Code != 503 {
+				t.Fatalf("stale state: got %d, want 503", w.Code)
+			}
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("active tier kept after the continuity state went stale")
+}
+
+func TestNoActiveUpstreamRefusesUpstreamSessions(t *testing.T) {
+	// status.active "" read successfully: known, and no upstream vouches
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"status":{"active":""}}`)
+	}))
+	defer api.Close()
+	tok := t.TempDir() + "/token"
+	if err := writeFile(tok, "sa-token"); err != nil {
+		t.Fatal(err)
+	}
+	var kc, b, g int32
+	x := withUpstream(keycloakOK(t, &kc).URL, broker(t, &b, 200, stored).URL, gluu(t, &g, 200, nil, nil).URL)
+	at := session("gluu", time.Now().Add(5*time.Minute))
+	if w := check(x, at); w.Code != 200 {
+		t.Fatalf("while gluu is active: %d", w.Code)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		x.watchActive(ctx, api.Client(), api.URL, tok, "sv-identity/sterling-vance", 5*time.Millisecond)
+	}()
+	defer func() { cancel(); <-done }()
+	for i := 0; ; i++ {
+		x.mu.Lock()
+		a := x.active
+		x.mu.Unlock()
+		if a == "" {
+			break
+		}
+		if i == 200 {
+			t.Fatal("active tier kept after status.active was read as empty")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !x.ready() {
+		t.Fatal("not ready after a successful read")
+	}
+	b, g = 0, 0
+	if w := check(x, at); w.Code != 403 || w.id != "" || b+g != 0 {
+		t.Fatalf("Gluu session with no active upstream: %d (broker %d gluu %d); want 403, nothing called", w.Code, b, g)
+	}
+	if w := check(x, session("", time.Now().Add(5*time.Minute))); w.Code != 200 || w.id != keycloakIDToken {
+		t.Fatalf("local session with no active upstream: %d; want Keycloak's ID token", w.Code)
+	}
+}
+
+func TestCacheIsBounded(t *testing.T) {
+	x := newExchanger("http://unused")
+	now := time.Now()
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	x.store([32]byte{1}, cached{exp: now.Add(-time.Second)}, now) // expired
+	x.store([32]byte{2}, cached{exp: now.Add(time.Second)}, now)  // the oldest live one
+	for i := 0; len(x.cache) < maxCached; i++ {
+		x.store(sha256.Sum256([]byte(fmt.Sprint(i))), cached{exp: now.Add(time.Hour)}, now)
+	}
+	x.store([32]byte{3}, cached{exp: now.Add(time.Hour)}, now)
+	if _, ok := x.cache[[32]byte{1}]; ok || len(x.cache) != maxCached {
+		t.Fatalf("expired entry kept or cache at %d", len(x.cache))
+	}
+	x.store([32]byte{4}, cached{exp: now.Add(time.Hour)}, now)
+	if _, ok := x.cache[[32]byte{2}]; ok || len(x.cache) != maxCached {
+		t.Fatalf("oldest entry kept or cache at %d", len(x.cache))
+	}
+	if _, ok := x.cache[[32]byte{4}]; !ok {
+		t.Fatal("new entry not stored")
+	}
 }

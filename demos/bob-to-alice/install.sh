@@ -7,19 +7,35 @@
 D="$(cd "$(dirname "$0")" && pwd)"
 need_cluster
 export U4A_TAG=${U4A_TAG:-u4a-ea9d86f}      # uma4agents commit the images are built from
+# ...in full: the commit hash is the checksum of everything exported below.
+# Another U4A_TAG takes its own U4A_SHA (or is resolved in the checkout).
+[ "$U4A_TAG" = u4a-ea9d86f ] && U4A_SHA=${U4A_SHA:-ea9d86fc924b7605581ad90a76af500d0be6fd66}
 # The images are built from exactly that commit, whatever state a checkout is
 # in: U4A_SRC, else a checkout beside this repo, else a clone under .lab/,
 # exported at the commit into .lab/cache.
 U4A_SRC=${U4A_SRC:-$( [ -d "$LAB_ROOT/../uma4agents" ] && cd "$LAB_ROOT/../uma4agents" && pwd || echo "$LAB_STATE/uma4agents")}
-[ -d "$U4A_SRC" ] || git clone -q https://github.com/nickgamb/uma4agents "$U4A_SRC"
+if [ ! -d "$U4A_SRC" ]; then
+  rm -rf "$U4A_SRC.tmp"
+  git clone -q https://github.com/nickgamb/uma4agents "$U4A_SRC.tmp" || { rm -rf "$U4A_SRC.tmp"; die "cloning uma4agents failed"; }
+  mv "$U4A_SRC.tmp" "$U4A_SRC"
+fi
 U4A_COMMIT=${U4A_TAG#u4a-}
-git -C "$U4A_SRC" cat-file -e "$U4A_COMMIT^{commit}" 2>/dev/null || git -C "$U4A_SRC" fetch -q origin \
-  || die "uma4agents commit $U4A_COMMIT not found in $U4A_SRC"
+U4A_REV=${U4A_SHA:-$U4A_COMMIT}
+if ! git -C "$U4A_SRC" cat-file -e "$U4A_REV^{commit}" 2>/dev/null; then
+  git -C "$U4A_SRC" fetch -q origin || die "fetching uma4agents into $U4A_SRC failed"
+fi
+got=$(git -C "$U4A_SRC" rev-parse --verify -q "$U4A_REV^{commit}") || die "uma4agents commit $U4A_REV not found in $U4A_SRC"
+case "$got" in "$U4A_COMMIT"*) ;; *) die "U4A_TAG $U4A_TAG and uma4agents commit $got disagree" ;; esac
+[ -z "${U4A_SHA:-}" ] || [ "$got" = "$U4A_SHA" ] || die "uma4agents $U4A_TAG is $got in $U4A_SRC, not $U4A_SHA"
 U4A_CTX="$LAB_STATE/cache/uma4agents-$U4A_COMMIT"
 if [ ! -d "$U4A_CTX" ]; then
   rm -rf "$U4A_CTX.tmp"; mkdir -p "$U4A_CTX.tmp"
-  git -C "$U4A_SRC" archive "$U4A_COMMIT" | tar -x -C "$U4A_CTX.tmp" && mv "$U4A_CTX.tmp" "$U4A_CTX"
+  git -C "$U4A_SRC" archive "$got" | tar -x -C "$U4A_CTX.tmp" || { rm -rf "$U4A_CTX.tmp"; die "exporting uma4agents $got failed"; }
+  mv "$U4A_CTX.tmp" "$U4A_CTX"
 fi
+for f in services/uma-as/Dockerfile services/uma-pep/Dockerfile mcp/alice-vault/Dockerfile services/alice-portal/Dockerfile; do
+  [ -f "$U4A_CTX/$f" ] || die "uma4agents $U4A_COMMIT has no $f ($U4A_CTX)"
+done
 
 step "u4a images ($U4A_TAG)"
 img() {  # img <name> <dockerfile> <context> [tag]
@@ -28,7 +44,7 @@ img() {  # img <name> <dockerfile> <context> [tag]
     && docker push -q "localhost:$LAB_REGISTRY_PORT/u4a/$1:$tag" >/dev/null; } || die "building u4a/$1 failed"
 }
 # the adapter's Dockerfile is this repo's: its tag carries that too
-export U4A_ADAPTER_TAG="$U4A_TAG-$(sha1 < "$D/adapter/Dockerfile" | cut -c1-8)"
+export U4A_ADAPTER_TAG; U4A_ADAPTER_TAG="$U4A_TAG-$(sha1 < "$D/adapter/Dockerfile" | cut -c1-8)"
 img uma-as          "$U4A_CTX/services/uma-as/Dockerfile"        "$U4A_CTX"
 img uma-pep         "$U4A_CTX/services/uma-pep/Dockerfile"       "$U4A_CTX"
 img alice-vault-mcp "$U4A_CTX/mcp/alice-vault/Dockerfile"        "$U4A_CTX"
@@ -43,10 +59,8 @@ helm_up cnpg cloudnative-pg "$CNPG_VERSION" cnpg-system --repo https://cloudnati
 deny_internet cnpg-system
 
 step "Alice's IdP (alice-identity)"
-K create secret generic kc-secrets -n alice-identity \
-  --from-literal=KC_BOOTSTRAP_ADMIN_USERNAME=admin \
-  --from-literal=KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret ALICE_KC_ADMIN_PASSWORD)" \
-  --dry-run=client -o yaml | K apply -f - >/dev/null
+secret_apply alice-identity kc-secrets \
+  KC_BOOTSTRAP_ADMIN_USERNAME=admin KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret ALICE_KC_ADMIN_PASSWORD)"
 deploy_keycloak alice-identity "$ALICE_DOMAIN" https-alice "$D/realm-alice.json"
 apply_tmpl "$D/alice-identity.yaml"
 ok "https://idp.$ALICE_DOMAIN/realms/alice"
@@ -64,11 +78,9 @@ K create secret generic uma-pep-signing-key -n meridian --from-file=uma-pep-ed25
 # The RS credential Alice's AS issued Meridian. Each party holds its own copy:
 # a shared Secret would model them as one party.
 RS=$(lab_secret MERIDIAN_RS_CLIENT_SECRET)
-K create secret generic uma-as-config -n alice --from-literal=rs-client-secret="$RS" --dry-run=client -o yaml | K apply -f - >/dev/null
-K create secret generic portal-config -n alice --from-literal=session-secret="$(lab_secret ALICE_PORTAL_SESSION_SECRET)" \
-  --dry-run=client -o yaml | K apply -f - >/dev/null
-K create secret generic meridian-config -n meridian --from-literal=rs-client-secret="$RS" \
-  --from-literal=rs-secrets="{\"alice\": \"$RS\"}" --dry-run=client -o yaml | K apply -f - >/dev/null
+secret_apply alice uma-as-config rs-client-secret="$RS"
+secret_apply alice portal-config session-secret="$(lab_secret ALICE_PORTAL_SESSION_SECRET)"
+secret_apply meridian meridian-config rs-client-secret="$RS" rs-secrets="{\"alice\": \"$RS\"}"
 ok "uma-as, uma-pep keys; RS credential per party"
 
 step "Alice (alice), Meridian (meridian), S&V adapter (sv-u4a)"

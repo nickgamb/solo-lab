@@ -10,7 +10,7 @@ Install: `platform/90-observatory` (`make layer-90`).
 
 ## Seeing it work
 
-[![Solo.io Observatory walkthrough on YouTube](https://img.youtube.com/vi/Y3P4a7HRvVs/maxresdefault.jpg)](https://youtu.be/Y3P4a7HRvVs)
+[![solo-lab Observatory walkthrough on YouTube](https://img.youtube.com/vi/Y3P4a7HRvVs/maxresdefault.jpg)](https://youtu.be/Y3P4a7HRvVs)
 
 A three-minute walkthrough of all three tabs, [on YouTube](https://youtu.be/Y3P4a7HRvVs).
 
@@ -115,6 +115,9 @@ builder, and the directory sync window. See
 - **Directory sync, Canvas:** the IdPs in chain order on the left (the
   primary is read, the failovers are written), S&V's profile on the right.
   Each IdP lists the attributes its directory has; wires pair them with S&V's.
+  Each IdP's **Directory · Edit** sets its type (`scim`, `auth0`,
+  `keycloak`), URL, scopes, audience (Auth0) and credentials (write-only,
+  written to Secret `directory-<idp>`); **Remove** stops syncing it.
 
   ![Directory sync canvas](images/observatory-directory-sync-canvas.jpg)
 
@@ -169,7 +172,8 @@ The browser gets everything over one Server-Sent Events stream (`/api/stream`:
 - The server runs as ServiceAccount `observatory` with ClusterRole
   `observatory-read`: read the lab's resources (no Secrets), and impersonate
   exactly one identity.
-- Every write (Apply, rule edits, secrets, outages) is made by impersonating
+- Every write (Apply, rule edits, secrets, outages, directory sync runs and
+  directory tests) is made by impersonating
   user `observatory:admin` in group `observatory:observatory-admins`, with the
   signed-in person's name as the extra `observatory-user`. RBAC names all
   three (`platform/90-observatory/rbac.yaml`), so no request can make the

@@ -1,0 +1,4 @@
+# Not in the image: keeps the build context, and the content tag computed
+# from it (scripts/lib.sh src_hash), to what the Dockerfile copies.
+README.md
+build.sh

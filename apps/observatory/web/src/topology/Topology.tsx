@@ -276,7 +276,7 @@ function Canvas({ lab, focus, onFocused }: { lab: Lab; focus?: string; onFocused
         <div className="seg">
           {LENSES.map(l => <button key={l.id} className={lens === l.id ? 'on' : ''} title={l.hint} onClick={() => setLens(l.id)}>{l.label}</button>)}
         </div>
-        <input className="field search" placeholder="Find a workload…" value={query} onChange={e => setQuery(e.target.value)} />
+        <input className="field search" placeholder="Find a workload…" aria-label="Find a workload" value={query} onChange={e => setQuery(e.target.value)} />
       </div>
       <div className="rail">
         <div className="label">Solo products</div>
@@ -360,12 +360,13 @@ function WireInfo({ lab, wire, at, names, rate }: { lab: Lab; wire?: Placed['wir
 function usePulses(lab: Lab) {
   const [pulses, setPulses] = useState<Record<string, { id: string; bad: boolean; at: number }[]>>({})
   const buf = useRef<Record<string, { id: string; bad: boolean; at: number }[]>>({})
-  useEffect(() => lab.onTraffic((t: Traffic) => {
+  const { onTraffic } = lab
+  useEffect(() => onTraffic((t: Traffic) => {
     const hops = t.via && t.source && t.target ? [`${t.source}>${t.via}`, `${t.via}>${t.target}`]
       : t.source && t.target ? [`${t.source}>${t.target}`] : t.via && t.target ? [`${t.via}>${t.target}`] : []
     const bad = t.outcome === 'error' || t.outcome === 'denied'
     for (const h of hops) (buf.current[h] ??= []).push({ id: t.id + h, bad, at: Date.now() })
-  }), [lab])
+  }), [onTraffic])
   useEffect(() => {
     const iv = setInterval(() => {
       const now = Date.now()

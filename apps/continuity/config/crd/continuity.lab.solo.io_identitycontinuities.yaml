@@ -81,8 +81,10 @@ spec:
                       realm:
                         type: string
                       url:
-                        description: In-cluster base URL of Keycloak (admin API and
-                          token endpoint).
+                        description: |-
+                          In-cluster base URL of Keycloak (admin API and token endpoint): a
+                          cluster Service, e.g. http://keycloak.sv-identity.svc.
+                        pattern: ^https?://[a-z0-9.-]+\.svc(\.cluster\.local)?(:[0-9]+)?/?$
                         type: string
                     required:
                     - credentialsRef
@@ -221,15 +223,17 @@ spec:
                     - name
                     type: object
                   schedule:
-                    description: Standard cron, in UTC (e.g. "0 2 * * *" daily at
-                      02:00).
-                    minLength: 9
+                    description: |-
+                      Standard cron, in UTC (e.g. "0 2 * * *" daily at 02:00). Empty only
+                      while suspended.
                     type: string
                   suspend:
                     type: boolean
-                required:
-                - schedule
                 type: object
+                x-kubernetes-validations:
+                - message: a schedule, unless suspended
+                  rule: (has(self.suspend) && self.suspend) || (has(self.schedule)
+                    && size(self.schedule) > 0)
               tiers:
                 description: 'Ordered: the first eligible, healthy tier is active.'
                 items:

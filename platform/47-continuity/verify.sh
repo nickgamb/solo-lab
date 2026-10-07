@@ -10,7 +10,8 @@ need_cluster
 NS=sv-identity IC=sterling-vance BOB_ID=5b0b0000-0000-4000-8000-000000000b0b
 T=keycloak TNS=sv-workforce   # S&V's own IdP, cut by a DENY in its namespace
 CA=(--cacert "$LAB_CA_DIR/ca.crt")
-BODY=$(mktemp) JAR=$(mktemp)
+TMPD=$(umask 077; mktemp -d); on_exit "rm -rf $TMPD"   # every temp file, gone on exit
+BODY=$TMPD/body JAR=$TMPD/jar
 pass=0 fail=0 skip=0
 res() { if [ "$1" = ok ]; then ok "$2"; pass=$((pass+1)); else warn "$2"; echo "      got: ${3:0:300}"; fail=$((fail+1)); fi; }
 expect() { echo "$3" | grep -qE "$1" && res ok "$2" || res no "$2" "$3"; }
@@ -25,14 +26,19 @@ within() {  # within <seconds> <cmd...>: "<n>s" once cmd succeeds, else "timeout
   echo "timeout"
 }
 is_active() { [ "$(active)" = "$1" ]; }
-events() { K get events -n "$NS" --field-selector "involvedObject.name=$IC,reason=$1" -o name | wc -l | tr -d ' '; }
+# events <reason> <since, epoch seconds>: how many were recorded since then
+# (counted by time, not before/after totals: events expire after an hour)
+events() {
+  K get events -n "$NS" --field-selector "involvedObject.name=$IC,reason=$1" -o json \
+    | jq --argjson s "$2" '[.items[] | (.eventTime // .firstTimestamp) | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 | select(. >= $s)] | length'
+}
 # Where a fresh browser sign-in to kagent lands: S&V's own form, or the
 # first URL off idp.sterling.lab (an upstream IdP).
 login_lands() {
   local url="https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/auth?client_id=kagent&response_type=code&scope=openid&redirect_uri=https%3A%2F%2Fkagent.$SV_DOMAIN%2Foauth2%2Fredirect&code_challenge=vErIfYvErIfYvErIfYvErIfYvErIfYvErIfYvErIf00&code_challenge_method=S256"
-  local out loc i
+  local out loc
   : > "$JAR"
-  for i in 1 2 3 4; do
+  for _ in 1 2 3 4; do
     out=$(curl -s "${CA[@]}" -b "$JAR" -c "$JAR" -D - -o "$BODY" "$url"); loc=$(echo "$out" | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r')
     if [ -z "$loc" ]; then grep -q 'kc-form-login' "$BODY" && echo "S&V login form" || echo "$out" | head -1; return; fi
     case "$loc" in "https://idp.$SV_DOMAIN/"*) url=$loc ;; *) echo "$loc"; return ;; esac
@@ -44,7 +50,7 @@ lands_on_form() { [ "$(login_lands)" = "S&V login form" ]; }
 lp=$(free_port); port_forward "$NS" keycloak "$lp" 80
 KC="http://127.0.0.1:$lp"
 kcadm() {
-  local t; t=$(printf 'grant_type=client_credentials&client_id=continuity-controller&client_secret=%s' "$(lab_secret SV_CONTINUITY_CLIENT_SECRET)" \
+  local t; t=$(printf 'grant_type=client_credentials&client_id=continuity-controller&client_secret=%s' "$(lab_secret_get SV_CONTINUITY_CLIENT_SECRET)" \
     | curl -s "$KC/realms/sterling-vance/protocol/openid-connect/token" --data @- | jq -r .access_token)
   with_bearer "$t" curl -s "$KC/admin/realms/sterling-vance$1"
 }
@@ -60,12 +66,17 @@ idp_gone() { ! kcadm /identity-provider/instances | jq -e --arg t "$1" 'map(.ali
 UP=$(idc | jq -r --arg tld ".$LAB_TLD" '[.spec.tiers[] | select(.type=="oidc" and ((.oidc.issuer | sub("^https://"; "") | split("/")[0] | endswith($tld)) | not))][0].name // empty')
 LOCAL=$(idc | jq -r '[.spec.tiers[] | select(.type=="local")][0].name // empty')
 UP_ISSUER=$(idc | jq -r --arg t "$UP" '.spec.tiers[] | select(.name==$t) | .oidc.issuer // empty')
-UP_AUTHZ=$([ -n "$UP_ISSUER" ] && curl -s --max-time 10 "${UP_ISSUER%/}/.well-known/openid-configuration" | jq -r '.authorization_endpoint // empty')
+# its discovery, from this host: an upstream on the internet that doesn't
+# answer is a failed check below, not the end of the run
+UP_AUTHZ=""
+if [ -n "$UP_ISSUER" ]; then
+  UP_AUTHZ=$(curl -sf --max-time 10 "${UP_ISSUER%/}/.well-known/openid-configuration" | jq -r '.authorization_endpoint // empty' 2>/dev/null) || UP_AUTHZ=""
+fi
 has_up() { [ -n "$UP" ]; }
 # partition <tier> <namespace> [serviceentry]: the kill switch. With a
-# ServiceEntry it cuts only that upstream at S&V's egress. Without one (the
-# in-lab scratch tier) it denies everything into <namespace> while the check
-# runs, Ledgerline's own sign-ins included: there is no S&V-only path to cut.
+# ServiceEntry it cuts only that upstream at S&V's egress. Without one (an
+# in-lab IdP, S&V's own Keycloak) it denies everything into its namespace
+# while the check runs.
 partition() {
   local target=""; [ -n "${3:-}" ] && target="targetRefs: [{group: networking.istio.io, kind: ServiceEntry, name: $3}]"
   K apply -f - >/dev/null <<YAML
@@ -84,7 +95,8 @@ cleanup() {
   heal "$T" "$TNS"; [ -n "$UP" ] && heal "$UP" sv-egress
   K patch idc "$IC" -n "$NS" --type merge -p "{\"spec\": $ORIG}" >/dev/null 2>&1
   K delete job -n "$NS" -l continuity.lab.solo.io/verify=true --ignore-not-found >/dev/null
-  rm -f "$BODY" "$JAR"; kill "$(jobs -p)" 2>/dev/null
+  # shellcheck disable=SC2046  # one pid per word
+  kill $(jobs -p) 2>/dev/null
 }
 on_exit cleanup
 
@@ -99,6 +111,7 @@ first=$(idc | jq -r '[.status.tiers[] | select(.configured and .healthy)][0].nam
 expect "^${first:-none}\$" "the first configured, healthy tier is active (${first:-none})" "$(active)"
 expect "^$LOCAL\$" "the chain ends with the broker's break-glass accounts" "$(idc | jq -r '.spec.tiers[-1] | select(.type=="local") | .name')"
 if has_up; then
+  expect '^https://' "$UP discovery answers from this host (${UP_ISSUER%/})" "${UP_AUTHZ:-no answer from ${UP_ISSUER%/}/.well-known/openid-configuration}"
   expect '(Healthy|NotConfigured.*probe: Healthy)' "$UP upstream answers discovery + JWKS from S&V" "$(tier "$UP" reason): $(tier "$UP" message)"
 else
   skipped "no IdP on the internet in the chain: set one's issuer and client (e.g. AUTH0_*) in .env and re-run make layer-47"
@@ -114,22 +127,23 @@ expect '^[0-9]+s$' "$T becomes active" "$(within 20 is_active "$T")"
 expect "^$T\$" "broker redirector -> $T" "$(redirector)"
 expect "^https://login\.$SV_DOMAIN/realms/workforce/protocol/openid-connect/auth\?.*broker%2F$T%2Fendpoint" \
   "browser sign-in goes straight to S&V's own Keycloak, back to /broker/$T/endpoint" "$(login_lands)"
-tok=$(sso_token bob bob-demo | jq -r .access_token)
+tok=$(sso_token bob bob-demo | jq -r '.access_token // empty') || tok=""   # no token: the check below fails
 expect "^$BOB_ID $T\$" "Bob signs in there: his S&V user, session from $T" \
   "$(echo "$tok" | jq -rR 'split(".")[1] | gsub("-";"+") | gsub("_";"/") | @base64d | fromjson | "\(.sub) \(.idp)"' 2>/dev/null)"
 unset tok
 
 step "Kill switch: S&V's own Keycloak off the network (DENY policy in $TNS)"
-fo=$(events FailoverActivated) fb=$(events Failback)
+cut_at=$(date -u +%s)
 partition "$T" "$TNS"
 expect '^[0-9]+s$' "probes see it: fails over to $LOCAL" "$(within 25 is_active "$LOCAL")"
 expect '^false' "IdP unhealthy" "$(tier "$T" healthy) $(tier "$T" reason)"
 expect '^none$' "redirector cleared" "$(redirector)"
 expect '^S&V login form$' "browser sign-in shows the broker's own form (break-glass)" "$(login_lands)"
-expect "^$((fo+1))\$" "Event FailoverActivated" "$(events FailoverActivated)"
+expect "^1\$" "Event FailoverActivated" "$(events FailoverActivated "$cut_at")"
+healed_at=$(date -u +%s)
 heal "$T" "$TNS"
 expect '^[0-9]+s$' "healed: fails back to $T (Automatic)" "$(within 35 is_active "$T")"
-expect "^$((fb+1))\$" "Event Failback" "$(events Failback)"
+expect "^1\$" "Event Failback" "$(events Failback "$healed_at")"
 
 step "Rules take effect live"
 K patch idc "$IC" -n "$NS" --type merge -p '{"spec":{"failback":"Manual"}}' >/dev/null
@@ -149,18 +163,22 @@ expect '^[0-9]+s$' "rule removed: back to $T" "$(within 35 is_active "$T")"
 
 step "Directory sync: the primary IdP into S&V's profile, out to the failovers"
 # On the IdPs as installed: S&V's own Keycloak (keycloak) has a directory.
-# department is added to S&V's profile and paired with keycloak's; then the
-# sync writes it there as a failover, and reads it from there as the primary.
+# department is added to S&V's profile and paired with keycloak's only (any
+# other IdP's department mapping is set aside until exit); then the sync
+# writes it there as a failover, and reads it from there as the primary.
 A=department CJ="$IC-profile-sync" W=verify-$(openssl rand -hex 3)
 K patch idc "$IC" -n "$NS" --type merge -p "$(echo "$ORIG" | jq -c --arg a "$A" '{spec: {
   profile: {attributes: ((.profile.attributes // []) + [{name: $a, displayName: "Department"}] | unique_by(.name))},
   sync: {schedule: "0 3 * * *", suspend: true},
-  tiers: (.tiers | map(if .name == "keycloak" then .attributes = ((.attributes // []) + [{attribute: $a, path: $a}] | unique_by(.attribute)) else . end))}}')" >/dev/null
+  tiers: (.tiers | map(if .name == "keycloak" then .attributes = ((.attributes // []) + [{attribute: $a, path: $a}] | unique_by(.attribute))
+    elif .attributes then .attributes |= map(select(.attribute != $a)) else . end))}}')" >/dev/null
 profile_has() { kcadm /users/profile | jq -e --arg a "$A" '.attributes[] | select(.name==$a) | .permissions.edit == ["admin"]'; }
 expect '^[0-9]+s$' "S&V's profile: $A added, users view only" "$(within 20 profile_has)"
 expect '^True$' "ProfileApplied" "$(K get idc "$IC" -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="ProfileApplied")].status}')"
 cj_ready() { K get cronjob "$CJ" -n "$NS" >/dev/null; }
 expect '^[0-9]+s$' "CronJob $CJ" "$(within 15 cj_ready)"
+cj_scheduled() { [ "$(K get cronjob "$CJ" -n "$NS" -o jsonpath='{.spec.schedule}')" = "0 3 * * *" ]; }
+within 15 cj_scheduled >/dev/null   # the controller applies spec.sync on its next pass
 expect '^0 3 \* \* \* Etc/UTC true Forbid IdentityContinuity continuity-sync$' "schedule UTC, suspended, no overlap, owned by the instance, runs as continuity-sync" \
   "$(K get cronjob "$CJ" -n "$NS" -o jsonpath='{.spec.schedule} {.spec.timeZone} {.spec.suspend} {.spec.concurrencyPolicy} {.metadata.ownerReferences[0].kind} {.spec.jobTemplate.spec.template.spec.serviceAccountName}')"
 can() { K auth can-i get "secret/$2" -n "$NS" --as="system:serviceaccount:$NS:$1" 2>/dev/null; }
@@ -176,19 +194,22 @@ as_client() {  # as_client <base> <realm> <client> <secret> <path> [curl args]
     | curl -s "$1/realms/$2/protocol/openid-connect/token" --data @- | jq -r .access_token)
   with_bearer "$t" curl -s "$1/admin/realms/$2$5" "${@:6}"
 }
-broker() { as_client "$KC" sterling-vance continuity-sync "$(lab_secret SV_CONTINUITY_SYNC_CLIENT_SECRET)" "$@"; }
-workforce() { as_client "http://127.0.0.1:$wlp" workforce continuity-directory "$(lab_secret SV_WORKFORCE_DIRECTORY_SECRET)" "$@"; }
+broker() { as_client "$KC" sterling-vance continuity-sync "$(lab_secret_get SV_CONTINUITY_SYNC_CLIENT_SECRET)" "$@"; }
+workforce() { as_client "http://127.0.0.1:$wlp" workforce continuity-directory "$(lab_secret_get SV_WORKFORCE_DIRECTORY_SECRET)" "$@"; }
 dept_of() { "$1" "/users/$2" | jq -r --arg a "$A" '.attributes[$a][0] // ""'; }
 set_dept() {  # set_dept broker|workforce <user id> <value>: the whole representation back
-  local f; f=$(mktemp)  # not stdin: the token goes to curl on stdin
+  local f="$TMPD/user-$1.json"   # not stdin: the token goes to curl on stdin
   "$1" "/users/$2" | jq -c --arg a "$A" --arg v "$3" '.attributes[$a] = (if $v == "" then [] else [$v] end)' >"$f"
   "$1" "/users/$2" -X PUT -H 'content-type: application/json' --data "@$f" -o /dev/null -w '%{http_code}'
   rm -f "$f"
 }
-BOB_WF=$(workforce "/users?username=bob&exact=true" | jq -r '.[0].id')
-on_exit "set_dept broker $BOB_ID '' >/dev/null 2>&1; set_dept workforce $BOB_WF '' >/dev/null 2>&1"
+BOB_WF=$(workforce "/users?username=bob&exact=true" | jq -r '.[0].id // empty') || BOB_WF=""
+[ -n "$BOB_WF" ] || die "no user bob in S&V's own Keycloak (realm workforce), as its directory client sees it"
+# Bob's department as it was, at both, put back on exit
+DEPT_BROKER=$(dept_of broker "$BOB_ID") && DEPT_WF=$(dept_of workforce "$BOB_WF") || die "could not read Bob's $A at the broker and S&V's own Keycloak"
+on_exit "set_dept broker $BOB_ID $(printf %q "$DEPT_BROKER") >/dev/null 2>&1; set_dept workforce $BOB_WF $(printf %q "$DEPT_WF") >/dev/null 2>&1"
 run_sync() {  # run_sync [args]: one run of the CronJob's job, its pod's termination message
-  local j="$CJ-verify-$(openssl rand -hex 3)"
+  local j; j="$CJ-verify-$(openssl rand -hex 3)"
   K get cronjob "$CJ" -n "$NS" -o json | jq --arg n "$j" --argjson extra "$(jq -nc '$ARGS.positional' --args -- "$@")" '{apiVersion: "batch/v1", kind: "Job",
     metadata: {name: $n, labels: (.spec.jobTemplate.metadata.labels + {"continuity.lab.solo.io/verify": "true"})},
     spec: (.spec.jobTemplate.spec | .template.spec.containers[0].args += $extra)}' | K apply -n "$NS" -f - >/dev/null
@@ -256,4 +277,4 @@ else
   skipped "brokered sign-in via the upstream: set its client credentials in .env and re-run make layer-47"
 fi
 
-echo; [ $fail -eq 0 ] && ok "continuity: $pass/$((pass+fail)) checks passed${skip:+, $skip skipped}" || die "continuity: $fail of $((pass+fail)) checks failed"
+echo; [ $fail -eq 0 ] && ok "continuity: $pass/$((pass+fail)) checks passed$([ "$skip" -eq 0 ] || echo ", $skip skipped")" || die "continuity: $fail of $((pass+fail)) checks failed"

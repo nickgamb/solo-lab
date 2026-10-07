@@ -87,6 +87,11 @@ spec:
 # Kiali: the edge (after its sign-in) on the UI port, Prometheus on metrics.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
+metadata: {name: default-deny, namespace: kiali}
+spec: {}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
 metadata: {name: kiali-callers, namespace: kiali}
 spec:
   selector: {matchLabels: {app.kubernetes.io/name: kiali}}

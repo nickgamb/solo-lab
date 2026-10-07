@@ -301,7 +301,7 @@ func TestRASLegRelaysClientAuthAndLogs(t *testing.T) {
 	jag := f.mint()
 	at := signRS(t, f.rsa, map[string]any{"alg": "RS256", "kid": "r1", "typ": "at+jwt"},
 		map[string]any{"iss": rasIssue, "sub": "bob-at-ras", "aud": "ledgerline-research", "client_id": "sv-at-ras", "jti": "at-1", "scope": "research:read"})
-	assertion := signRS(t, f.rsa, map[string]any{"alg": "RS256", "kid": "c1"}, map[string]any{"iss": "sv-at-ras", "sub": "sv-at-ras", "aud": "https://ras.example/token", "jti": "ca-1"})
+	assertion := signRS(t, f.rsa, map[string]any{"alg": "RS256", "kid": "c1"}, clientAssertion(nil))
 	var got url.Values
 	ras := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
@@ -357,6 +357,9 @@ func TestOnlyThisConnectionsRequestIsRelayed(t *testing.T) {
 		"another audience":     func(f url.Values) { f.Set("audience", "https://elsewhere.example") },
 		"no audience":          func(f url.Values) { f.Del("audience") },
 		"a scope not allowed":  func(f url.Values) { f.Set("scope", "openid admin") },
+		"a repeated audience":  func(f url.Values) { f.Add("audience", "https://elsewhere.example") },
+		"a repeated scope":     func(f url.Values) { f.Add("scope", "admin") },
+		"a repeated subject":   func(f url.Values) { f.Add("subject_token", idToken(issuer, "u")) },
 	}
 	for name, change := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -376,6 +379,7 @@ func TestIDJAGMustMatchSubjectClientAndLifetime(t *testing.T) {
 		"another client_id": func(c map[string]any) { c["client_id"] = "someone-else" },
 		"too long-lived":    func(c map[string]any) { c["exp"] = now.Add(time.Hour).Unix() },
 		"no iat":            func(c map[string]any) { delete(c, "iat") },
+		"a wider scope":     func(c map[string]any) { c["scope"] = "research:read admin" },
 	}
 	for name, change := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -392,6 +396,19 @@ func TestIDJAGMustMatchSubjectClientAndLifetime(t *testing.T) {
 	}
 }
 
+// An IdP's default identity scopes on the ID-JAG are not a wider grant.
+func TestIDJAGIdentityScopesAccepted(t *testing.T) {
+	f := newFakeOP(t)
+	f.mint = func() string {
+		c := idjagClaims()
+		c["scope"] = "email research:read profile"
+		return signRS(t, f.rsa, map[string]any{"alg": "RS256", "kid": "r1", "typ": typIDJAG}, c)
+	}
+	if w := post(newRelay([]*op{opOf(f, "gluu", issuer)}, "").routes(), "/op/token", idjagRequest(idToken(issuer, "t")), false); w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+}
+
 func TestRASLegOnlyJWTGrant(t *testing.T) {
 	called := false
 	ras := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
@@ -399,5 +416,77 @@ func TestRASLegOnlyJWTGrant(t *testing.T) {
 	w := post(newRelay(nil, ras.URL).routes(), "/ras/token", url.Values{"grant_type": {"client_credentials"}}, false)
 	if w.Code != http.StatusBadRequest || called {
 		t.Fatalf("status %d, forwarded %v", w.Code, called)
+	}
+	w = post(newRelay(nil, ras.URL).routes(), "/ras/token", url.Values{"grant_type": {jwtBearer}, "assertion": {"a.b.c", "d.e.f"}}, false)
+	if w.Code != http.StatusBadRequest || called {
+		t.Fatalf("repeated assertion: status %d, forwarded %v", w.Code, called)
+	}
+}
+
+// clientAssertion is S&V's client assertion at the resource AS, edited by change.
+func clientAssertion(change func(map[string]any)) map[string]any {
+	c := map[string]any{"iss": "sv-at-ras", "sub": "sv-at-ras", "aud": rasIssue, "jti": "ca-1", "exp": now.Add(time.Minute).Unix()}
+	if change != nil {
+		change(c)
+	}
+	return c
+}
+
+func TestRASLegChecksTheClientAssertion(t *testing.T) {
+	f := newFakeOP(t)
+	jag := f.mint()
+	calls := 0
+	ras := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "x", "token_type": "Bearer"})
+	}))
+	defer ras.Close()
+	req := func(c map[string]any, edit func(url.Values)) url.Values {
+		v := url.Values{"grant_type": {jwtBearer}, "assertion": {jag}, "client_assertion_type": {assertionJWT},
+			"client_assertion": {signRS(t, f.rsa, map[string]any{"alg": "RS256", "kid": "c1"}, c)}, "scope": {"research:read"}}
+		if edit != nil {
+			edit(v)
+		}
+		return v
+	}
+	cases := map[string]url.Values{
+		"another issuer":      req(clientAssertion(func(c map[string]any) { c["iss"] = "mallory" }), nil),
+		"another subject":     req(clientAssertion(func(c map[string]any) { c["sub"] = "mallory" }), nil),
+		"another audience":    req(clientAssertion(func(c map[string]any) { c["aud"] = "https://elsewhere.example" }), nil),
+		"no exp":              req(clientAssertion(func(c map[string]any) { delete(c, "exp") }), nil),
+		"expired":             req(clientAssertion(func(c map[string]any) { c["exp"] = now.Add(-time.Minute).Unix() }), nil),
+		"too long-lived":      req(clientAssertion(func(c map[string]any) { c["exp"] = now.Add(time.Hour).Unix() }), nil),
+		"no jti":              req(clientAssertion(func(c map[string]any) { delete(c, "jti") }), nil),
+		"another client_id":   req(clientAssertion(nil), func(v url.Values) { v.Set("client_id", "mallory") }),
+		"a scope not allowed": req(clientAssertion(nil), func(v url.Values) { v.Set("scope", "research:read admin") }),
+		"no client assertion": req(clientAssertion(nil), func(v url.Values) { v.Del("client_assertion") }),
+	}
+	for name, form := range cases {
+		t.Run(name, func(t *testing.T) {
+			if w := post(newRelay(nil, ras.URL).routes(), "/ras/token", form, false); w.Code != http.StatusBadRequest || calls != 0 {
+				t.Fatalf("status %d, forwarded %d", w.Code, calls)
+			}
+		})
+	}
+	if w := post(newRelay(nil, ras.URL).routes(), "/ras/token", req(clientAssertion(nil), nil), true); w.Code != http.StatusBadRequest || calls != 0 {
+		t.Fatalf("client authentication by header: status %d, forwarded %d", w.Code, calls)
+	}
+	// the token endpoint as aud is the AS too; a jti is used once
+	x := newRelay(nil, ras.URL)
+	ok := req(clientAssertion(func(c map[string]any) { c["aud"] = ras.URL }), nil)
+	if w := post(x.routes(), "/ras/token", ok, false); w.Code != http.StatusOK || calls != 1 {
+		t.Fatalf("valid: status %d, forwarded %d", w.Code, calls)
+	}
+	if w := post(x.routes(), "/ras/token", ok, false); w.Code != http.StatusBadRequest || calls != 1 {
+		t.Fatalf("replayed: status %d, forwarded %d", w.Code, calls)
+	}
+}
+
+func TestOversizeBodyRefused(t *testing.T) {
+	f := newFakeOP(t)
+	req := idjagRequest(idToken(issuer, "t"))
+	req.Set("pad", strings.Repeat("x", maxBody))
+	if w := post(newRelay([]*op{opOf(f, "gluu", issuer)}, "").routes(), "/op/token", req, false); w.Code != http.StatusRequestEntityTooLarge || f.form != nil {
+		t.Fatalf("status %d, reached the IdP %v", w.Code, f.form != nil)
 	}
 }

@@ -17,11 +17,19 @@ cr.agentgateway.dev=https://cr.agentgateway.dev
 "
 mirror_name() { echo "lab-mirror-$(echo "$1" | tr '.' '-')"; }
 
-step "Preflight"
-"$LAB_ROOT/scripts/preflight.sh"
+if [ "${LAB_PREFLIGHT_DONE:-}" != 1 ]; then   # make up has run it already
+  step "Preflight"
+  "$LAB_ROOT/scripts/preflight.sh"
+fi
 
 step "containerd registry config (.lab/certs.d)"
-rm -rf "$LAB_STATE/certs.d"; mkdir -p "$LAB_STATE/certs.d"
+# A running cluster's nodes bind-mount this directory: its files are rewritten
+# in place, never the directory itself. Stale entries go only while no
+# cluster has it mounted.
+mkdir -p "$LAB_STATE/certs.d"
+if ! kind get clusters 2>/dev/null | grep -qx "$LAB_NAME"; then
+  find "$LAB_STATE/certs.d" -mindepth 1 -delete
+fi
 for m in $MIRRORS; do
   host=${m%%=*}; up=${m#*=}; name=$(mirror_name "$host")
   mkdir -p "$LAB_STATE/certs.d/$host"
@@ -35,7 +43,7 @@ mkdir -p "$LAB_STATE/certs.d/localhost:$LAB_REGISTRY_PORT"
 cat > "$LAB_STATE/certs.d/localhost:$LAB_REGISTRY_PORT/hosts.toml" <<EOF
 [host."http://lab-registry:5000"]
 EOF
-ok "$(echo $MIRRORS | wc -w | tr -d ' ') mirrors + localhost:$LAB_REGISTRY_PORT"
+ok "$(echo "$MIRRORS" | wc -w | tr -d ' ') mirrors + localhost:$LAB_REGISTRY_PORT"
 
 step "kind cluster $LAB_NAME ($KIND_NODE_IMAGE, 1 cp + $KIND_WORKERS workers)"
 if kind get clusters 2>/dev/null | grep -qx "$LAB_NAME"; then
@@ -60,7 +68,6 @@ else
   kind create cluster --config "$LAB_STATE/kind.yaml" --wait 120s
   ok "created"
 fi
-kubectl config use-context "$KCTX" >/dev/null
 
 step "Registry caches (docker network: kind)"
 for m in $MIRRORS; do
@@ -98,14 +105,19 @@ EOF
 ok "caches up; push your own images to localhost:$LAB_REGISTRY_PORT"
 
 step "cloud-provider-kind (LoadBalancer IPs on the kind network)"
+cpk="registry.k8s.io/cloud-provider-kind/cloud-controller-manager:$CLOUD_PROVIDER_KIND_VERSION@$CLOUD_PROVIDER_KIND_DIGEST"
+# a container from another pin is replaced
+if [ -n "$(docker ps -aq -f name='^lab-cloud-provider-kind$')" ] \
+   && [ "$(docker inspect -f '{{.Config.Image}}' lab-cloud-provider-kind)" != "$cpk" ]; then
+  docker rm -f lab-cloud-provider-kind >/dev/null
+fi
 if [ -z "$(docker ps -aq -f name='^lab-cloud-provider-kind$')" ]; then
   docker run -d --restart=always --name lab-cloud-provider-kind --network kind \
-    -v "${LAB_DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock" \
-    "registry.k8s.io/cloud-provider-kind/cloud-controller-manager:$CLOUD_PROVIDER_KIND_VERSION" >/dev/null
+    -v "${LAB_DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock" "$cpk" >/dev/null
 else
   docker start lab-cloud-provider-kind >/dev/null
 fi
-ok "running"
+ok "running ($CLOUD_PROVIDER_KIND_VERSION)"
 
 step "Cluster ready"
 K get nodes -L topology.kubernetes.io/zone

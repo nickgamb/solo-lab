@@ -219,7 +219,8 @@
       "publicClient": false,
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": false
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false
     },
     {
       "clientId": "mcp-waypoint",
@@ -257,7 +258,8 @@
             "id.token.claim": "false"
           }
         }
-      ]
+      ],
+      "fullScopeAllowed": false
     },
     {
       "clientId": "bob-workspace",
@@ -267,7 +269,8 @@
       "bearerOnly": true,
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": false
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false
     },
     {
       "clientId": "${LEDGERLINE_AS_ISSUER}",
@@ -278,7 +281,8 @@
       "bearerOnly": true,
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": false
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false
     },
     {
       "clientId": "ledgerline",
@@ -333,6 +337,19 @@
         "roles",
         "web-origins",
         "acr"
+      ],
+      "fullScopeAllowed": false,
+      "protocolMappers": [
+        {
+          "name": "aud-agentregistry",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "agentregistry",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
       ]
     },
     {
@@ -396,7 +413,8 @@
       "serviceAccountsEnabled": true,
       "attributes": {
         "access.token.lifespan": "120"
-      }
+      },
+      "fullScopeAllowed": false
     },
     {
       "clientId": "continuity-sync",
@@ -409,7 +427,8 @@
       "serviceAccountsEnabled": true,
       "attributes": {
         "access.token.lifespan": "120"
-      }
+      },
+      "fullScopeAllowed": false
     },
     {
       "clientId": "observatory",
@@ -419,7 +438,8 @@
       "secret": "${SV_OBSERVATORY_CLIENT_SECRET}",
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": true
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": false
     }
   ],
   "browserFlow": "continuity-browser",
@@ -1298,6 +1318,24 @@
       {
         "name": "local-only",
         "description": "Signs in with S&V's own account only: never linked to an upstream IdP (break-glass and platform admins)"
+      }
+    ]
+  },
+  "clientScopeMappings": {
+    "realm-management": [
+      {
+        "client": "continuity-controller",
+        "roles": [
+          "manage-identity-providers",
+          "manage-realm"
+        ]
+      },
+      {
+        "client": "continuity-sync",
+        "roles": [
+          "view-users",
+          "manage-users"
+        ]
       }
     ]
   }

@@ -25,8 +25,7 @@ if [ "$ED" = enterprise ]; then
   apply_tmpl "$D/enterprise.yaml"
   ok "https://registry.${SV_DOMAIN} (its own sign-in: S&V Keycloak, client agentregistry-ui)"
 else
-  K create secret generic agentregistry-oidc -n agentregistry \
-    --from-literal=client-secret="$(lab_secret SV_AGENTREGISTRY_CLIENT_SECRET)" --dry-run=client -o yaml | K apply -f - >/dev/null
+  secret_apply agentregistry agentregistry-oidc client-secret="$(lab_secret SV_AGENTREGISTRY_CLIENT_SECRET)"
   apply_tmpl "$D/edge-sso.yaml"
   ok "https://registry.${SV_DOMAIN} (S&V SSO at the edge)"
 fi

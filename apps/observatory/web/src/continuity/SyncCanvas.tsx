@@ -117,6 +117,7 @@ function Canvas({ ic, spec, schemas, pending, positions, onMap }: Props) {
         <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="var(--border)" />
         <Controls showInteractive={false} />
       </ReactFlow>
+      {!legend.length && <div className="cm-empty subtle">Add an IdP in the rule builder, then wire its attributes here.</div>}
     </div>
   )
 }

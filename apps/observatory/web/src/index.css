@@ -43,6 +43,10 @@
   --warn: #ffb547;
   --bad: var(--solo-red);
   --info: #6cb6ff;
+  /* status colours as text on their own tint (the banner) */
+  --ok-text: var(--ok);
+  --warn-text: var(--warn);
+  --bad-text: var(--bad);
   --fog: rgba(18, 1, 42, 0.72);
 
   --k-http: #a9b3d6;
@@ -75,6 +79,10 @@
   --ok: #0f9d63;
   --warn: #c77800;
   --info: #1f6fd1;
+  /* darker, for at least 4.5:1 on their tint */
+  --ok-text: #076b3f;
+  --warn-text: #7a4700;
+  --bad-text: #9c0046;
   --fog: rgba(251, 247, 255, 0.78);
   --k-http: #5c6178;
   --k-mcp: #7b33ea;
@@ -161,6 +169,8 @@ select.field option { background: var(--surface-solid); }
 .row { display: flex; align-items: center; gap: 8px; }
 .grow { flex: 1; min-width: 0; }
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.link { border: 0; background: transparent; padding: 0; color: inherit; cursor: pointer; text-align: inherit; }
+button.link:hover { text-decoration: underline; }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 13px; }
 .kv > dt { color: var(--text-subtle); }
 .kv > dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }

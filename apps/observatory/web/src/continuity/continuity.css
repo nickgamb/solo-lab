@@ -5,10 +5,10 @@
   font: 500 15px/1.2 var(--font-mono); letter-spacing: .06em;
   border-bottom: 1px solid var(--border-soft); transition: background .4s ease;
 }
-.banner.ok { background: color-mix(in hsl, var(--ok) 12%, transparent); color: var(--ok); }
-.banner.bad { background: color-mix(in hsl, var(--bad) 16%, transparent); color: var(--bad); }
+.banner.ok { background: color-mix(in hsl, var(--ok) 12%, transparent); color: var(--ok-text); }
+.banner.bad { background: color-mix(in hsl, var(--bad) 16%, transparent); color: var(--bad-text); }
 .banner .since { color: var(--text-subtle); letter-spacing: 0; font-size: 12.5px; }
-.banner.warn { background: color-mix(in hsl, var(--warn) 16%, transparent); color: var(--warn); }
+.banner.warn { background: color-mix(in hsl, var(--warn) 16%, transparent); color: var(--warn-text); }
 .banner .bhead { font-weight: 600; font-size: 17px; }
 .banner .why { color: var(--text); letter-spacing: 0; font-size: 13px; }
 .banner.p-detecting, .banner.p-failover { animation: alarm 1.6s ease-in-out infinite; }
@@ -61,7 +61,7 @@
   font: 700 12px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; box-shadow: 0 0 0 5px color-mix(in hsl, var(--bad) 25%, transparent); }
 .ecut span { font-size: 14px; }
 
-/* claims mapping window */
+/* directory sync window */
 .cm-open { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 6px; }
 .cm-overlay { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; background: color-mix(in hsl, var(--bg) 62%, transparent); backdrop-filter: blur(3px); }
 .cm-window { width: 92vw; height: 88vh; display: flex; flex-direction: column; background: var(--surface-solid); border: 1px solid var(--border);
@@ -74,7 +74,8 @@
 .cm-body { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
 .cm-pad { padding: 0 10px 8px; }
 
-.cm-canvas { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.cm-canvas { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.cm-empty { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; z-index: 4; font-size: 14px; }
 .cm-canvas .react-flow { flex: 1; background: transparent; }
 .cm-canvas .react-flow__controls { box-shadow: none; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
 .cm-canvas .react-flow__controls-button { background: var(--surface-solid); border-color: var(--border-soft); fill: var(--text-muted); }
@@ -145,7 +146,7 @@
 .cm-cron { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); }
 .cm-cron .mono { font-size: 13px; color: var(--accent-2); }
 .cm-test { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.cm-test .ok-text { color: var(--ok); }
+.cm-test .ok-text { color: var(--ok-text); }
 .cm-type { font: 500 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .04em; color: var(--text-subtle); padding: 3px 5px; border: 1px solid var(--border-soft); border-radius: 4px; background: transparent; flex: none; }
 button.cm-type { cursor: pointer; }
 button.cm-type:hover { color: var(--text); border-color: var(--border); }

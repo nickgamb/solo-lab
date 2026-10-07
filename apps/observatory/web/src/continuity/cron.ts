@@ -1,5 +1,7 @@
 // A small 5-field cron reader: enough to describe a CronJob schedule and say
-// when it fires next. All times are UTC, as the CronJob's are by default.
+// when it fires next. It accepts what the CronJob's own parser (robfig/cron
+// v3, standard) does, bar @every: the macros, month and weekday names, "?"
+// for "*". All times are UTC, as the CronJob's are by default.
 
 type Cron = {
   minute: Set<number>; hour: Set<number>; dom: Set<number>; month: Set<number>; dow: Set<number>
@@ -10,44 +12,64 @@ const MACROS: Record<string, string> = {
   '@yearly': '0 0 1 1 *', '@annually': '0 0 1 1 *', '@monthly': '0 0 1 * *', '@weekly': '0 0 * * 0',
   '@daily': '0 0 * * *', '@midnight': '0 0 * * *', '@hourly': '0 * * * *',
 }
-const BOUNDS: [number, number][] = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]]
+const BOUNDS: [number, number][] = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 6]]
 const FIELD = ['minute', 'hour', 'day of month', 'month', 'day of week']
 export const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+// names the month and day-of-week fields take, in any case
+const NAMES: (string[] | undefined)[] = [undefined, undefined, undefined, MONTHS.map(m => m.toLowerCase()), DAYS.map(d => d.slice(0, 3).toLowerCase())]
 
-function field(s: string, i: number): Set<number> {
+function value(s: string, i: number): number {
+  const k = NAMES[i]?.indexOf(s.toLowerCase()) ?? -1
+  if (k >= 0) return i === 3 ? k + 1 : k
+  if (!/^\d+$/.test(s)) throw new Error(`${FIELD[i]}: "${s}" is not a number${NAMES[i] ? ' or name' : ''}`)
+  return Number(s)
+}
+
+// One field: a list of "*" or "?", a value, a range, each with an optional
+// step. "*" (or "?") without a step greater than 1 is a star: it doesn't
+// restrict the day (see dayMatches).
+function field(s: string, i: number): { set: Set<number>; star: boolean } {
   const [lo, hi] = BOUNDS[i]
-  const out = new Set<number>()
+  const set = new Set<number>()
+  let star = false
   for (const part of s.split(',')) {
-    const m = /^(\*|\d+(?:-\d+)?)(?:\/(\d+))?$/.exec(part)
-    if (!m) throw new Error(`${FIELD[i]}: "${part}" is not a number, range, list or step`)
-    const step = m[2] === undefined ? 1 : Number(m[2])
-    if (step < 1) throw new Error(`${FIELD[i]}: step must be at least 1`)
+    const [range, stepText, extra] = part.split('/')
+    if (extra !== undefined) throw new Error(`${FIELD[i]}: "${part}" has more than one step`)
+    const step = stepText === undefined ? 1 : /^\d+$/.test(stepText) ? Number(stepText) : NaN
+    if (!(step >= 1)) throw new Error(`${FIELD[i]}: "${part}": the step must be a whole number, at least 1`)
     let a = lo, b = hi
-    if (m[1] !== '*') {
-      const [x, y] = m[1].split('-').map(Number)
+    if (range === '*' || range === '?') {
+      if (step <= 1) star = true
+    } else {
+      const ends = range.split('-')
+      if (ends.length > 2) throw new Error(`${FIELD[i]}: "${part}" is not a value, range, list or step`)
+      a = value(ends[0], i)
       // "5/15" means from 5 to the end, every 15
-      a = x; b = y ?? (m[2] !== undefined ? hi : x)
+      b = ends.length === 2 ? value(ends[1], i) : stepText !== undefined ? hi : a
     }
-    if (a < lo || b > hi || a > b) throw new Error(`${FIELD[i]}: "${part}" is outside ${lo}-${hi}`)
-    for (let v = a; v <= b; v += step) out.add(i === 4 && v === 7 ? 0 : v)
+    if (a < lo || b > hi) throw new Error(`${FIELD[i]}: "${part}" is outside ${lo}-${hi}`)
+    if (a > b) throw new Error(`${FIELD[i]}: "${part}" starts after it ends`)
+    for (let v = a; v <= b; v += step) set.add(v)
   }
-  return out
+  return { set, star }
 }
 
 function parse(expr: string): Cron {
-  const s = MACROS[expr.trim()] ?? expr.trim()
-  const f = s.split(/\s+/)
+  const e = expr.trim()
+  if (e.startsWith('@') && !MACROS[e]) throw new Error(`"${e}" isn't a schedule macro (${Object.keys(MACROS).join(', ')})`)
+  const f = (MACROS[e] ?? e).split(/\s+/)
   if (f.length !== 5 || !f[0]) throw new Error('expected 5 fields: minute hour day-of-month month day-of-week')
   const [minute, hour, dom, month, dow] = f.map((x, i) => field(x, i))
-  return { minute, hour, dom, month, dow, domStar: f[2].startsWith('*'), dowStar: f[4].startsWith('*'), fields: f }
+  return { minute: minute.set, hour: hour.set, dom: dom.set, month: month.set, dow: dow.set, domStar: dom.star, dowStar: dow.star, fields: f }
 }
 
 export function cronError(expr: string): string | undefined {
   try { parse(expr); return undefined } catch (e) { return (e as Error).message }
 }
 
-// Standard cron: when both day fields are restricted, either one matching is enough.
+// Standard cron: when either day field is a star, both must match (the
+// star always does); when both are restricted, either one matching is enough.
 function dayMatches(c: Cron, t: Date) {
   const dom = c.dom.has(t.getUTCDate()), dow = c.dow.has(t.getUTCDay())
   return c.domStar || c.dowStar ? dom && dow : dom || dow
@@ -98,7 +120,7 @@ export function describeCron(expr: string): string {
   if (!c.dowStar) days.push(`on ${list(c.dow, d => DAYS[d])}`)
   let day = days.join(' or ')
   if (!day && NUM.test(ho)) day = 'every day'
-  if (!c.fields[3].startsWith('*') || c.month.size < 12) day += `${day ? ' ' : ''}in ${list(c.month, m => MONTHS[m - 1])}`
+  if (c.month.size < 12) day += `${day ? ' ' : ''}in ${list(c.month, m => MONTHS[m - 1])}`
   const s = `${time}${day ? `, ${day}` : ''}`
   return s[0].toUpperCase() + s.slice(1)
 }
@@ -115,7 +137,7 @@ export function detectPreset(expr: string): Preset {
   const [mi, ho, dom, mo, dow] = f
   if (dom !== '*' || mo !== '*') return { kind: 'custom' }
   if (NUM.test(mi) && NUM.test(ho) && dow === '*') return { kind: 'daily', h: +ho, m: +mi }
-  if (NUM.test(mi) && NUM.test(ho) && NUM.test(dow)) return { kind: 'weekly', d: +dow % 7, h: +ho, m: +mi }
+  if (NUM.test(mi) && NUM.test(ho) && NUM.test(dow)) return { kind: 'weekly', d: +dow, h: +ho, m: +mi }
   if (mi === '0' && dow === '*') {
     const n = ho === '*' ? 1 : STEP.test(ho) ? Number(STEP.exec(ho)![1]) : 0
     if (n >= 1 && n <= 12) return { kind: 'hours', n }

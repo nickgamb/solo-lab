@@ -118,3 +118,59 @@ func TestProfileAttributeTypes(t *testing.T) {
 		t.Errorf("groups %v, department %v", got["groups"], got["department"])
 	}
 }
+
+func TestEnsureProfileRevertsAnnotationDrift(t *testing.T) {
+	// same shape, but unowned and with a hand-set inputType: claimed and put back
+	f := &fakeAdmin{profile: map[string]any{"attributes": []any{map[string]any{
+		"name": "department", "multivalued": false,
+		"permissions": map[string]any{"view": []any{"admin", "user"}, "edit": []any{"admin"}},
+		"validations": map[string]any{},
+		"annotations": map[string]any{"inputType": "textarea"},
+	}}}}
+	c := newFake(t, f)
+	changed, err := c.EnsureProfile(context.Background(), "ns/a", []Attr{{Name: "department", Type: "string"}})
+	if err != nil || !changed || f.puts != 1 {
+		t.Fatalf("changed %v puts %d err %v", changed, f.puts, err)
+	}
+	ann := f.profile["attributes"].([]any)[0].(map[string]any)["annotations"].(map[string]any)
+	if ann[OwnerAnnotation] != "ns/a" || ann["inputType"] != nil {
+		t.Fatalf("annotations %v", ann)
+	}
+}
+
+func TestUpdateUserAppliesToAFreshRead(t *testing.T) {
+	// changed at the broker since the user was listed: kept
+	fresh := map[string]any{"id": "u1", "email": "bob@sterling.lab", "requiredActions": []any{"CONFIGURE_TOTP"},
+		"attributes": map[string]any{"badge": []any{"7"}}}
+	var put map[string]any
+	puts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/token"):
+			json.NewEncoder(w).Encode(map[string]any{"access_token": "t", "expires_in": 300})
+		case r.URL.Path == "/admin/realms/r/users/u1" && r.Method == http.MethodGet:
+			json.NewEncoder(w).Encode(fresh)
+		case r.URL.Path == "/admin/realms/r/users/u1" && r.Method == http.MethodPut:
+			puts++
+			json.NewDecoder(r.Body).Decode(&put)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "r")
+	c.SetCredentials("c", "s")
+	changed, err := c.UpdateUser(context.Background(), "u1", func(u User) bool {
+		u["firstName"] = "Robert"
+		return true
+	})
+	if err != nil || !changed || puts != 1 {
+		t.Fatalf("changed %v puts %d err %v", changed, puts, err)
+	}
+	if put["firstName"] != "Robert" || put["requiredActions"] == nil || put["attributes"].(map[string]any)["badge"] == nil {
+		t.Fatalf("put %v: the fresh representation with the change", put)
+	}
+	if changed, err := c.UpdateUser(context.Background(), "u1", func(User) bool { return false }); err != nil || changed || puts != 1 {
+		t.Fatalf("no change: changed %v puts %d err %v", changed, puts, err)
+	}
+}

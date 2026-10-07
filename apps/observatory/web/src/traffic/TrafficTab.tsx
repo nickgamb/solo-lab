@@ -39,7 +39,7 @@ export function TrafficTab({ lab, onOpenNode }: { lab: Lab; onOpenNode: (id: str
   return (
     <div className="traffic">
       <div className="tbar">
-        <input className="field" placeholder="Filter by user, workload, tool, path…" value={q} onChange={e => setQ(e.target.value)} />
+        <input className="field" placeholder="Filter by user, workload, tool, path…" aria-label="Filter traffic" value={q} onChange={e => setQ(e.target.value)} />
         <div className="seg">
           {KINDS.map(k => <button key={k} className={kinds.has(k) ? 'on' : ''} onClick={() => flip(kinds, k, setKinds)}>{k}</button>)}
         </div>

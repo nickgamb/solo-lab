@@ -1,0 +1,67 @@
+# Static checks on every push and pull request: the Go services, the
+# Observatory web build, and the shell that installs the lab.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [apps/continuity, apps/idtoken-exchange, apps/observatory/server, apps/xaa-relay]
+    defaults:
+      run: {working-directory: ${{ matrix.module }}}
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: ${{ matrix.module }}/go.mod
+        cache-dependency-path: ${{ matrix.module }}/go.sum
+    - run: go vet ./...
+    - run: go test ./...
+    - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run: {working-directory: apps/observatory/web}
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 26
+        cache: npm
+        cache-dependency-path: apps/observatory/web/package-lock.json
+    - run: npm ci
+    - run: npm run lint
+    - run: npm run build
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: bash -n
+      run: |
+        set -e
+        git ls-files -z '*.sh' 'Makefile' | tr '\0' '\n' | grep '\.sh$' | while read -r f; do bash -n "$f"; done
+    - name: shellcheck
+      run: |
+        sudo apt-get update -q && sudo apt-get install -y -q shellcheck
+        git ls-files -z '*.sh' | xargs -0 shellcheck -S warning -x
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: realm and manifest files parse
+      run: |
+        set -e
+        git ls-files '*.json' | grep -v '^apps/observatory/web/' | while read -r f; do python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$f"; done
+        pip3 install -q pyyaml
+        # manifests carry ${VAR} placeholders inside flow mappings; render with
+        # empty values before parsing, the way scripts/lib.sh does
+        git ls-files 'platform/*.yaml' 'demos/*.yaml' | while read -r f; do
+          sed -E 's/\$\{[A-Z][A-Z0-9_]*\}/x/g' "$f" | python3 -c "import yaml,sys; list(yaml.safe_load_all(sys.stdin))" || { echo "$f"; exit 1; }
+        done

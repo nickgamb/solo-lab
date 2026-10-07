@@ -8,6 +8,10 @@ import { describeCron } from './cron'
 export const ATTR_NAME = /^[a-zA-Z][a-zA-Z0-9_.-]*$/
 export const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v))
 export const credentialsName = (tier: string) => `directory-${tier}`
+// keeps password managers from offering to fill or save a credential field
+export const noFill = { autoComplete: 'new-password', 'data-1p-ignore': true, 'data-lpignore': 'true' } as const
+// a directory's URL, as the CRD allows it: https, or plain http to a cluster Service
+export const DIRECTORY_URL = /^(https:\/\/\S+|http:\/\/[a-z0-9.-]+\.svc(\.cluster\.local)?(:[0-9]+)?(\/\S*)?)$/
 
 // JSON with sorted keys, so key order never reads as an edit
 export function stable(v: unknown): string {

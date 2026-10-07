@@ -46,10 +46,21 @@ func (s *Resources) client(r *http.Request) (dynamic.Interface, error) {
 	return dynamic.NewForConfig(cfg)
 }
 
+// credentialResources are the core kinds that carry credentials: never read
+// or written through the editor. A tier's or directory's Secret is written
+// only through the continuity API, which checks the instance refers to it.
+var credentialResources = map[string]bool{"secrets": true}
+
 func (s *Resources) resource(r *http.Request, apiVersion, kind, ns string) (dynamic.ResourceInterface, error) {
+	if kind == "Secret" {
+		return nil, errForbiddenKind
+	}
 	gvr, ok := s.k.GVR(apiVersion, kind)
 	if !ok {
 		return nil, errors.New("unknown kind " + apiVersion + " " + kind)
+	}
+	if gvr.Group == "" && credentialResources[gvr.Resource] {
+		return nil, errForbiddenKind
 	}
 	c, err := s.client(r)
 	if err != nil {
@@ -80,7 +91,9 @@ func (s *Resources) Get(w http.ResponseWriter, r *http.Request) {
 // would store, for the diff view; otherwise it's a server-side apply. The
 // YAML's resourceVersion is kept, so an object changed since it was loaded is
 // a conflict (409), and fields another manager owns are a conflict too.
-// ?force=true (the editor's "apply anyway") drops both checks.
+// ?force=true (the editor's "apply anyway") drops both checks. The query's
+// apiVersion, kind, namespace and name are the object the editor opened: a
+// YAML naming any other is refused.
 func (s *Resources) Apply(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
 	if err != nil {
@@ -88,8 +101,18 @@ func (s *Resources) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var o unstructured.Unstructured
-	if err := yaml.Unmarshal(body, &o.Object); err != nil {
-		http.Error(w, "invalid YAML: "+err.Error(), http.StatusBadRequest)
+	if err := yaml.Unmarshal(body, &o.Object); err != nil || o.Object == nil {
+		http.Error(w, "invalid YAML", http.StatusBadRequest)
+		return
+	}
+	q := r.URL.Query()
+	if q.Get("kind") == "Secret" || o.GetKind() == "Secret" {
+		httpErr(w, errForbiddenKind)
+		return
+	}
+	if q.Get("name") == "" || o.GetAPIVersion() != q.Get("apiVersion") || o.GetKind() != q.Get("kind") ||
+		o.GetNamespace() != q.Get("namespace") || o.GetName() != q.Get("name") {
+		http.Error(w, "the YAML names another object than the one opened", http.StatusBadRequest)
 		return
 	}
 	ri, err := s.resource(r, o.GetAPIVersion(), o.GetKind(), o.GetNamespace())
@@ -149,10 +172,15 @@ func httpErr(w http.ResponseWriter, err error) {
 		}
 		msg = st.Message
 	}
-	if strings.HasPrefix(msg, "unknown kind") {
+	switch {
+	case strings.HasPrefix(msg, "unknown kind"):
 		code = http.StatusBadRequest
+	case errors.Is(err, errForbiddenKind):
+		code = http.StatusForbidden
 	}
 	http.Error(w, msg, code)
 }
+
+var errForbiddenKind = errors.New("this kind carries credentials: not available in the editor")
 
 func ptr[T any](v T) *T { return &v }

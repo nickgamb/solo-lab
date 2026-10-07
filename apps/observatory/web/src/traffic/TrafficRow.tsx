@@ -47,7 +47,7 @@ export const TrafficRow = memo(({ t, names, self, compact, onOpenNode }: {
             {t.tokens?.map((tk, i) => <TokenCard key={tk.fingerprint ?? i} tk={tk} />)}
             <dl className="kv">
               {path.length > 0 && <><dt>path</dt><dd>{path.map((id, i) => (
-                <span key={id + i}>{i > 0 && ' → '}{onOpenNode ? <a onClick={() => onOpenNode(id)}>{nm(id)}</a> : nm(id)}</span>))}</dd></>}
+                <span key={id + i}>{i > 0 && ' → '}{onOpenNode ? <button className="link" onClick={() => onOpenNode(id)}>{nm(id)}</button> : nm(id)}</span>))}</dd></>}
               {t.identity && <><dt>caller identity</dt><dd className="mono small">{t.identity}</dd></>}
               {t.user && <><dt>user</dt><dd className="mono small">{t.user}</dd></>}
               {t.method && <><dt>request</dt><dd className="mono small">{t.method} {t.path}</dd></>}

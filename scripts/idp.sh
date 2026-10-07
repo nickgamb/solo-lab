@@ -19,19 +19,32 @@ SV_CLIENT_AT_LEDGERLINE=sterling-vance-kagent
 
 _idp_var() { local v; v="$(echo "$1" | tr '[:lower:]' '[:upper:]')_$2"; echo "${!v:-}"; }
 
-# idp_discover <issuer>: OpenID configuration, fetched on the host
+# idp_discover <issuer>: OpenID configuration, fetched on the host. A lab
+# issuer (*.<LAB_TLD>) is checked against the lab CA, not the host's store.
 idp_discover() {
-  curl -sf --max-time 15 "${1%/}/.well-known/openid-configuration" \
+  local ca=()
+  idp_internal "$1" && ca=(--cacert "$LAB_CA_DIR/ca.crt")
+  curl -sf --max-time 15 ${ca[@]+"${ca[@]}"} "${1%/}/.well-known/openid-configuration" \
     || die "no OpenID discovery at ${1%/}/.well-known/openid-configuration"
+}
+
+# idp_names: ENTERPRISE_IDP as a list, checked: known IdPs only, each once
+idp_names() {
+  local n seen=" "
+  for n in $(echo "$ENTERPRISE_IDP" | tr ',' ' '); do
+    case " $IDP_UPSTREAMS " in *" $n "*) ;; *) die "ENTERPRISE_IDP: unknown IdP '$n' (known: $IDP_UPSTREAMS, comma-separated, lower case)" ;; esac
+    case "$seen" in *" $n "*) die "ENTERPRISE_IDP: '$n' is listed twice ($ENTERPRISE_IDP)" ;; esac
+    seen="$seen$n "
+  done
+  [ "$seen" != " " ] || die "ENTERPRISE_IDP is empty (one or more of: $IDP_UPSTREAMS)"
+  echo "${seen# }" | sed 's/ $//'
 }
 
 # idp_chain: ENTERPRISE_IDP, checked, without IdPs that have no issuer
 idp_chain() {
-  local n seen=" " out=""
-  for n in $(echo "$ENTERPRISE_IDP" | tr ',' ' '); do
-    case " $IDP_UPSTREAMS " in *" $n "*) ;; *) die "ENTERPRISE_IDP: unknown IdP '$n' (known: $IDP_UPSTREAMS)" ;; esac
-    case "$seen" in *" $n "*) die "ENTERPRISE_IDP: '$n' is listed twice" ;; esac
-    seen="$seen$n "
+  local n out="" names
+  names=$(idp_names) || exit 1
+  for n in $names; do
     if [ -n "$(_idp_var "$n" ISSUER)" ]; then out="$out $n"; fi
   done
   [ -n "$out" ] || die "ENTERPRISE_IDP: no IdP with an issuer ($ENTERPRISE_IDP)"
@@ -113,8 +126,9 @@ xaa_secrets() {
   local n
   for n in $IDP_UPSTREAMS; do
     case " $(idp_xaa_upstreams) " in
-      *" $n "*) [ "$(idp_client_auth "$n")" = client_secret_post ] && K create secret generic "op-$n" -n agentgateway-system \
-                  --from-literal=clientSecret="$(_idp_var "$n" CLIENT_SECRET)" --dry-run=client -o yaml | K apply -f - >/dev/null ;;
+      *" $n "*) if [ "$(idp_client_auth "$n")" = client_secret_post ]; then
+                  secret_apply agentgateway-system "op-$n" clientSecret="$(_idp_var "$n" CLIENT_SECRET)"
+                fi ;;
       *) K delete secret "op-$n" -n agentgateway-system --ignore-not-found >/dev/null ;;
     esac
   done
@@ -231,21 +245,64 @@ YAML
     | while read -r se; do K delete serviceentry "$se" -n ledgerline-egress >/dev/null; done
 }
 
-# prefer_tier <tier>: make <tier> S&V's active IdP for the rest of the calling
-# script (tiers ahead of it in the chain drained, their links kept) and put
-# the chain back on exit. Scripted sign-ins go through S&V's own IdP.
+# prefer_tier <tier>: make <tier> S&V's active IdP: the tiers ahead of it in
+# the chain are drained (their links kept) and it returns once the
+# IdentityContinuity reports <tier> active (IDC_SWITCH_TIMEOUT seconds, 90).
+# restore_tiers undoes exactly that, and runs when the calling script exits
+# however it exits, so the chain is never left drained. Scripted sign-ins go
+# through S&V's own IdP.
+_IDP_DRAINED="" _IDP_BEFORE=""
 prefer_tier() {
-  local cur ahead saved
-  cur=$(K get idc sterling-vance -n sv-identity -o json) || die "no IdentityContinuity sterling-vance"
-  [ "$(echo "$cur" | jq -r '.status.active')" = "$1" ] && return 0
+  local cur patch gen t=${IDC_SWITCH_TIMEOUT:-90} s
+  cur=$(K get idc sterling-vance -n sv-identity -o json) || die "no IdentityContinuity sterling-vance (make layer-47)"
   echo "$cur" | jq -e --arg t "$1" '.spec.tiers | any(.name == $t)' >/dev/null || die "$1 is not in S&V's chain (ENTERPRISE_IDP)"
-  ahead=$(echo "$cur" | jq -c --arg t "$1" '[.spec.tiers | to_entries[] | select(.value.name == $t) | .key][0] as $i
-    | [.spec.tiers | to_entries[] | select(.key < $i) | {op: "add", path: "/spec/tiers/\(.key)/drain", value: true}]')
-  saved=$(mktemp); echo "$cur" | jq -c '{spec: {tiers: .spec.tiers}}' >"$saved"
-  on_exit "K patch idc sterling-vance -n sv-identity --type merge --patch-file $saved >/dev/null 2>&1; rm -f $saved"
-  K patch idc sterling-vance -n sv-identity --type json -p "$ahead" >/dev/null
-  wait_for "S&V signing in through $1" 30 1 sh -c "[ \"\$(kubectl --context $KCTX get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}')\" = $1 ]"
-  step "S&V's active IdP: $1 for these checks (restored on exit)"
+  # the tiers ahead of <tier> not drained already: these are the ones put back
+  _IDP_DRAINED=$(echo "$cur" | jq -r --arg t "$1" '([.spec.tiers[].name] | index($t)) as $i
+    | [.spec.tiers[:$i][] | select(.drain != true) | .name] | join(" ")')
+  _IDP_BEFORE=$(echo "$cur" | jq -r '.status.active // empty')
+  gen=$(echo "$cur" | jq -r '.metadata.generation')
+  if [ -n "$_IDP_DRAINED" ]; then
+    on_exit restore_tiers
+    patch=$(echo "$cur" | jq -c --arg d " $_IDP_DRAINED " '[.spec.tiers | to_entries[] | select(.value.name as $n | $d | contains(" \($n) "))
+      | {op: "test", path: "/spec/tiers/\(.key)/name", value: .value.name}, {op: "add", path: "/spec/tiers/\(.key)/drain", value: true}]')
+    gen=$(K patch idc sterling-vance -n sv-identity --type json -p "$patch" -o jsonpath='{.metadata.generation}') \
+      || die "draining $_IDP_DRAINED failed"
+  fi
+  s=$(date +%s)
+  until idc_settled "$gen" "$1"; do
+    [ $(( $(date +%s) - s )) -lt "$t" ] \
+      || die "S&V did not switch to $1 in ${t}s: $(K get idc sterling-vance -n sv-identity -o json | jq -r --arg t "$1" '.status.tiers[]? | select(.name == $t) | "\(.reason // "") \(.message // "")"')"
+    sleep 1
+  done
+  [ -z "$_IDP_DRAINED" ] || step "S&V's active IdP: $1 for these checks ($_IDP_DRAINED drained until restored)"
+}
+# idc_settled <generation> <idp>: the controller has acted on that spec
+# generation (a status read before then may predate a drain or a restore)
+# and <idp> is active.
+idc_settled() {
+  K get idc sterling-vance -n sv-identity -o json \
+    | jq -e --argjson g "$1" --arg t "$2" '(.status.observedGeneration // 0) >= $g and .status.active == $t' >/dev/null
+}
+# restore_tiers [wait]: put back the tiers prefer_tier drained, by name (the
+# rest of the spec, changed meanwhile or not, is left alone). With wait, until
+# S&V's active IdP is the one from before (a warning if it isn't in time).
+restore_tiers() {
+  local cur patch gen s t=${IDC_SWITCH_TIMEOUT:-90}
+  [ -n "$_IDP_DRAINED" ] || return 0
+  cur=$(K get idc sterling-vance -n sv-identity -o json) || { warn "restore: no IdentityContinuity sterling-vance"; return 1; }
+  patch=$(echo "$cur" | jq -c --arg d " $_IDP_DRAINED " '[.spec.tiers | to_entries[] | select((.value.name as $n | $d | contains(" \($n) ")) and .value.drain == true)
+    | {op: "test", path: "/spec/tiers/\(.key)/name", value: .value.name}, {op: "remove", path: "/spec/tiers/\(.key)/drain"}]')
+  gen=$(echo "$cur" | jq -r '.metadata.generation')
+  if [ "$patch" != "[]" ] && ! gen=$(K patch idc sterling-vance -n sv-identity --type json -p "$patch" -o jsonpath='{.metadata.generation}'); then
+    warn "could not put back $_IDP_DRAINED: kubectl -n sv-identity edit idc sterling-vance, remove their drain"; return 1
+  fi
+  _IDP_DRAINED=""
+  [ "${1:-}" = wait ] && [ -n "$_IDP_BEFORE" ] || return 0
+  s=$(date +%s)
+  until idc_settled "$gen" "$_IDP_BEFORE"; do
+    [ $(( $(date +%s) - s )) -lt "$t" ] || { warn "S&V's active IdP is not back on $_IDP_BEFORE after ${t}s"; return 0; }
+    sleep 1
+  done
 }
 
 # ledgerline_signin <user> <pass>: an S&V employee signs in to Ledgerline
@@ -260,3 +317,6 @@ ledgerline_signin() {
   browser_signin "https://idp.$LEDGERLINE_DOMAIN/realms/ledgerline/protocol/openid-connect/auth?client_id=account-console&response_type=code&scope=openid&redirect_uri=$(jq -rn --arg u "https://idp.$LEDGERLINE_DOMAIN/realms/ledgerline/account/" '$u|@uri')&code_challenge=$challenge&code_challenge_method=S256&kc_idp_hint=sterling-vance-$active" \
     "https://idp.$LEDGERLINE_DOMAIN/realms/ledgerline/account/" "$1" "$2" >/dev/null
 }
+
+# a malformed ENTERPRISE_IDP stops whatever sources this, before it changes anything
+idp_names >/dev/null

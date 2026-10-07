@@ -19,19 +19,17 @@ CA="$LAB_CA_DIR/ca.crt"
 os=$(uname -s)
 wsl=; grep -qi microsoft /proc/version 2>/dev/null && wsl=1
 
-# every hostname the lab publishes, from the manifests (for the hosts file)
-lab_hosts() {
-  git -C "$LAB_ROOT" grep -ohE '[a-z0-9-]+\.\$\{[A-Z_]+_DOMAIN\}' -- '*.yaml' '*.json' \
-    | grep -v PARTY_DOMAIN | sort -u | envsubst | tr '\n' ' '
-}
+# every hostname the lab publishes (scripts/lib.sh lab_hosts, which the
+# preflight check uses too), for the hosts file
 hosts_block() {  # rewrite the marked block in /etc/hosts
-  local tmp; tmp=$(mktemp)
+  local tmp hosts; tmp=$(mktemp); hosts=$(lab_hosts)
+  [ -n "$hosts" ] || die "no lab hostnames found (scripts/lib.sh lab_hosts)"
   { sed '/# >>> solo-lab/,/# <<< solo-lab/d' /etc/hosts
     echo "# >>> solo-lab (make machine-setup)"
-    echo "127.0.0.1 $(lab_hosts)"
+    echo "127.0.0.1 $hosts"
     echo "# <<< solo-lab"; } > "$tmp"
   sudo cp "$tmp" /etc/hosts; rm -f "$tmp"
-  ok "/etc/hosts: $(lab_hosts | wc -w | tr -d ' ') lab names -> 127.0.0.1 (re-run after adding a hostname)"
+  ok "/etc/hosts: $(echo "$hosts" | wc -w | tr -d ' ') lab names -> 127.0.0.1 (re-run after adding a hostname)"
   [ -z "$wsl" ] || grep -q 'generateHosts *= *false' /etc/wsl.conf 2>/dev/null \
     || warn "WSL rewrites /etc/hosts on restart: add [network] generateHosts = false to /etc/wsl.conf"
 }
@@ -42,7 +40,13 @@ case "$os" in
     sudo sh -c "mkdir -p /etc/resolver && printf 'nameserver 127.0.0.1\nport %s\n' '$LAB_DNS_PORT' > '/etc/resolver/$LAB_TLD'"
     ok "/etc/resolver/$LAB_TLD -> 127.0.0.1:$LAB_DNS_PORT" ;;
   Linux)
-    if [ "${LAB_DNS_MODE:-}" != hosts ] && systemctl is-active --quiet systemd-resolved 2>/dev/null \
+    # DNS=<ip>:<port> in resolved.conf takes systemd 246 or newer. Its
+    # version: resolvectl's, else systemctl's (older resolvectl has no
+    # --version), else unknown, which counts as too old.
+    sd=$(resolvectl --version 2>/dev/null | awk 'NR==1 && $1=="systemd" {print $2}' || true)
+    [ -n "$sd" ] || sd=$(systemctl --version 2>/dev/null | awk 'NR==1 && $1=="systemd" {print $2}' || true)
+    sd=${sd%%[!0-9]*}
+    if [ "${LAB_DNS_MODE:-}" != hosts ] && [ "${sd:-0}" -ge 246 ] && systemctl is-active --quiet systemd-resolved 2>/dev/null \
        && grep -q '^nameserver 127.0.0.53' /etc/resolv.conf 2>/dev/null; then
       sudo mkdir -p /etc/systemd/resolved.conf.d
       printf '[Resolve]\nDNS=127.0.0.1:%s\nDomains=~%s\n' "$LAB_DNS_PORT" "$LAB_TLD" \
@@ -50,6 +54,8 @@ case "$os" in
       sudo systemctl restart systemd-resolved
       ok "systemd-resolved: ~$LAB_TLD -> 127.0.0.1:$LAB_DNS_PORT"
     else
+      [ "${LAB_DNS_MODE:-}" = hosts ] || [ "${sd:-0}" -ge 246 ] || ! systemctl is-active --quiet systemd-resolved 2>/dev/null \
+        || warn "systemd ${sd:-of unknown version} can't send one domain to a DNS port: using /etc/hosts"
       hosts_block
     fi ;;
   *) die "unsupported host OS: $os (macOS, Linux or WSL2)" ;;

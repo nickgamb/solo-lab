@@ -12,8 +12,10 @@ if K get cluster.postgresql.cnpg.io uma-as-db -n alice >/dev/null 2>&1; then
   K exec -n alice "$primary" -c postgres -- psql -U postgres -d u4a -q -c \
     "TRUNCATE tickets, negotiations, rpts, connections, ledger, owner_events, tiers, terms_docs, owners;" >/dev/null
   K rollout restart deploy/uma-as -n alice >/dev/null
-  K rollout restart deploy/u4a-adapter -n sv-u4a >/dev/null 2>&1 || true
   rollout alice deploy/uma-as
+  if K get deploy u4a-adapter -n sv-u4a >/dev/null 2>&1; then
+    K rollout restart deploy/u4a-adapter -n sv-u4a >/dev/null; rollout sv-u4a deploy/u4a-adapter
+  fi
   ok "cleared on $primary; Alice's default terms restored; adapter has a new agent key"
 fi
 if K get deploy bob-workspace -n sv-mcp >/dev/null 2>&1; then

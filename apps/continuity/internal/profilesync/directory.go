@@ -38,11 +38,13 @@ type Directory interface {
 	User(ctx context.Context, id string) (map[string]any, error)
 	// Find is the id of the user with that email, or ErrNoUser.
 	Find(ctx context.Context, email string) (string, error)
-	// Update sets attributes (path -> values) on the user.
-	Update(ctx context.Context, id string, set map[string][]string) error
+	// Update sets attributes (path -> values) on the user. verified is
+	// whether the source verified the email, copied with an email written
+	// where the directory records it (nil: unknown, left as it is).
+	Update(ctx context.Context, id string, set map[string][]string, verified *bool) error
 	// Create creates the user (no credential) with those attributes and
 	// returns its id, or ErrNoCreate.
-	Create(ctx context.Context, email string, set map[string][]string) (string, error)
+	Create(ctx context.Context, email string, set map[string][]string, verified *bool) (string, error)
 	// Enroll has the directory ask a new user to set their own credential
 	// there (an email from the IdP), or ErrNoEnroll. The sync never sees it.
 	Enroll(ctx context.Context, id string) error
@@ -219,22 +221,39 @@ func (d *scim) Find(ctx context.Context, email string) (string, error) {
 	return r.Resources[0].ID, nil
 }
 
-func (d *scim) Update(ctx context.Context, id string, set map[string][]string) error {
+// Update patches each path: a plain one is replaced; a filtered one
+// (`phoneNumbers[type eq "work"].value`) is added as the complex value it
+// names (RFC 7644 3.5.2.1), since a filter that matches nothing yet can't be
+// replaced.
+func (d *scim) Update(ctx context.Context, id string, set map[string][]string, _ *bool) error {
 	var ops []any
 	for _, p := range sortedKeys(set) {
-		ops = append(ops, map[string]any{"op": "replace", "path": p, "value": one(set[p])})
+		op := map[string]any{"op": "replace", "path": p, "value": one(set[p])}
+		if attr, sub, ok := strings.Cut(p, "."); ok && !strings.Contains(sub, ".") {
+			if name, key, val, filtered := filterOf(attr); filtered {
+				op = map[string]any{"op": "add", "path": name, "value": []any{map[string]any{key: parseScalar(val), sub: one(set[p])}}}
+			}
+		}
+		ops = append(ops, op)
 	}
 	return d.call(ctx, http.MethodPatch, "/Users/"+url.PathEscape(id), map[string]any{"schemas": []string{scimPatch}, "Operations": ops}, nil)
 }
 
-func (d *scim) Create(ctx context.Context, email string, set map[string][]string) (string, error) {
-	u := map[string]any{"schemas": []string{scimCore}, "userName": email, "active": true,
+func (d *scim) Create(ctx context.Context, email string, set map[string][]string, _ *bool) (string, error) {
+	schemas := []string{scimCore}
+	u := map[string]any{"userName": email, "active": true,
 		"emails": []any{map[string]any{"value": email, "primary": true}}}
 	for _, p := range sortedKeys(set) {
 		if err := setPath(u, p, one(set[p])); err != nil {
 			return "", err
 		}
+		if strings.HasPrefix(p, "urn:") { // an extension's attribute: the resource declares it
+			if ext := p[:strings.LastIndex(p, ":")]; !slices.Contains(schemas, ext) {
+				schemas = append(schemas, ext)
+			}
+		}
 	}
+	u["schemas"] = schemas
 	var out struct {
 		ID string `json:"id"`
 	}
@@ -330,7 +349,7 @@ func (d *auth0) Find(ctx context.Context, email string) (string, error) {
 	return r[0].ID, nil
 }
 
-func (d *auth0) Update(ctx context.Context, id string, set map[string][]string) error {
+func (d *auth0) Update(ctx context.Context, id string, set map[string][]string, verified *bool) error {
 	body := map[string]any{}
 	for _, p := range sortedKeys(set) {
 		root := strings.SplitN(p, ".", 2)[0]
@@ -340,14 +359,14 @@ func (d *auth0) Update(ctx context.Context, id string, set map[string][]string) 
 		if err := setPath(body, p, one(set[p])); err != nil {
 			return err
 		}
-		if p == "email" {
-			body["email_verified"] = true // the primary verified it
+		if p == "email" && verified != nil {
+			body["email_verified"] = *verified // as the source has it
 		}
 	}
 	return d.call(ctx, http.MethodPatch, "/users/"+url.PathEscape(id), body, nil)
 }
 
-func (d *auth0) Create(context.Context, string, map[string][]string) (string, error) {
+func (d *auth0) Create(context.Context, string, map[string][]string, *bool) (string, error) {
 	return "", ErrNoCreate // a database connection requires a password
 }
 
@@ -392,15 +411,15 @@ type keycloakDir struct{ api }
 
 var keycloakRoot = []string{"username", "email", "firstName", "lastName"}
 
-// User flattens the representation: the root fields and each attribute by
-// name, as Lookup reads them.
+// User flattens the representation: the root fields, emailVerified, and
+// each attribute by name, as Lookup reads them.
 func (d *keycloakDir) User(ctx context.Context, id string) (map[string]any, error) {
 	var r map[string]any
 	if err := d.call(ctx, http.MethodGet, "/users/"+url.PathEscape(id), nil, &r); err != nil {
 		return nil, err
 	}
 	out := map[string]any{}
-	for _, k := range keycloakRoot {
+	for _, k := range slices.Concat(keycloakRoot, []string{"emailVerified"}) {
 		if v, ok := r[k]; ok {
 			out[k] = v
 		}
@@ -428,18 +447,18 @@ func (d *keycloakDir) Find(ctx context.Context, email string) (string, error) {
 	return r[0].ID, nil
 }
 
-func (d *keycloakDir) Update(ctx context.Context, id string, set map[string][]string) error {
+func (d *keycloakDir) Update(ctx context.Context, id string, set map[string][]string, verified *bool) error {
 	var r map[string]any // the whole representation goes back: Keycloak drops what's left out
 	if err := d.call(ctx, http.MethodGet, "/users/"+url.PathEscape(id), nil, &r); err != nil {
 		return err
 	}
-	if err := keycloakApply(r, set); err != nil {
+	if err := keycloakApply(r, set, verified); err != nil {
 		return err
 	}
 	return d.call(ctx, http.MethodPut, "/users/"+url.PathEscape(id), r, nil)
 }
 
-func keycloakApply(r map[string]any, set map[string][]string) error {
+func keycloakApply(r map[string]any, set map[string][]string, verified *bool) error {
 	attrs, _ := r["attributes"].(map[string]any)
 	if attrs == nil {
 		attrs = map[string]any{}
@@ -450,8 +469,8 @@ func keycloakApply(r map[string]any, set map[string][]string) error {
 			return errors.New("keycloak: username is never written")
 		case "email", "firstName", "lastName":
 			r[p] = v[0]
-			if p == "email" {
-				r["emailVerified"] = true // the primary verified it
+			if p == "email" && verified != nil {
+				r["emailVerified"] = *verified // as the source has it
 			}
 		default:
 			l := make([]any, len(v))
@@ -465,9 +484,12 @@ func keycloakApply(r map[string]any, set map[string][]string) error {
 	return nil
 }
 
-func (d *keycloakDir) Create(ctx context.Context, email string, set map[string][]string) (string, error) {
-	r := map[string]any{"username": email, "email": email, "emailVerified": true, "enabled": true}
-	if err := keycloakApply(r, set); err != nil {
+func (d *keycloakDir) Create(ctx context.Context, email string, set map[string][]string, verified *bool) (string, error) {
+	r := map[string]any{"username": email, "email": email, "enabled": true}
+	if verified != nil {
+		r["emailVerified"] = *verified
+	}
+	if err := keycloakApply(r, set, verified); err != nil {
 		return "", err
 	}
 	if err := d.call(ctx, http.MethodPost, "/users", r, nil); err != nil {

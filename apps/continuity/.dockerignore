@@ -1,0 +1,3 @@
+# Not in the image: keeps the build context, and its content tag, to sources.
+**/.DS_Store
+**/*.swp
