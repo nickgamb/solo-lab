@@ -218,13 +218,20 @@ else
     {op: "add", path: "/metadata/annotations/lab.solo.io~1outage-primary", value: $o},
     {op: "replace", path: "/spec/ai/groups/0/providers/0/port", value: 1}]')" >/dev/null
   sleep 3
-  # the first call to find it down is what takes it out of rotation
-  model "Say hi." >/dev/null || true
-  out=$(model "Say hello in five words.") || true
+  # the call that finds it down takes it out of rotation, on the gateway
+  # replica that served it: each replica keeps its own count, so each may
+  # fail one call before the fallback answers everything
+  reps=$(K get deploy ai-gateway -n agentgateway-system -o jsonpath='{.status.readyReplicas}' 2>/dev/null) || reps=""
+  reps=${reps:-2} fails=0 out=""
+  for _ in $(seq 1 $(( reps * 2 + 2 ))); do
+    out=$(model "Say hello in five words.") || true
+    [ "$(echo "$out" | tail -1)" = 200 ] && break
+    fails=$((fails + 1))
+  done
   served=$(echo "$out" | sed '$d' | jq -r '.model // empty' 2>/dev/null) || served=""
-  if [ "$(echo "$out" | tail -1)" = 200 ] && [ -n "$served" ] && [ "$served" = "${fallback#*/}" ]; then
-    res ok "the primary model down, the fallback answers ($served)"
-  else res no "the primary model down, the fallback answers (${fallback#*/})" "$(echo "$out" | tail -1) model=$served $(echo "$out" | sed '$d' | head -c 200)"; fi
+  if [ "$(echo "$out" | tail -1)" = 200 ] && [ -n "$served" ] && [ "$served" = "${fallback#*/}" ] && [ "$fails" -le "$reps" ]; then
+    res ok "the primary model down, the fallback answers ($served; $fails call(s) failed first, at most one per gateway replica)"
+  else res no "the primary model down, the fallback answers (${fallback#*/})" "$(echo "$out" | tail -1) model=$served after $fails failed calls $(echo "$out" | sed '$d' | head -c 200)"; fi
   restore_llm
 fi
 

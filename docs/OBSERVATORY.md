@@ -221,7 +221,8 @@ chain from `.env`.
   the backend (one provider as `spec.ai.provider`, two to four as one
   `spec.ai.groups` entry each), then only `backend.health` on `llm-backend`
   (**take a failed provider out for**, **after N failures**; a provider
-  fails when it answers 5xx or doesn't answer) and only `traffic.retry` on `llm-callers` (**Retry
+  fails when it answers 5xx or doesn't answer; each gateway replica counts
+  for itself, so with two replicas up to two calls can meet an outage) and only `traffic.retry` on `llm-callers` (**Retry
   the call**). A provider cut at the time stays cut. A chain changed since it
   was loaded is refused: Reload and edit again.
 - **API keys** are write-only: key `Authorization` of the Secret the provider
