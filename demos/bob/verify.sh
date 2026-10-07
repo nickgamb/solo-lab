@@ -209,7 +209,8 @@ else
   # can tell. Put back on exit.
   K get agentgatewaybackend llm -n agentgateway-system -o json \
     | jq 'del(.metadata.resourceVersion, .metadata.managedFields, .metadata.generation, .metadata.uid, .metadata.creationTimestamp, .status)' >"$TMPD/llm.json"
-  on_exit "K apply -f $TMPD/llm.json >/dev/null 2>&1"
+  restore_llm() { K apply -f "$TMPD/llm.json" >/dev/null 2>&1; K annotate agentgatewaybackend llm -n agentgateway-system lab.solo.io/outage-primary- >/dev/null 2>&1; }
+  on_exit restore_llm
   # cut as the Observatory's Simulate model outage does: its own host and
   # port kept in an annotation, so the Model Continuity tab shows the outage
   orig=$(jq -c '.spec.ai.groups[0].providers[0] | {host, port, by: "make verify", since: (now | todate)}' "$TMPD/llm.json")
@@ -224,7 +225,7 @@ else
   if [ "$(echo "$out" | tail -1)" = 200 ] && [ -n "$served" ] && [ "$served" = "${fallback#*/}" ]; then
     res ok "the primary model down, the fallback answers ($served)"
   else res no "the primary model down, the fallback answers (${fallback#*/})" "$(echo "$out" | tail -1) model=$served $(echo "$out" | sed '$d' | head -c 200)"; fi
-  K apply -f "$TMPD/llm.json" >/dev/null
+  restore_llm
 fi
 
 echo; [ $fail -eq 0 ] && ok "story 1: $pass/$((pass+fail)) checks passed$([ "$skip" -eq 0 ] || echo ", $skip skipped")" || die "story 1: $fail of $((pass+fail)) checks failed"
