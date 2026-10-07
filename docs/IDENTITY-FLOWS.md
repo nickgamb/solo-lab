@@ -275,8 +275,10 @@ RFC 8693 instead (`subject_token` = the access token, `requested_token_type`
   the edge. It reads each MCP request and decides per tool on a token from
   Ledgerline's AS (audience `ledgerline-research`): anyone may list the
   catalog, `sector_outlook` and `research_note` need scope `research:read`,
-  `account_info` a signed-in subject. A header the caller sets decides
-  nothing. The server verifies the token again (signature, issuer,
+  `account_info` a signed-in subject (Solo Enterprise for agentgateway; on
+  OSS the gateway validates the token and the server decides per tool,
+  ENTERPRISE.md). A method header that disagrees with the request is
+  refused. The server verifies the token again (signature, issuer,
   audience, scope, a registered client) before any tool runs, and records
   any ID token that reaches it.
 - **Discovery lane:** the kagent controller's SPIFFE ID may list Ledgerline's
@@ -298,7 +300,8 @@ transitions); the chain is restored on exit.
 | an agent workload calling `idtoken-exchange` directly | refused by the mesh |
 | Bob's S&V token sent straight to `mcp.ledgerline.lab` | refused by Ledgerline |
 | Ledgerline's tool list, no token | listed (the catalog is public) |
-| a research call with no Ledgerline token, claiming to be `tools/list` in the `mcp-method` header | refused at Ledgerline's MCP gateway |
+| a research call claiming to be `tools/list` in the `mcp-method` header | refused at Ledgerline's MCP gateway (header and body disagree) |
+| a research call with no Ledgerline token | refused at Ledgerline's MCP gateway (enterprise; the server refuses it on OSS) |
 | Bob asks his agent, in chat, which Ledgerline account he's using | Ledgerline's own account for Bob |
 
 ## 3. UMA for agents (Bob to Alice)

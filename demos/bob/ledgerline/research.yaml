@@ -115,6 +115,9 @@ spec:
 ---
 # What a token may do, per tool: anyone may list the catalog; research needs
 # scope research:read; account_info needs a signed-in Ledgerline subject.
+# Telling a listing from a call (mcp.methodName) is Solo Enterprise for
+# agentgateway's: on OSS the install lists and allows every tool here and
+# the server decides per tool (demos/bob/install.sh).
 apiVersion: ${AGW_POLICY_API}
 kind: ${AGW_POLICY_KIND}
 metadata: {name: research-tools, namespace: ledgerline}

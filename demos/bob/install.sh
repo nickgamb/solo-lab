@@ -34,7 +34,7 @@ secret_apply ledgerline-identity kc-secrets \
 mkdir -p "$LAB_STATE/realm"
 ledgerline_realm "$D/ledgerline/realm-ledgerline.json" >"$LAB_STATE/realm/realm-ledgerline.json"
 deploy_keycloak ledgerline-identity "$LEDGERLINE_DOMAIN" https-ledgerline "$LAB_STATE/realm/realm-ledgerline.json" identity-assertion-jwt
-render "$D/ledgerline/research.yaml" | ledgerline_research | K apply -f - >/dev/null
+render "$D/ledgerline/research.yaml" | ledgerline_research | ledgerline_edition | K apply -f - >/dev/null
 apply_tmpl "$D/ledgerline/identity.yaml" "$D/ledgerline/egress.yaml"
 deny_internet ledgerline ledgerline-identity
 ledgerline_egress

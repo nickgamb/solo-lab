@@ -16,7 +16,18 @@ SOLO_AGW_LICENSE_KEY=...          # SOLO_<ISTIO|KGATEWAY|AGW|KAGENT|AGENTREGISTR
 
 `config/enterprise.env` holds the enterprise charts, versions and kinds;
 `scripts/lib.sh` promotes them over the OSS pins for each product set to
-`enterprise`. The stories, checks and tour are the same on both editions.
+`enterprise`. The stories, checks and tour are the same on both editions;
+where a check needs an enterprise feature, OSS counts it as skipped and
+names the feature.
+
+## What Solo Enterprise adds in this lab
+
+Where the lab goes further on Solo Enterprise than OSS can. Each row is
+running config, with the check that proves it.
+
+| Where | OSS | Solo Enterprise for agentgateway | Checked by |
+| --- | --- | --- | --- |
+| Ledgerline's MCP gateway | validates any Ledgerline token, refuses a forged `mcp-method` header, edge only; the MCP server decides per tool | also decides per tool at the gateway: anyone may list the catalog, research needs scope `research:read`, a call with no token never reaches the server (`mcp.methodName`) | `make bob-verify` |
 
 ## Licences
 
