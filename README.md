@@ -181,6 +181,7 @@ See [docs/OBSERVATORY.md](docs/OBSERVATORY.md).
 | Key | Used for |
 | --- | --- |
 | `LLM_PROVIDER` | `ollama` (default), `anthropic` or `openai`; apply with `make llm` |
+| `LLM_FALLBACK`, `LLM_FALLBACK_MODEL` | a second provider (and model) the gateway fails over to; apply with `make llm` |
 | `OLLAMA_MODEL`, `OLLAMA_URL` | the local model and where the cluster reaches it |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL` | hosted models (held by agentgateway only) |
 | `ENTERPRISE_IDP` | S&V's IdPs in failover order (`okta`, `auth0`, `gluu`, `keycloak`; default `auth0,keycloak`): who signs Bob in and, for an IdP that issues ID-JAGs, who vouches for him to Ledgerline; the broker vouches otherwise |

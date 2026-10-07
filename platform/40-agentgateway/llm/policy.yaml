@@ -1,0 +1,39 @@
+# What every model call meets at the gateway, whichever provider serves it.
+#
+#   failover  a provider that answers 5xx or 429 (or not at all) is taken out
+#             of rotation for a while; with a fallback group (make llm
+#             LLM_FALLBACK=...) the next healthy one serves instead
+#   guards    prompts that try to override the agent's instructions are
+#             refused; card and social security numbers are masked before
+#             the prompt leaves for the provider, and again in the answer
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata:
+  name: llm-backend
+  namespace: agentgateway-system
+spec:
+  targetRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: llm}]
+  backend:
+    health:
+      unhealthyCondition: 'response.code >= 500 || response.code == 429'
+      eviction:
+        consecutiveFailures: 1
+        duration: 30s
+    ai:
+      promptGuard:
+        request:
+        - regex:
+            action: Reject
+            matches:
+            - '(?i)ignore (all |any )?(previous|prior|above) instructions'
+            - '(?i)(reveal|print|show) (your|the) (system prompt|instructions)'
+          response:
+            statusCode: 403
+            message: "Refused by S&V's AI gateway: the prompt tries to override the agent's instructions."
+        - regex:
+            action: Mask
+            builtins: [CreditCard, Ssn]
+        response:
+        - regex:
+            action: Mask
+            builtins: [CreditCard, Ssn]

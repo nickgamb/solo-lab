@@ -75,6 +75,7 @@ with `--token <jwt>` and `--header name=value`.
 | `kubectl --context kind-solo-lab -n meridian logs deploy/meridian -f \| grep request` | Meridian's gateway |
 | `kubectl --context kind-solo-lab -n kgateway-system logs deploy/edge -f` | the edge (Envoy) |
 | `make llm LLM_PROVIDER=ollama` | point ai-gateway's model route at a provider |
+| `make llm LLM_FALLBACK=anthropic` | add a second provider the model route fails over to |
 
 ## Identity
 

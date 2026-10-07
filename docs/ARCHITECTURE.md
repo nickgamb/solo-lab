@@ -103,7 +103,11 @@ as kagent controller → atenet-router → worker, each hop mTLS.
    - ai-gateway ([agentgateway](https://docs.solo.io/agentgateway/), S&V): JWT validation against S&V's broker,
      per-tool MCP authorization in CEL, RFC 8693 token exchange / ID-JAG
      toward tools, provider credentials for LLMs. The model route admits only
-     the agents' worker pools, by ServiceAccount. Its listeners take routes
+     the agents' worker pools, by ServiceAccount. Every model call meets
+     prompt guards (an attempt to override the agent's instructions is
+     refused; card and social security numbers are masked before the prompt
+     leaves and in the answer), and with `LLM_FALLBACK` a provider that
+     fails is taken out of rotation while a second one serves. Its listeners take routes
      only from `agentgateway-system`, so no other namespace can publish a
      path on it.
    - meridian gateway (agentgateway, Meridian): ext-auth to uma-pep, which

@@ -36,3 +36,8 @@ spec:
         - >-
           (source.identity.namespace == "sv-agents" && source.identity.serviceAccount in ["bob-assistant", "advisor-desk"])
           || (source.identity.namespace == "kagent" && source.identity.serviceAccount == "kagent-ops")
+    # one retry: the call that finds a provider down goes to the next healthy
+    # one (llm/policy.yaml takes the failed provider out of rotation)
+    retry:
+      attempts: 1
+      codes: [429, 500, 502, 503, 504]

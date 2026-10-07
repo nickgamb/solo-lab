@@ -21,6 +21,7 @@ AGENT=sv-agents/probe-bob-assistant
 GW=http://bob-workspace-mcp.sv-mcp:3000/mcp
 POD_IP=$(K get pod -n sv-mcp -l app.kubernetes.io/name=bob-workspace -o jsonpath='{.items[0].status.podIP}')
 [ -n "$POD_IP" ] || die "no bob-workspace pod in sv-mcp (make layer-95)"
+TMPD=$(umask 077; mktemp -d); on_exit "rm -rf $TMPD"   # every temp file, gone on exit
 pass=0 fail=0 skip=0
 res() { if [ "$1" = ok ]; then ok "$2"; pass=$((pass+1)); else warn "$2"; echo "      got: ${3:0:300}"; fail=$((fail+1)); fi; }
 skipped() { printf '  - skipped: %s\n' "$*"; skip=$((skip+1)); }
@@ -136,6 +137,27 @@ else
   if [ "$(echo "$out" | tail -1)" = 200 ] && ! echo "$seen" | grep -qE '123-45-6789|4111 1111'; then
     res ok "card and SSN masked before the model sees them (and in its answer)"
   else res no "card and SSN masked before the model sees them (and in its answer)" "$(echo "$out" | tail -1) ${seen:0:200}"; fi
+fi
+
+fallback=$(K get ns agentgateway-system -o jsonpath='{.metadata.annotations.lab\.solo\.io/llm-fallback}' 2>/dev/null || true)
+if [ -z "$fallback" ]; then
+  skipped "the primary model down, the fallback answers: no fallback (make llm LLM_FALLBACK=...)"
+elif ! why=$(llm_ready); then
+  skipped "the primary model down, the fallback answers: needs the model ($why)"
+else
+  # the primary's port pointed somewhere closed: down, as far as the gateway
+  # can tell. Put back on exit.
+  K get agentgatewaybackend llm -n agentgateway-system -o json \
+    | jq 'del(.metadata.resourceVersion, .metadata.managedFields, .metadata.generation, .metadata.uid, .metadata.creationTimestamp, .status)' >"$TMPD/llm.json"
+  on_exit "K apply -f $TMPD/llm.json >/dev/null 2>&1"
+  K patch agentgatewaybackend llm -n agentgateway-system --type json -p '[{"op": "replace", "path": "/spec/ai/groups/0/providers/0/port", "value": 1}]' >/dev/null
+  sleep 3
+  out=$(model "Say hello in five words.")
+  served=$(echo "$out" | sed '$d' | jq -r '.model // empty' 2>/dev/null)
+  if [ "$(echo "$out" | tail -1)" = 200 ] && [ -n "$served" ] && [ "$served" = "${fallback#*/}" ]; then
+    res ok "the primary model down, the fallback answers ($served)"
+  else res no "the primary model down, the fallback answers (${fallback#*/})" "$(echo "$out" | tail -1) model=$served $(echo "$out" | sed '$d' | head -c 200)"; fi
+  K apply -f "$TMPD/llm.json" >/dev/null
 fi
 
 echo; [ $fail -eq 0 ] && ok "story 1: $pass/$((pass+fail)) checks passed$([ "$skip" -eq 0 ] || echo ", $skip skipped")" || die "story 1: $fail of $((pass+fail)) checks failed"
