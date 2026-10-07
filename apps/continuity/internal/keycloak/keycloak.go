@@ -289,3 +289,42 @@ func (c *Client) SetRedirector(ctx context.Context, flow, alias string) (bool, e
 	}
 	return false, fmt.Errorf("flow %s has no %s execution", flow, redirectorID)
 }
+
+// Registration is a client as the broker has it registered: where it sends
+// users back to, the audiences its own mappers add, and its default scopes.
+type Registration struct {
+	Found         bool
+	RedirectURIs  []string
+	Audiences     []string
+	DefaultScopes []string
+}
+
+// ClientRegistration reads one client by its client ID (realm-management
+// view-clients).
+func (c *Client) ClientRegistration(ctx context.Context, clientID string) (Registration, error) {
+	var list []struct {
+		ClientID            string   `json:"clientId"`
+		RedirectURIs        []string `json:"redirectUris"`
+		DefaultClientScopes []string `json:"defaultClientScopes"`
+		ProtocolMappers     []struct {
+			ProtocolMapper string            `json:"protocolMapper"`
+			Config         map[string]string `json:"config"`
+		} `json:"protocolMappers"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/clients?clientId="+url.QueryEscape(clientID), nil, &list); err != nil {
+		return Registration{}, err
+	}
+	for _, cl := range list {
+		if cl.ClientID != clientID {
+			continue
+		}
+		r := Registration{Found: true, RedirectURIs: cl.RedirectURIs, DefaultScopes: cl.DefaultClientScopes}
+		for _, m := range cl.ProtocolMappers {
+			if a := m.Config["included.client.audience"]; m.ProtocolMapper == "oidc-audience-mapper" && a != "" {
+				r.Audiences = append(r.Audiences, a)
+			}
+		}
+		return r, nil
+	}
+	return Registration{}, nil
+}

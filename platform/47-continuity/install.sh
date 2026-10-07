@@ -75,9 +75,9 @@ apply_tmpl "$D/egress.yaml"
 wait_for "egress waypoint Programmed" 40 3 K wait -n sv-egress gateway/egress-waypoint --for=condition=Programmed --timeout=2s
 ok "external upstreams leave through sv-egress/egress-waypoint"
 
-step "IdentityContinuity CRD + controller (sv-identity)"
+step "IdentityContinuity and WorkloadProfile CRDs + controller (sv-identity)"
 K apply --server-side -f "$APP/config/crd" >/dev/null
-K wait crd/identitycontinuities.continuity.lab.solo.io --for=condition=Established --timeout=60s >/dev/null
+K wait crd/identitycontinuities.continuity.lab.solo.io crd/workloadprofiles.continuity.lab.solo.io --for=condition=Established --timeout=60s >/dev/null
 apply_tmpl "$D/controller.yaml"
 # partitions are read in the egress namespace only; a lab from before that
 # still has the cluster-wide grant

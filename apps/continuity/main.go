@@ -74,6 +74,10 @@ func main() {
 		log.Error(err, "controller")
 		os.Exit(1)
 	}
+	if err := (&controller.WorkloadProfileReconciler{Client: mgr.GetClient(), Continuity: r}).SetupWithManager(mgr); err != nil {
+		log.Error(err, "workload profile controller")
+		os.Exit(1)
+	}
 	_ = mgr.AddHealthzCheck("ping", healthz.Ping)
 	_ = mgr.AddReadyzCheck("ping", healthz.Ping)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {

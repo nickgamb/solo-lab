@@ -54,6 +54,41 @@ spec:
             type: object
           spec:
             properties:
+              assurancePolicy:
+                default: {}
+                description: |-
+                  The assurance rules every WorkloadProfile following this chain has,
+                  unless it sets its own.
+                properties:
+                  allowBreakGlass:
+                    description: The broker's break-glass accounts may reach workloads.
+                    type: boolean
+                  allowedIdPs:
+                    description: 'The chain''s IdPs that may vouch for a session.
+                      Empty: every upstream.'
+                    items:
+                      type: string
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-type: set
+                  maxAge:
+                    type: string
+                  minimum:
+                    default: AAL1
+                    enum:
+                    - AAL1
+                    - AAL2
+                    - AAL3
+                    type: string
+                  phishingResistant:
+                    type: boolean
+                  sessions:
+                    default: Any
+                    enum:
+                    - Any
+                    - ActiveIdPOnly
+                    type: string
+                type: object
               broker:
                 properties:
                   keycloak:

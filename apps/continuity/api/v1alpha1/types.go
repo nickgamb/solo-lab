@@ -53,6 +53,31 @@ type IdentityContinuitySpec struct {
 	// The scheduled directory sync: the primary IdP's profile into the
 	// broker, then the broker's out to every failover IdP. Optional.
 	Sync *Sync `json:"sync,omitempty"`
+	// The assurance rules every WorkloadProfile following this chain has,
+	// unless it sets its own.
+	// +kubebuilder:default={}
+	AssurancePolicy AssurancePolicy `json:"assurancePolicy,omitempty"`
+}
+
+// AssurancePolicy is the global assurance rules: what a sign-in must prove
+// to reach a workload, and which IdPs may vouch, where a workload's profile
+// doesn't say.
+type AssurancePolicy struct {
+	// +kubebuilder:validation:Enum=AAL1;AAL2;AAL3
+	// +kubebuilder:default=AAL1
+	Minimum           string `json:"minimum,omitempty"`
+	PhishingResistant bool   `json:"phishingResistant,omitempty"`
+	// +optional
+	MaxAge *metav1.Duration `json:"maxAge,omitempty"`
+	// The chain's IdPs that may vouch for a session. Empty: every upstream.
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=16
+	AllowedIdPs []string `json:"allowedIdPs,omitempty"`
+	// The broker's break-glass accounts may reach workloads.
+	AllowBreakGlass bool `json:"allowBreakGlass,omitempty"`
+	// +kubebuilder:validation:Enum=Any;ActiveIdPOnly
+	// +kubebuilder:default=Any
+	Sessions string `json:"sessions,omitempty"`
 }
 
 // Profile is the broker's standard user profile.
