@@ -113,7 +113,7 @@ function Models({ lab, view, setView, reload, err }: {
     ps.forEach((p, i) => {
       const h = health(p)
       const isLive = p.name === live?.name
-      const n: LabNode = { id: `model:${p.name}`, kind: 'llm', label: `${i + 1}. ${kindLabel(p)}`, sub: p.model, group: '',
+      const n: LabNode = { id: `model:${p.name}`, kind: 'llm', label: `${i + 1}. ${p.name} · ${kindLabel(p)}`, sub: p.model, group: '',
         status: isLive ? 'ok' : p.outage || h.cls === 'bad' ? 'down' : 'idle', summary: {}, products: [] }
       tile(n.id, n, 2, mid - (ps.length - 1) / 2 + i, { highlight: isLive ? 'ok' : p.outage || h.cls === 'bad' ? 'bad' : undefined,
         outage: !!p.outage, caption: `${p.model} · ${endpoint(p)}` })

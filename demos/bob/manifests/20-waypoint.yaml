@@ -176,6 +176,17 @@ spec:
           matchExpressions:
           - 'mcp.tool.name in ["whoami", "list_clients", "get_client", "get_meeting_notes", "log_followup"]'
           - 'has(jwt.groups) && "compliance" in jwt.groups'
+      # every tool result through mcp-guard (25-mcp-guard.yaml) before the
+      # agent sees it: account numbers and SSNs masked. Here, not in a policy
+      # of its own: a second policy on this backend setting backend.mcp would
+      # compete with this one.
+      guardrails:
+        processors:
+        - remote:
+            backendRef: {name: mcp-guard, port: 4445}
+            failureMode: FailClosed   # no answer from the guard, no result
+            metadata: {tool: 'mcp.tool.name'}
+          methods: {"tools/call": Response}
     auth:
       oauthTokenExchange:
         backendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}

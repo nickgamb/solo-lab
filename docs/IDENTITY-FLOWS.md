@@ -92,6 +92,14 @@ sequenceDiagram
   - The workspace verifies that token itself (signature against the broker's JWKS,
     issuer, audience `bob-workspace`, expiry) before any tool runs, so a
     forged or replayed token is refused even if something reached the pod.
+  - Tool output: every `tools/call` result goes through `mcp-guard`
+    (`apps/mcp-guard`, an agentgateway MCP guardrail, ExtMCP over gRPC)
+    before the agent sees it. Account numbers (runs of 8 to 17 digits) and
+    SSNs in the result's text and `structuredContent` are masked to their
+    last four (`••••8265`). The guard logs the tool and how many values it
+    masked, never the values. `failureMode: FailClosed` with a 5 s deadline:
+    no answer from the guard, no result. Only the waypoint can reach it
+    (`demos/bob/manifests/25-mcp-guard.yaml`).
 - **Discovery lane** (no token): only the kagent controller's SPIFFE ID, so
   the UI can list tools. Same tool filter, no exchange, and the route strips
   `Authorization` and `X-Id-Token`, so nothing that looks like a credential
@@ -107,6 +115,7 @@ Checks (`make bob-verify`, from real pods with their own identities):
 | Case | Expected |
 | --- | --- |
 | an S&V agent workload with Bob's token lists tools, calls `whoami`, `list_clients` | allowed; `acting_for: bob`, `audience: bob-workspace` |
+| `get_client` for a client with an account number | the record, account number masked to its last four by the waypoint's guardrail |
 | `export_book` as an advisor | not in the list; refused |
 | an S&V agent workload with no user token | refused (discovery lane is controller-only) |
 | Bob's token from another namespace (`observability`) | refused |
@@ -275,10 +284,8 @@ RFC 8693 instead (`subject_token` = the access token, `requested_token_type`
   the edge. It reads each MCP request and decides per tool on a token from
   Ledgerline's AS (audience `ledgerline-research`): anyone may list the
   catalog, `sector_outlook` and `research_note` need scope `research:read`,
-  `account_info` a signed-in subject (Solo Enterprise for agentgateway; on
-  OSS the gateway validates the token and the server decides per tool,
-  ENTERPRISE.md). A method header that disagrees with the request is
-  refused. The server verifies the token again (signature, issuer,
+  `account_info` a signed-in subject. A method header that disagrees with
+  the request is refused. The server verifies the token again (signature, issuer,
   audience, scope, a registered client) before any tool runs, and records
   any ID token that reaches it.
 - **Discovery lane:** the kagent controller's SPIFFE ID may list Ledgerline's
@@ -301,7 +308,7 @@ transitions); the chain is restored on exit.
 | Bob's S&V token sent straight to `mcp.ledgerline.lab` | refused by Ledgerline |
 | Ledgerline's tool list, no token | listed (the catalog is public) |
 | a research call claiming to be `tools/list` in the `mcp-method` header | refused at Ledgerline's MCP gateway (header and body disagree) |
-| a research call with no Ledgerline token | refused at Ledgerline's MCP gateway (enterprise; the server refuses it on OSS) |
+| a research call with no Ledgerline token | refused at Ledgerline's MCP gateway |
 | Bob asks his agent, in chat, which Ledgerline account he's using | Ledgerline's own account for Bob |
 
 ## 3. UMA for agents (Bob to Alice)

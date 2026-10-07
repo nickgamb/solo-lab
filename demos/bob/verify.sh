@@ -39,6 +39,17 @@ check '"whoami"'                                "agent lists Bob's tools (as Bob
 check '\\"acting_for\\": \\"bob\\".*\\"audience\\": \\"bob-workspace\\"' \
                                                 "whoami: acts as bob, token aud=bob-workspace" $AGENT $GW call whoami '{}' --token "$BOB"
 check 'Alice Chen'                              "list_clients returns Bob's book"             $AGENT $GW call list_clients '{}' --token "$BOB"
+check 'account_number\\": \\"(\\u2022){4}8265\\"' \
+                                                "get_client: account number masked by the waypoint's guardrail" $AGENT $GW call get_client '{"name": "Marcus Webb"}' --token "$BOB"
+# mcp-guard's record of what it masked: the tool and a count, never the value
+if ! guard_log=$(K logs -n sv-mcp -l app=mcp-guard --since=10m --tail=-1 2>&1); then
+  res no "mcp-guard logs the mask, not the account number" "could not read mcp-guard's log: $guard_log"
+else
+  masked=$(echo "$guard_log" | grep -c '"msg":"masked"') || masked=0
+  leaked=$(echo "$guard_log" | grep -c '7730418265') || leaked=0
+  if [ "$masked" -gt 0 ] && [ "$leaked" = 0 ]; then res ok "mcp-guard logs the mask, not the account number"
+  else res no "mcp-guard logs the mask, not the account number" "$masked masked lines, $leaked carrying the number"; fi
+fi
 step "Refused"
 check 'Unknown tool|isError": true|http": 40[13]' "export_book: hidden from advisors (compliance only)"               $AGENT $GW call export_book '{}' --token "$BOB"
 check 'http": 40[13]|isError": true'            "agent with no user token (discovery lane is controller-only)" $AGENT $GW call whoami '{}'
