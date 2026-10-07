@@ -189,6 +189,7 @@ See [docs/OBSERVATORY.md](docs/OBSERVATORY.md).
 | `RESOURCE_AS`, `RESOURCE_AS_ISSUER` | Ledgerline's authorization server: `keycloak` (default) or `gluu` |
 | `AUTH0_ISSUER`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | the auth0 IdP (your Auth0 tenant); left out without an issuer |
 | `AUTH0_DIRECTORY_CLIENT_ID`, `AUTH0_DIRECTORY_CLIENT_SECRET` | Auth0's Management API, for the directory sync |
+| `config/continuity.local.yaml` | this lab's own S&V profile attributes and IdP mappings, kept across rebuilds (format: `config/continuity.example.yaml`) |
 | `OKTA_ISSUER`, `OKTA_CLIENT_ID` | the okta IdP; the broker vouches for its users |
 | `GLUU_ISSUER`, `GLUU_CLIENT_ID` | the gluu IdP, authenticated with S&V's keys ([GLUU.md](docs/GLUU.md)) |
 | `KEYCLOAK_ISSUER`, `KEYCLOAK_CLIENT_ID` | the keycloak IdP; default S&V's own at `login.sterling.lab` |

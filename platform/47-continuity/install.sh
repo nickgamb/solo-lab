@@ -97,7 +97,8 @@ desired=$({ for n in $CHAIN; do
   dir=null
   if [ "$n" = auth0 ] && [ -n "$AUTH0_DIRECTORY" ]; then
     a=${AUTH0_ISSUER%/}
-    dir=$(jq -nc --arg a "$a" '{directory: {type: "auth0", url: "\($a)/api/v2", audience: "\($a)/api/v2/", credentialsRef: {name: "directory-auth0"}}}')
+    dir=$(jq -nc --arg a "$a" '{directory: {type: "auth0", url: "\($a)/api/v2", audience: "\($a)/api/v2/", credentialsRef: {name: "directory-auth0"}},
+      attributes: [{attribute: "email", path: "email"}, {attribute: "firstName", path: "given_name"}, {attribute: "lastName", path: "family_name"}]}')
   fi
   if [ "$n" = keycloak ] && [ "$KEYCLOAK_ISSUER" = "https://login.$SV_DOMAIN/realms/workforce" ]; then
     dir='{"directory": {"type": "keycloak", "url": "http://keycloak.sv-workforce.svc/admin/realms/workforce", "credentialsRef": {"name": "directory-keycloak"}},
@@ -114,8 +115,29 @@ desired=$({ for n in $CHAIN; do
 done
 jq -nc '{name: "break-glass", displayName: "Platform admins (break-glass)", type: "local"}'
 } | jq -sc .)
+# This lab's own profile and mappings, beyond the defaults (gitignored;
+# config/continuity.example.yaml shows the format): S&V profile attributes,
+# each IdP's attribute mappings, a sync schedule. A fresh install takes them
+# as they are; an existing one gains what it doesn't have yet, so what
+# operators changed since stays.
+LOCAL="$LAB_ROOT/config/continuity.local.yaml"
+local_json='{}'
+if [ -f "$LOCAL" ]; then
+  local_json=$(yq -o json -I0 '.' "$LOCAL") || die "$LOCAL: not valid YAML"
+  ok "local profile and mappings: config/continuity.local.yaml"
+fi
+# add_local <tiers>: each tier with the local mappings it doesn't have yet
+add_local() {
+  jq -c --argjson l "$local_json" 'map(. as $t | (($l.tiers // {})[$t.name].attributes // []) as $a
+    | if ($a | length) == 0 then . else
+        .attributes = ((.attributes // []) + [$a[] | select(.attribute as $n | ([($t.attributes // [])[].attribute] | index($n)) == null)])
+      end)' <<<"$1"
+}
 if ! K get identitycontinuity sterling-vance -n sv-identity >/dev/null 2>&1; then
-  render "$D/identitycontinuity.yaml" | T="$desired" yq '.spec.tiers = env(T)' | K apply -f - >/dev/null
+  desired=$(add_local "$desired")
+  render "$D/identitycontinuity.yaml" | T="$desired" L="$local_json" yq '.spec.tiers = env(T)
+    | (env(L) | .profile) as $p | (env(L) | .sync) as $s
+    | (select($p != null) | .spec.profile) = $p | (select($s != null) | .spec.sync) = $s' | K apply -f - >/dev/null
 else
   cur=$(K get idc sterling-vance -n sv-identity -o json | jq -c '.spec.tiers')
   # an existing tier keeps what operators set (display name, enabled, failover
@@ -132,6 +154,15 @@ else
   if [ "$(K get idc sterling-vance -n sv-identity -o json | jq -cS '.spec.egress | del(.internalDomains)')" != "$(echo "$egress" | jq -cS .)" ]; then
     K patch idc sterling-vance -n sv-identity --type merge -p "{\"spec\":{\"egress\":$egress}}" >/dev/null
     ok "egress: $(echo "$egress" | jq -c .)"
+  fi
+  merged=$(add_local "$merged")
+  # local profile attributes the instance doesn't have yet
+  prof=$(K get idc sterling-vance -n sv-identity -o json | jq -c --argjson l "$local_json" '(.spec.profile.attributes // []) as $c
+    | ($l.profile.attributes // []) as $a | [$a[] | select(.name as $n | ([$c[].name] | index($n)) == null)] as $new
+    | if ($new | length) == 0 then empty else {spec: {profile: {attributes: ($c + $new)}}} end')
+  if [ -n "$prof" ]; then
+    K patch idc sterling-vance -n sv-identity --type merge -p "$prof" >/dev/null
+    ok "profile: $(echo "$prof" | jq -r '[.spec.profile.attributes[].name] | join(", ")')"
   fi
   if [ "$(echo "$cur" | jq -cS .)" != "$(echo "$merged" | jq -cS .)" ]; then
     K patch idc sterling-vance -n sv-identity --type merge -p "{\"spec\":{\"tiers\":$merged}}" >/dev/null

@@ -7,3 +7,6 @@ node_modules/
 # raw screen recordings; the optimized MP4s and GIFs in docs/videos are committed
 docs/videos/*.mov
 __pycache__/
+
+# this lab's own continuity profile and mappings (config/continuity.example.yaml)
+config/continuity.local.yaml
