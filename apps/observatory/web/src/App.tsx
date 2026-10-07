@@ -53,8 +53,8 @@ export default function App() {
           ))}
         </nav>
         <div className="status">
-          <span className="pill" title="requests per second, all gateways and waypoints">{(s?.rps ?? 0).toFixed(1)} req/s</span>
-          <span className="pill" title="share of requests denied or failed">{((s?.errRate ?? 0) * 100).toFixed(1)}% err</span>
+          <span className="pill stat" title="requests per second, all gateways and waypoints">{(s?.rps ?? 0).toFixed(1)} req/s</span>
+          <span className="pill stat" title="share of requests denied or failed">{((s?.errRate ?? 0) * 100).toFixed(1)}% err</span>
           <span className="pill"><span className={lab.connected ? 'dot ok' : 'dot bad'} />{lab.connected ? 'Live' : 'Reconnecting…'}</span>
           <button className="btn ghost small" title="Theme" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? '☾' : '☀'}</button>
           {me && (

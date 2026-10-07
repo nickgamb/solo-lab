@@ -5,6 +5,7 @@ import { cutModel, getModels, type Lab, type LabNode, type ModelProvider, type M
 import { edgeTypes, type FlowData } from '../topology/edges'
 import { nodeTypes, type CardData } from '../topology/nodes'
 import { CAPTION_H, LABEL_H, LABEL_W, TILE } from '../topology/layout'
+import { substrateFor } from '../topology/Topology'
 import { endpoint, health, kindLabel, serving, usd } from './chain'
 import { ModelRules } from './ModelRules'
 import '../continuity/continuity.css'
@@ -75,6 +76,13 @@ function Models({ lab, view, setView, reload, err }: {
   // Left to right: who may call (the agent pools by mesh identity, and
   // callers outside the mesh with an API key), the AI gateway, and the
   // providers in priority order.
+  // an agent pool on Agent Substrate: its workers busy with a session now
+  // (they keep running whichever provider answers underneath)
+  const pool = useCallback((n: LabNode) => {
+    if (n.kind !== 'substrate' || !lab.substrate) return undefined
+    const ws = substrateFor(lab.substrate, n).workers
+    return ws.length ? `Agent Substrate · ${ws.filter(w => w.actorId).length}/${ws.length} busy` : undefined
+  }, [lab.substrate])
   const { rfNodes, rfEdges } = useMemo(() => {
     const rfNodes: Node[] = []
     const rfEdges: Edge[] = []
@@ -106,7 +114,7 @@ function Models({ lab, view, setView, reload, err }: {
     const rows = Math.max(callers.length, ps.length, 1)
     const mid = (rows - 1) / 2
     callers.forEach((n, i) => {
-      tile(n.id, n, 0, mid - (callers.length - 1) / 2 + i, { fog: !ok, caption: n.id === 'caller:external' ? n.sub : undefined })
+      tile(n.id, n, 0, mid - (callers.length - 1) / 2 + i, { fog: !ok, caption: n.id === 'caller:external' ? n.sub : pool(n) })
       wire(n.id, gw.id, { state: ok ? 'active' : 'down' })
     })
     tile(gw.id, gw, 1, mid, { highlight: ok ? 'ok' : 'bad' })
@@ -121,7 +129,7 @@ function Models({ lab, view, setView, reload, err }: {
         cut: !!p.outage, label: p.outage ? 'outage (simulated)' : undefined })
     })
     return { rfNodes, rfEdges }
-  }, [view, ps, up, live, nodes, calls])
+  }, [view, ps, up, live, nodes, calls, pool])
 
   return (
     <div className="cont">
