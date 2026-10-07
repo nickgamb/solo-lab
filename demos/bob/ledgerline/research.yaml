@@ -2,8 +2,8 @@
 # only tokens from its own authorization server (which it mints from ID-JAGs),
 # and outsiders reach it only through the edge at https://mcp.ledgerline.lab.
 #
-# Protection is a standard Istio (Envoy) waypoint — the pattern any customer
-# runs without an AI gateway — plus STRICT mTLS and an L4 pin on the pods.
+# Protection is Ledgerline's own agentgateway, MCP-aware, plus STRICT mTLS and
+# an L4 pin on the pods.
 apiVersion: kagent.dev/v1alpha1
 kind: MCPServer
 metadata:
@@ -23,62 +23,136 @@ spec:
       requests: {cpu: 20m, memory: 64Mi}
       limits: {memory: 256Mi}
 ---
-# `all`, not `service`: the edge sends to endpoint (pod) addresses, and only a
-# workload-scoped waypoint intercepts traffic addressed that way.
+# Ledgerline's MCP gateway: an agentgateway in front of its MCP server. It
+# reads each MCP request itself (JSON-RPC, not a header the caller sets) and
+# decides per tool on Ledgerline's own token. A gateway, not a waypoint: the
+# edge sends to endpoint (pod) addresses, which a service waypoint never sees.
+apiVersion: ${AGW_PARAMS_API}
+kind: ${AGW_PARAMS_KIND}
+metadata: {name: mcp-gateway, namespace: ledgerline}
+spec:
+  istio:
+    enabled: true              # SPIFFE cert from istiod; terminate HBONE inbound
+  deployment:
+    spec:
+      replicas: 2
+      template:
+        metadata:
+          # terminates HBONE itself, so source.identity is the caller's SPIFFE ID
+          labels: {networking.istio.io/tunnel: http}
+        spec:
+          topologySpreadConstraints:
+          - maxSkew: 1
+            topologyKey: topology.kubernetes.io/zone
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels: {gateway.networking.k8s.io/gateway-name: mcp-gateway}
+  podDisruptionBudget:
+    spec: {minAvailable: 1}
+  service:
+    spec: {type: ClusterIP}
+  resources:
+    requests: {cpu: 50m, memory: 96Mi}
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
-metadata:
-  name: waypoint
-  namespace: ledgerline
-  labels: {istio.io/waypoint-for: all}
+metadata: {name: mcp-gateway, namespace: ledgerline}
 spec:
-  gatewayClassName: istio-waypoint
+  gatewayClassName: ${AGW_CLASS}
+  infrastructure:
+    parametersRef: {group: ${AGW_PARAMS_GROUP}, kind: ${AGW_PARAMS_KIND}, name: mcp-gateway}
   listeners:
-  - {name: mesh, port: 15008, protocol: HBONE}
+  - {name: mesh, protocol: HBONE, port: 15008, allowedRoutes: {namespaces: {from: Same}}}
+  - {name: http, protocol: HTTP, port: 80, allowedRoutes: {namespaces: {from: Same}}}
+---
+apiVersion: ${AGW_BACKEND_API}
+kind: ${AGW_BACKEND_KIND}
+metadata: {name: research, namespace: ledgerline}
+spec:
+  mcp:
+    targets:
+    - name: research
+      static:
+        backendRef: {name: ledgerline-research}
+        port: 3000
+        path: /mcp
+        protocol: StreamableHTTP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: research, namespace: ledgerline}
+spec:
+  parentRefs: [{name: mcp-gateway, sectionName: http}]
+  rules:
+  - matches: [{path: {type: PathPrefix, value: /mcp}}]
+    backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: research}]
+---
+# Who may reach it: the internet, through the edge, and nothing else in the
+# cluster. A token is checked when there is one (and kept: the server checks
+# it again); the catalog itself is public.
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: research-callers, namespace: ledgerline}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: research}]
+  traffic:
+    jwtAuthentication:
+      mode: Optional
+      preserveToken: true
+      providers:
+      - issuer: https://idp.${LEDGERLINE_DOMAIN}/realms/ledgerline
+        audiences: [ledgerline-research]
+        jwks:
+          remote:
+            backendRef: {kind: Service, name: keycloak, namespace: ledgerline-identity, port: 80}
+            jwksPath: /realms/ledgerline/protocol/openid-connect/certs
+            cacheDuration: 5m
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+        - 'source.identity.namespace == "kgateway-system" && source.identity.serviceAccount == "edge"'
+---
+# What a token may do, per tool: anyone may list the catalog; research needs
+# scope research:read; account_info needs a signed-in Ledgerline subject.
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: research-tools, namespace: ledgerline}
+spec:
+  targetRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: research}]
+  backend:
+    mcp:
+      authorization:
+        action: Allow
+        policy:
+          matchExpressions:
+          - 'mcp.methodName == "tools/list"'
+          - 'mcp.tool.name in ["sector_outlook", "research_note"] && has(jwt.scope) && "research:read" in jwt.scope.split(" ")'
+          - 'mcp.tool.name == "account_info" && has(jwt.sub)'
+---
+# Ledgerline's identity team lets its gateway fetch the signing keys.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata: {name: gateway-to-keycloak, namespace: ledgerline-identity}
+spec:
+  from: [{group: ${AGW_POLICY_GROUP}, kind: ${AGW_POLICY_KIND}, namespace: ledgerline}]
+  to: [{group: "", kind: Service, name: keycloak}]
 ---
 apiVersion: security.istio.io/v1
 kind: PeerAuthentication
 metadata: {name: strict, namespace: ledgerline}
 spec: {mtls: {mode: STRICT}}
 ---
-# L4, every pod in the namespace: the waypoint is the only way in.
+# L4, every pod in the namespace but the gateway's own: the gateway is the
+# only way in. (The gateway terminates HBONE itself; its policy above names
+# its callers.)
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
-metadata: {name: pods-only-from-waypoint, namespace: ledgerline}
+metadata: {name: pods-only-from-gateway, namespace: ledgerline}
 spec:
   action: ALLOW
   rules:
-  - from: [{source: {principals: ["cluster.local/ns/ledgerline/sa/waypoint"]}}]
----
-apiVersion: security.istio.io/v1
-kind: RequestAuthentication
-metadata: {name: ledgerline-tokens, namespace: ledgerline}
-spec:
-  targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: waypoint}]
-  jwtRules:
-  - issuer: https://idp.${LEDGERLINE_DOMAIN}/realms/ledgerline
-    jwksUri: http://keycloak.ledgerline-identity.svc.cluster.local/realms/ledgerline/protocol/openid-connect/certs
-    audiences: [ledgerline-research]
-    forwardOriginalToken: true
----
-# From the internet (the edge) only. The tool catalog is public: a request
-# that says it is an MCP handshake or tools/list (the caller's own mcp-method
-# header) passes without a token. Everything else needs a Ledgerline token
-# here, and the server verifies the token on every tool call itself, so the
-# header only decides what the waypoint turns away early.
-apiVersion: security.istio.io/v1
-kind: AuthorizationPolicy
-metadata: {name: research-access, namespace: ledgerline}
-spec:
-  targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: waypoint}]
-  action: ALLOW
-  rules:
-  - from: [{source: {principals: ["cluster.local/ns/kgateway-system/sa/edge"],
-                     requestPrincipals: ["https://idp.${LEDGERLINE_DOMAIN}/realms/ledgerline/*"]}}]
-  - from: [{source: {principals: ["cluster.local/ns/kgateway-system/sa/edge"]}}]
-    to: [{operation: {methods: [POST, GET, DELETE]}}]
-    when:
-    - {key: "request.headers[mcp-method]", values: ["initialize", "notifications/initialized", "tools/list", "server/discover"]}
+  - from: [{source: {principals: ["cluster.local/ns/ledgerline/sa/mcp-gateway"]}}]
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -87,4 +161,4 @@ spec:
   parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-ledgerline}]
   hostnames: ["mcp.${LEDGERLINE_DOMAIN}"]
   rules:
-  - backendRefs: [{name: ledgerline-research, port: 3000}]
+  - backendRefs: [{name: mcp-gateway, port: 80}]

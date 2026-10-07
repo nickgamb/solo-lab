@@ -24,7 +24,7 @@ spec:
         - cluster.local/ns/meridian/sa/meridian
         - cluster.local/ns/meridian/sa/waypoint
         - cluster.local/ns/alice/sa/waypoint
-        - cluster.local/ns/ledgerline/sa/waypoint
+        - cluster.local/ns/ledgerline/sa/mcp-gateway
         # kagent and the agents' worker pools
         - cluster.local/ns/kagent/sa/kagent-controller
         - cluster.local/ns/kagent/sa/kagent-ops

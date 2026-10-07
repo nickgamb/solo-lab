@@ -98,6 +98,10 @@ check 'http": 40[13]'                           "right token, wrong workload (ob
 check 'http": 40[13]|refused|reset|Broken pipe|Connection' \
                                                 "ask the ID-token exchange directly (ai-gateway only)" $AGENT http://idtoken-exchange.agentgateway-system:8080/mcp call account_info '{}' --token "$BOB"
 check 'http": 40[13]|RBAC'                      "straight to Ledgerline with Bob's S&V token"      $AGENT https://mcp.ledgerline.lab/mcp call account_info '{}' --token "$BOB"
+# Ledgerline's own MCP gateway decides per tool from the MCP request itself
+check 'sector_outlook'                          "Ledgerline's catalog is public: listed without a token" $AGENT https://mcp.ledgerline.lab/mcp list
+check 'http": 40[13]|not allowed|[Uu]nauthori[sz]ed|[Ff]orbidden' \
+                                                "a research call with no Ledgerline token: refused at Ledgerline's gateway" $AGENT https://mcp.ledgerline.lab/mcp call sector_outlook '{"sector": "technology"}' --header mcp-method=tools/list
 # and through Bob's agent itself, as in the chat (the model picks the tool)
 if ! why=$(llm_ready); then
   skipped "Bob's agent, in chat: needs the model ($why)"

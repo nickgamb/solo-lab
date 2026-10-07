@@ -204,10 +204,8 @@ ledgerline_research() {
   yq '
     (select(.kind == "MCPServer") | .spec.deployment.env) |= (
       .RESEARCH_ISSUER = strenv(RESOURCE_AS_ISSUER) | .RESEARCH_JWKS_URL = strenv(LEDGERLINE_AS_JWKS_URI))
-    | (select(.kind == "RequestAuthentication") | .spec.jwtRules[0]) |= (
-      .issuer = strenv(RESOURCE_AS_ISSUER) | .jwksUri = strenv(LEDGERLINE_AS_JWKS_URI))
-    | (select(.kind == "AuthorizationPolicy" and .metadata.name == "research-access") | .spec.rules[0].from[0].source.requestPrincipals)
-        = [strenv(RESOURCE_AS_ISSUER) + "/*"]'
+    | (select(.metadata.name == "research-callers") | .spec.traffic.jwtAuthentication.providers[0]) |= (
+      .issuer = strenv(RESOURCE_AS_ISSUER) | .jwks.remote = {"url": strenv(LEDGERLINE_AS_JWKS_URI), "cacheDuration": "5m"})'
 }
 
 # ledgerline_egress_hosts: internet hosts Ledgerline's own services reach:

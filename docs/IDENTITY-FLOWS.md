@@ -157,7 +157,7 @@ sequenceDiagram
   participant R as xaa-relay
   participant E as Bob's IdP (S&V's own Keycloak, Gluu)
   participant L as Ledgerline AS (Keycloak or Gluu)
-  participant M as ledgerline-research (behind Ledgerline's waypoint)
+  participant M as ledgerline-research (behind Ledgerline's MCP gateway)
   A->>G: tools/call /xaa/ledgerline/mcp, Authorization: Bob's access token
   G->>G: verify JWT (aud ai-gateway), caller is an agent's pool, Bob in advisors
   G->>X: request headers, verified token as metadata
@@ -270,13 +270,15 @@ RFC 8693 instead (`subject_token` = the access token, `requested_token_type`
   S&V's IdPs and registers S&V's client key (`make xaa-keys`). It must be a
   separate deployment from any Gluu in `ENTERPRISE_IDP`: an IdP can't vouch
   for Bob to itself, and the install refuses it.
-- **Resource server** (`demos/bob/ledgerline/research.yaml`): a standard Istio
-  waypoint, not an AI gateway. It accepts tokens from Ledgerline's AS only,
-  with audience `ledgerline-research`, and only from the edge. The tool
-  catalog is public; every tool call needs a Ledgerline token, which the
-  server verifies again (signature, issuer, audience, scope `research:read`,
-  a registered client) before any tool runs. It records any ID token that
-  reaches it.
+- **Resource server** (`demos/bob/ledgerline/research.yaml`): Ledgerline's own
+  agentgateway (`mcp-gateway`) in front of its MCP server, reached only from
+  the edge. It reads each MCP request and decides per tool on a token from
+  Ledgerline's AS (audience `ledgerline-research`): anyone may list the
+  catalog, `sector_outlook` and `research_note` need scope `research:read`,
+  `account_info` a signed-in subject. A header the caller sets decides
+  nothing. The server verifies the token again (signature, issuer,
+  audience, scope, a registered client) before any tool runs, and records
+  any ID token that reaches it.
 - **Discovery lane:** the kagent controller's SPIFFE ID may list Ledgerline's
   public catalog through `/xaa/ledgerline` without a user. The route strips
   `Authorization` and `X-Id-Token`, and it can never get a Ledgerline token.
@@ -295,6 +297,8 @@ transitions); the chain is restored on exit.
 | right token, wrong workload (`observability`) | refused |
 | an agent workload calling `idtoken-exchange` directly | refused by the mesh |
 | Bob's S&V token sent straight to `mcp.ledgerline.lab` | refused by Ledgerline |
+| Ledgerline's tool list, no token | listed (the catalog is public) |
+| a research call with no Ledgerline token, claiming to be `tools/list` in the `mcp-method` header | refused at Ledgerline's MCP gateway |
 | Bob asks his agent, in chat, which Ledgerline account he's using | Ledgerline's own account for Bob |
 
 ## 3. UMA for agents (Bob to Alice)

@@ -52,7 +52,7 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | `sv-mcp` | `mcp-waypoint` (agentgateway as the namespace's waypoint) | `mcp-waypoint` | S&V | every caller of S&V tools, via ztunnel |
 | `sv-u4a` | `u4a-adapter` (UMA client: holds Bob's agent's key) | `u4a-adapter` | S&V / Bob | Bob's agent and the kagent controller only |
 | `ledgerline-identity` | Keycloak `ledgerline` (ID-JAG receiver) | `keycloak` | Ledgerline | edge (the realm only); `ledgerline-research` (JWKS) |
-| `ledgerline` | `ledgerline-research` (kmcp) behind an Istio waypoint | `ledgerline-research` | Ledgerline | edge (Ledgerline token for calls, verified again by the server) |
+| `ledgerline` | `ledgerline-research` (kmcp) behind `mcp-gateway`, Ledgerline's agentgateway | `ledgerline-research` | Ledgerline | edge (Ledgerline token for calls, verified again by the server) |
 | `ledgerline-egress` | `egress-waypoint` (Istio waypoint for the internet hosts Ledgerline reaches: its IdPs' keys) | `egress-waypoint` | Ledgerline | `ledgerline-research` and Ledgerline's Keycloak only |
 | `alice-identity` | Keycloak `alice` | `keycloak` | Alice | edge; `alice/uma-as` (JWKS) |
 | `alice` | uma-as (Alice's AS) | `uma-as` | Alice | its waypoint only: the edge (grant surface, and Meridian's uma-pep calling the protection API through it) and the portal (owner API) |
@@ -83,8 +83,11 @@ as kagent controller → atenet-router → worker, each hop mTLS.
      `waypoint-for: service`), for the whole namespace.
    - `alice` and `meridian`: Istio waypoints (`waypoint-for: all`), used only
      by the Services that opt in (`uma-as`, `uma-pep`).
-   - `ledgerline`: an Istio waypoint for the whole namespace (`all`: the edge
-     sends to pod addresses).
+   - `ledgerline`: none. Ledgerline fronts its MCP server with its own
+     agentgateway (`mcp-gateway`), reached from the edge: per-tool
+     authorization on Ledgerline's token, read from each MCP request. A
+     gateway rather than a waypoint, because the edge sends to pod
+     addresses.
    - `sv-egress`: `egress-waypoint` for the upstream IdPs' ServiceEntries.
    - The identity namespaces have none; their fences are L4.
 

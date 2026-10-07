@@ -39,6 +39,10 @@ apply_tmpl "$D/ledgerline/identity.yaml" "$D/ledgerline/egress.yaml"
 deny_internet ledgerline ledgerline-identity
 ledgerline_egress
 K delete networkpolicy research-to-as -n ledgerline --ignore-not-found >/dev/null   # earlier labs
+# earlier labs: an Istio waypoint in front of Ledgerline's MCP server
+K delete gateway waypoint -n ledgerline --ignore-not-found >/dev/null
+K delete requestauthentication ledgerline-tokens -n ledgerline --ignore-not-found >/dev/null
+K delete authorizationpolicy research-access pods-only-from-waypoint -n ledgerline --ignore-not-found >/dev/null
 ok "https://mcp.$LEDGERLINE_DOMAIN  authorization server: ${RESOURCE_AS} ($LEDGERLINE_AS_ISSUER)"
 
 step "Sterling & Vance: workspace, waypoint, agent, Cross App Access"
