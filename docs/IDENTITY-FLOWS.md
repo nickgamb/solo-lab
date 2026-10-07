@@ -23,7 +23,9 @@ cross-company token.
    `platform/60-kagent/edge-sso.yaml`) and keeps two cookies:
    - `BearerToken`: Bob's **access token**, audiences `ai-gateway`,
      `mcp-waypoint` and `xaa-egress`, plus claim `idp` (the IdP of the
-     session). The edge forwards it to kagent as `Authorization`.
+     session) and what that IdP asserted about the sign-in (`idp_acr`,
+     `idp_amr`, `idp_auth_time`). The edge forwards it to kagent as
+     `Authorization`.
    - `IdToken`: Bob's **ID token**, issued to `kagent`. It stays at the edge.
 2. The kagent controller passes `Authorization` to the agent on each A2A turn,
    and nothing else of Bob's.
@@ -62,6 +64,7 @@ sequenceDiagram
   participant T as bob-workspace
   A->>W: tools/call, Authorization: Bob's access token (HBONE, SPIFFE ID of the agent)
   W->>W: verify JWT (aud mcp-waypoint), caller is an agent's pool, Bob in advisors, tool allowed
+  W->>W: assurance gate: does Bob's sign-in meet advisor-workspace's assurance rules?
   W->>K: token exchange (RFC 8693) as client mcp-waypoint, subject = Bob's token
   K-->>W: token for Bob, aud bob-workspace, 120 s
   W->>T: tools/call, Authorization: the exchanged token (Bob's own token removed)
@@ -86,6 +89,13 @@ sequenceDiagram
     `compliance` (no user in the lab is in it; add one to group `compliance`
     at the broker, realm `sterling-vance`, to try it), and a tool the caller may not use is removed from
     `tools/list`, so the agent is never shown it.
+  - Workload profile `advisor-workspace` (Critical, AAL2): the same policy
+    asks the assurance gate (`extAuth`, fail closed) with the verified
+    token's claims about the sign-in. A session that can't meet it is
+    refused before anything is exchanged: 401 with an RFC 9470 challenge
+    when a stronger sign-in at the IdP would pass, 403 when the profile
+    doesn't take sessions from that IdP
+    ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#the-assurance-gate)).
   - Backend auth: `oauthTokenExchange` against S&V's broker as client
     `mcp-waypoint`, with subject `jwt.rawToken.unredacted()`, audience
     `bob-workspace`. The client's token lifespan is 120 s.
@@ -121,6 +131,9 @@ Checks (`make bob-verify`, from real pods with their own identities):
 | Bob's token from another namespace (`observability`) | refused |
 | Bob's token from a workload in `sv-agents` that isn't an agent's pool | refused |
 | Bob's token sent straight to a workspace pod IP | refused (the pod only accepts the waypoint) |
+| Bob's sign-in at S&V's own Keycloak (password and one-time code) | allowed: AAL2 meets `advisor-workspace` |
+| S&V's own Keycloak cut, Bob's new sign-in at the contingency IdP (password only) | refused: 401 `insufficient_user_authentication`, AAL1 below AAL2 |
+| his AAL2 session from before the outage | allowed (the profile takes any allowed IdP's sessions) |
 
 ## 2. Cross App Access (ID-JAG) to a SaaS
 
@@ -194,6 +207,13 @@ RFC 8693 instead (`subject_token` = the access token, `requested_token_type`
   - Route `xaa-ledgerline` on ai-gateway, matched only with a bearer token.
   - JWT, strict, audience `ai-gateway`. Authorization: the caller is an
     agent's worker pool (by ServiceAccount) and `"advisors" in jwt.groups`.
+  - Workload profile `ledgerline-research` (High, AAL2, sessions from the
+    active IdP only): the assurance gate decides before the ID token is
+    fetched or an ID-JAG asked for, so a session from an IdP the chain has
+    moved off, or one too weak, never reaches Ledgerline. `xaa-relay` logs
+    the ID-JAG's `acr`, `amr` and `auth_time` but doesn't decide on them:
+    when S&V's broker vouches (for an IdP that doesn't issue ID-JAGs) they
+    are the broker's own, not the upstream's.
   - External processor `idtoken-exchange` (`apps/idtoken-exchange`, gRPC
     ext_proc): request headers only, fail closed, the verified token passed
     as metadata (`jwt.rawToken`), never read from a header the caller sets.

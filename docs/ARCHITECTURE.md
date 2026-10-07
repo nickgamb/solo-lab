@@ -10,15 +10,16 @@ not by convention ([zero trust](https://www.solo.io/topics/security-and-complian
 | Party | Role in the stories | Domain | Namespaces |
 | --- | --- | --- | --- |
 | **Platform** | the "cloud": mesh, edge, telemetry, substrate, and the Observatory | `ops.lab` | `istio-system` `kgateway-system` `observability` `kiali` `ate-system` `cert-manager` `cnpg-system` `observatory` `ops-identity` |
-| **Sterling & Vance** | Bob's firm. Runs the Solo AI platform (kagent, agentgateway, agentregistry) for its advisors | `sterling.lab` | `sv-identity` `sv-workforce` `sv-egress` `kagent` `agentgateway-system` `agentregistry` `sv-agents` `sv-mcp` `sv-u4a` |
+| **Sterling & Vance** | Bob's firm. Runs the Solo AI platform (kagent, agentgateway, agentregistry) for its advisors | `sterling.lab` | `sv-identity` `sv-workforce` `sv-contingency` `sv-egress` `kagent` `agentgateway-system` `agentregistry` `sv-agents` `sv-mcp` `sv-u4a` |
 | **Alice** | resource owner. Her authorization server, her portal, her IdP | `alice.lab` | `alice` `alice-identity` |
 | **Meridian Wealth** | Alice's brokerage. Holds her account, enforces her terms, can never read them | `meridian.lab` | `meridian` |
 | **Ledgerline Research** | a SaaS S&V subscribes to (Cross App Access target) | `ledgerline.lab` | `ledgerline` `ledgerline-identity` `ledgerline-egress` |
 
 Bob is an employee of Sterling & Vance. S&V's broker (Keycloak, realm
 `sterling-vance` in `sv-identity`) routes his sign-in to the firm's IdPs in
-failover order (Auth0, the Keycloak S&V runs itself in `sv-workforce`, Okta,
-Gluu) and holds no employee passwords, only break-glass accounts for platform
+failover order (Auth0, the Keycloak S&V runs itself in `sv-workforce`, its
+password-only contingency IdP in `sv-contingency`, Okta, Gluu) and holds no
+employee passwords, only break-glass accounts for platform
 admins. It stays the only issuer anything trusts (see Identity continuity).
 Alice is a user of her own IdP (realm `alice` in `alice-identity`).
 
@@ -37,7 +38,9 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | `sv-identity` | Keycloak `sterling-vance` (S&V's broker) | `keycloak` | S&V | edge (the realm only); S&V gateways/apps and `bob-workspace` (JWKS, token exchange); continuity-controller and continuity-sync (admin API) |
 | `sv-identity` | `continuity-controller` (2 replicas, leader-elected) | `continuity-controller` | S&V | nobody (calls out only) |
 | `sv-identity` | `sterling-vance-profile-sync` (CronJob: the directory sync) | `continuity-sync` | S&V | nobody (calls out only) |
-| `sv-workforce` | Keycloak `workforce` (S&V's own IdP, `login.sterling.lab`) | `keycloak` | S&V | edge (browsers, and in-lab callers of `login.sterling.lab`); continuity-sync (admin API) |
+| `sv-identity` | `assurance-gate` (3 replicas: decides each request a gateway policy asks it about) | `assurance-gate` | S&V | the gateways whose policies ask it, on its gRPC port; the Observatory, on its evaluate port |
+| `sv-workforce` | Keycloak `workforce` (S&V's own IdP, `login.sterling.lab`; password and a one-time code) | `keycloak` | S&V | edge (browsers, and in-lab callers of `login.sterling.lab`); continuity-sync (admin API) |
+| `sv-contingency` | Keycloak `contingency` (S&V's contingency IdP, `login-dr.sterling.lab`; password only) | `keycloak` | S&V | edge only |
 | `sv-egress` | `egress-waypoint` (Istio waypoint for external upstream IdPs) | `egress-waypoint` | S&V | the broker's Keycloak, continuity-controller, continuity-sync, idtoken-exchange, xaa-relay, observatory |
 | `kagent` | controller, UI, tools | `kagent-*` | S&V | UI: edge (after sign-in); controller: the UI and the agents' worker pools; tools: the ops agents. The controller's RBAC covers only `kagent`, `sv-agents` and `sv-mcp` |
 | `kagent` | ops agents (k8s, istio, helm, promql, kgateway): SandboxAgents on pool `kagent-ops` | `kagent-ops` | S&V | atenet-router only |
@@ -74,7 +77,7 @@ as kagent controller → atenet-router → worker, each hop mTLS.
    namespaces; ALLOW rules name SPIFFE principals from the table above, and
    a workload no ALLOW names takes no connections. Every namespace that
    holds an IdP, a session store or a signing key also carries an explicit
-   `default-deny` (`sv-identity`, `sv-workforce`, `kagent`, `sv-u4a`,
+   `default-deny` (`sv-identity`, `sv-workforce`, `sv-contingency`, `kagent`, `sv-u4a`,
    `alice`, `alice-identity`, `meridian`, `ledgerline-identity`,
    `ops-identity`, `observatory`, `kiali`), so a workload added there later
    starts closed.
@@ -100,6 +103,14 @@ as kagent controller → atenet-router → worker, each hop mTLS.
      (`/realms/<realm>`) and the login pages' assets (`/resources`): the
      admin console, admin API and `master` realm answer 404, and admins use a
      port-forward.
+   - The assurance gate, at S&V's ai-gateway and mcp-waypoint: in the same
+     policy as their JWT check, each request asks
+     `sv-identity/assurance-gate` (external authorization, fail closed)
+     whether the IdP and sign-in behind the token meet the assurance rule the
+     policy names (a `WorkloadProfile`, or the chain's default rule). It
+     decides from the verified claims and the rules it watches, with no call
+     to an IdP, and refuses what can't meet them
+     (IDENTITY-CONTINUITY.md#assurance-rules).
    - ai-gateway ([agentgateway](https://docs.solo.io/agentgateway/), S&V): JWT validation against S&V's broker,
      per-tool MCP authorization in CEL, RFC 8693 token exchange / ID-JAG
      toward tools, provider credentials for LLMs. The model route admits only
@@ -120,7 +131,9 @@ as kagent controller → atenet-router → worker, each hop mTLS.
    outside its CRD: the CronJob it creates for the directory sync must run as
    `continuity-sync` with no Secret, projected or host volume and no Secret
    in its environment, and the sync may change only `status.sync` on the
-   IdentityContinuity (the active IdP stays the controller's). Confidential
+   IdentityContinuity (the active IdP stays the controller's). Two more keep
+   assurance rules honest: only the controller writes a rule's status,
+   and no policy that asks the assurance gate may fail open. Confidential
    Keycloak clients have full scope off: a token carries only the claims its
    mappers add, and an admin client's token only the `realm-management` roles
    its scope mapping names (`clientScopeMappings` in the realm file).
@@ -144,17 +157,31 @@ Delegation at the MCP waypoint (RFC 8693), Cross App Access to Ledgerline
 ## Identity continuity
 
 `IdentityContinuity` (`kubectl get idc -n sv-identity`) is an ordered chain
-of S&V's IdPs (Okta, Auth0, Gluu, or the Keycloak S&V runs itself in
-`sv-workforce`) for S&V's broker, ending in the broker's break-glass
-accounts for platform admins. The continuity controller probes every IdP
+of S&V's IdPs (Okta, Auth0, Gluu, the Keycloak S&V runs itself in
+`sv-workforce`, or its contingency IdP in `sv-contingency`) for S&V's broker,
+ending in the broker's break-glass accounts for platform admins. The continuity controller probes every IdP
 and points the broker's login at the first healthy one; the broker stays the
 issuer everything trusts and maps every IdP into one profile, and brokered
 users are linked to their S&V user by verified email, so `sub` never changes.
 External upstreams are reached through `sv-egress/egress-waypoint` (one
 ServiceEntry per IdP, exported to every S&V namespace that calls them),
 which is also where an outage is simulated: a DENY policy on that
-ServiceEntry. Cross App Access follows the same active IdP. Details, the
-API and Auth0 setup: [IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md).
+ServiceEntry. Cross App Access follows the same active IdP.
+
+Failover keeps sign-in up; assurance rules keep it from lowering what a
+sign-in proves. The broker carries each upstream's `acr`, `amr` and
+`auth_time` on the session, each IdP declares what they're worth (NIST
+800-63B levels), the chain's `assurancePolicy` is the default rule, and a
+rule (a `WorkloadProfile`, `kubectl get wlp -n sv-identity`) says where a
+group of workloads differs: a minimum assurance, which IdPs may vouch,
+break-glass, sessions; enforced, report-only or off. The assurance gate
+enforces them at the gateway policies that ask it, answers what they decide
+on its evaluate port (the Observatory's Assurance rules), and each rule's
+status says, as the chain moves,
+whether they can be met (`Available`, `Degraded`, `FailedClosed`). The controller also checks every
+IdP's acceptance of the broker's registration (callback, client authentication,
+PKCE, scopes, claims, assurance values). Details, the API and Auth0 setup:
+[IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md).
 
 ## Scaling the design
 
@@ -255,6 +282,20 @@ Known gaps, kept on purpose or pending upstream work:
   an in-memory store re-imported from the realm file on every start. Fine
   for a lab that rebuilds in minutes; production runs Keycloak with a
   database and several replicas.
+- **The broker is a single point of failure.** Identity continuity removes
+  the upstream IdP as one; the broker every workload trusts is still one
+  Keycloak. While it is down, tokens already issued keep validating (every
+  gateway caches its keys), but nobody signs in, refreshes or exchanges a
+  token, and in dev mode a restart ends every session. Production runs the
+  broker highly available: several replicas on a shared database, in more
+  than one zone or cluster (Scaling the design). The assurance gate is built
+  not to add another: no per-request dependency on the broker or an IdP,
+  replicated, and fail closed.
+- **Console sign-ins aren't gated by assurance rules.** The kagent and
+  agentregistry consoles sign people in at the edge (kgateway OAuth2), which
+  doesn't ask the assurance gate; the Observatory lists them as relying on
+  the broker without a rule. What the agents do on the user's behalf is
+  gated where it lands (the workspace, Cross App Access).
 - **The password grant is on** for Alice's `alice-portal`, so the scripted
   checks can sign her in. The checks sign Bob in through the browser flow
   (`sso_token` in `scripts/lib.sh`: kagent's SSO, through the broker to S&V's
@@ -295,7 +336,7 @@ installs every story, so any card runs in any order on the same lab.
 
 | Where | What | Upstream |
 | --- | --- | --- |
-| `tools/keycloak-idjag` | Keycloak 26.7.4 + PR #49998 (ID-JAG issuing), backported | keycloak/keycloak#49998 |
+| `tools/keycloak-idjag` | Keycloak 26.7.4 + PR #49998 (ID-JAG issuing), backported; plus identity continuity's IdP mapper (`session-claims/`, a provider, not a patch) | keycloak/keycloak#49998 |
 | `tools/kagent` 0001 | Go ADK: SandboxAgents call the controller back with the caller's credential (they have no ServiceAccount token). Both editions run this ADK | kagent-dev/kagent (PR to open) |
 | `tools/kagent` 0002 | OSS controller: a SandboxAgent turn sent as the last one closes (HITL approval) no longer races its suspend | kagent-dev/kagent (PR to open) |
 | `tools/substrate-mesh` 0001 | Substrate 0.0.9: WorkerPool pod identity (`serviceAccountName`, labels, annotations) | kagent-dev/substrate (PR to open) |
@@ -310,8 +351,8 @@ installs every story, so any card runs in any order on the same lab.
 20-observability kube-prometheus-stack, Tempo, OTel collector, Kiali
 30-kgateway     edge (HA, pinned NodePorts, per-party TLS listeners)
 40-agentgateway ai-gateway (HA, mesh-native), LLM backend (make llm)
-45-identity     S&V's mesh baseline, S&V's broker (Keycloak, idp.sterling.lab, patched for ID-JAG), S&V's own Keycloak (login.sterling.lab, realm workforce), client secrets for S&V components
-47-continuity   IdentityContinuity CRD and controller, the directory sync (admission policies fence it), S&V egress waypoint
+45-identity     S&V's mesh baseline, S&V's broker (Keycloak, idp.sterling.lab, patched for ID-JAG, with the session-claims mapper), S&V's own Keycloak (login.sterling.lab, realm workforce), its contingency IdP (login-dr.sterling.lab), client secrets for S&V components
+47-continuity   IdentityContinuity and WorkloadProfile CRDs and controller, the directory sync, the assurance gate (admission policies fence them), S&V egress waypoint
 50-substrate    Agent Substrate (patched, ate-system in the mesh)
 60-kagent       kagent + kmcp, model via ai-gateway, ops agents on Substrate
 70-agentregistry agentregistry behind S&V SSO at the edge

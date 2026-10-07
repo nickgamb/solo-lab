@@ -135,6 +135,65 @@ builder, and the directory sync window. See
 
   ![Directory sync schedule and last run](images/observatory-directory-sync-schedule.jpg)
 
+- **Assurance rules** (a button in the rule builder): what a sign-in must
+  prove to reach what relies on the broker, whichever IdP it came through
+  ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#assurance-rules)). Every
+  name comes from the chain and the cluster; every choice (levels,
+  criticality, modes, sessions) from the installed CRDs; every outcome and
+  reason from the assurance gate's evaluate API, for the rules as edited.
+  - **Rules:** the rules, most critical first, each with its phase, mode and
+    whether a gateway policy enforces it; what relies on the broker with no
+    rule (apps that sign in through it, gateway policies that take its tokens
+    without asking the gate), each with **Add a rule for it**; **+ Add rule**;
+    and the **default rule** last. Each opens in the same form: about
+    (description, criticality, owner, obligations), applies to (workloads
+    from the mesh's identities, broker clients), requirements (each field of
+    a rule shows the default rule's value until you override it),
+    **Enforced at** (every gateway policy that takes the broker's tokens,
+    with the rule it asks for: checking one makes that policy ask the gate
+    for this rule, failing closed), and the outcome for each IdP.
+  - **IdPs:** the chain in failover order; for each, what its acr and amr
+    values are worth, its trust checks with **Check now**, and its outcome
+    under every rule.
+  - **What if:** one sign-in (IdP, acr, amr, how long ago) against every
+    rule: the decision, the status a gateway would return, the reason, and
+    the `acr_values` the user would be asked for.
+  - **Code:** the same as HCL, one `default` block, an `idp` block per IdP
+    and a `rule` block per rule; errors are marked at their line. Leaving
+    the tab applies it.
+
+    ```hcl
+    default {
+      minimum     = "AAL1"
+      idps        = []          # every IdP in the chain
+      break_glass = false
+      enforced_at = []
+    }
+
+    idp "keycloak" {
+      otherwise = "AAL1"
+      acr       = { aal2 = "AAL2" }
+    }
+
+    rule "advisor-workspace" {
+      criticality = "Critical"
+      mode        = "Enforce"
+      workloads   = ["sv-mcp/bob-workspace"]
+      minimum     = "AAL2"     # what a rule leaves out is the default's
+      enforced_at = ["sv-mcp/bob-workspace-caller"]
+    }
+    ```
+  - Save writes, as you: the IdentityContinuity (default rule, IdPs), each
+    rule's WorkloadProfile, and each gateway policy whose enforcement
+    changed. Turning enforcement on at a policy also lets its namespace name
+    the gate and its gateway call it, where nothing does yet (a
+    ReferenceGrant and an AuthorizationPolicy beside the gate, labelled
+    `continuity.lab.solo.io/assurance-gate-caller`). The gate applies it all
+    to the next request.
+- Each IdP's card shows its **trust** checks as a badge (every check on
+  hover), and the banner names the enforced rules failing closed while the active
+  IdP can't meet them.
+
 ### Model Continuity
 
 The AI gateway's model chain: HTTPRoute `llm` (agentgateway-system), the
@@ -177,7 +236,8 @@ chain from `.env`.
 
 | Data | Source |
 | --- | --- |
-| Nodes and declared edges | dynamic informers over workloads, Services, Gateway API routes, agentgateway backends and policies, kagent Agents, SandboxAgents, MCP servers, ModelConfigs, Substrate WorkerPools, Istio policies, CNPG clusters, IdentityContinuity; rediscovered periodically |
+| Nodes and declared edges | dynamic informers over workloads, Services, Gateway API routes, agentgateway backends and policies (either edition), kagent Agents, SandboxAgents, MCP servers, ModelConfigs, Substrate WorkerPools, Istio policies, CNPG clusters, IdentityContinuity, WorkloadProfile; rediscovered periodically |
+| Assurance rules | the IdentityContinuity, its WorkloadProfiles, the agentgateway policies that take the broker's tokens or ask the assurance gate, the edge's SSO and the continuity CRDs (`/api/assurance/{ns}/{name}`); outcomes from the assurance gate's evaluate API (`/api/assurance/{ns}/{name}/evaluate`) |
 | Observed edges, L4 rates | Prometheus: `istio_tcp_connections_opened_total{reporter="destination"}` from ztunnel |
 | Requests, token claims | OTLP/HTTP logs on port 4318, from the platform collector |
 | Substrate workers and actors | kagent's `/api/substrate/status` (actor state changes also go to Traffic) |
@@ -197,7 +257,8 @@ How the graph is built:
 The browser gets everything over one Server-Sent Events stream (`/api/stream`:
 `graph`, `stats`, `traffic`, `continuity`, `substrate`), except the model
 chain, which the Model Continuity tab reads from `/api/models` as the
-signed-in admin.
+signed-in admin, and the assurance rules, which their window reads from
+`/api/assurance/{ns}/{name}`.
 
 ## Access model
 
@@ -223,8 +284,10 @@ signed-in admin.
   Observatory any other user or group. The group is bound to ClusterRole
   `observatory-admin`: read what the Observatory shows (no Secrets) and
   change Gateway API, kgateway and agentgateway policies and backends, Istio
-  security and networking, and IdentityContinuity specs. Not workloads,
-  agents, gateway parameters, ConfigMaps, RBAC, admission or `exec`.
+  security and networking, IdentityContinuity specs, and WorkloadProfiles
+  (created, changed and removed; not their status, which is the controller's). Not workloads, agents,
+  gateway parameters, ConfigMaps, RBAC, admission or `exec`. Admission keeps
+  every policy that asks the assurance gate failing closed, theirs included.
 - In `sv-identity` the group may also write Secrets and create Jobs, and
   admission (`platform/90-observatory/admission.yaml`) narrows both: Opaque
   Secrets labelled `continuity.lab.solo.io/credentials` only (the IdPs' and
@@ -247,7 +310,8 @@ signed-in admin.
 
 - `platform/90-observatory/telemetry.yaml`: access-log policies on ai-gateway,
   the S&V MCP waypoint and Meridian's gateway (agentgateway), and on the edge
-  (kgateway ListenerPolicy), all to the OTel collector. agentgateway sends to
+  (kgateway ListenerPolicy), all to the OTel collector. S&V's two gateways
+  also log the assurance gate's decision (`continuity.decision`). agentgateway sends to
   the collector's Service as a backend, so the export carries the gateway's
   mesh identity, which the collector's policy requires.
 - `platform/20-observability/otel-collector.yaml`: access logs arrive on
@@ -274,6 +338,7 @@ signed-in admin.
 | `PARTY_LABEL` | `lab.solo.io/party` | namespace label that defines zones |
 | `LISTEN`, `OTLP_LISTEN` | `:8080`, `:4318` | UI/API and OTLP listeners |
 | `OBSERVATORY_DEV_USER` | | local development only: skip sign-in as this user (ignored in a cluster) |
+| `ASSURANCE_GATE_URL` | | local development only: the assurance gate's evaluate port, through a port-forward (ignored in a cluster) |
 
 ## Using it on another cluster
 
@@ -303,7 +368,8 @@ Runs against your current kubeconfig context, as you.
 cd apps/observatory/web && npm ci && npm run build        # writes ../server/web
 cd ../server && go build -o /tmp/obs .                    # Go 1.27
 kubectl --context kind-solo-lab -n observability port-forward svc/kps-prometheus 19090:9090 &
-OBSERVATORY_DEV_USER=$USER PROMETHEUS_URL=http://127.0.0.1:19090 \
+kubectl --context kind-solo-lab -n sv-identity port-forward svc/assurance-gate 19002:evaluate &
+OBSERVATORY_DEV_USER=$USER PROMETHEUS_URL=http://127.0.0.1:19090 ASSURANCE_GATE_URL=http://127.0.0.1:19002 \
   LISTEN=127.0.0.1:8080 OTLP_LISTEN=127.0.0.1:14318 /tmp/obs
 ```
 

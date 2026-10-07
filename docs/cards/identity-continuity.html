@@ -13,7 +13,7 @@
 <div class="wrap">
   <header class="masthead">
     <h1>Identity Continuity Demo Card</h1>
-    <p class="standfirst">Take the firm's IdP off the network. Sign-in moves to the firm's next IdP, and nothing downstream notices.</p>
+    <p class="standfirst">Take the firm's IdP off the network. Sign-in moves to the firm's next IdP, and nothing downstream notices, unless the next IdP can't prove what a workload requires: then that workload fails closed.</p>
   </header>
   <section class="screens">
     <div class="screen left">
@@ -147,7 +147,7 @@
           <td class="num">5</td>
           <td class="act">
             <span class="where">Right screen</span>
-            <span class="click">Open a new private window, open kagent, and sign in at the firm's own Keycloak as <strong>bob / bob-demo</strong></span>
+            <span class="click">Open a new private window, open kagent, and sign in at the firm's own Keycloak as <strong>bob / bob-demo</strong>, then the code from <code>make totp</code></span>
           </td>
           <td class="say">
             <span class="chip through">Still Bob</span>
@@ -185,6 +185,61 @@
           <td class="say">
             <span class="chip tier">Any IdP</span>
             <span class="lede">The sequence was cut, failover, restore, failback, and every step is recorded.</span>
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">9</td>
+          <td class="act">
+            <span class="where">Observatory</span>
+            <span class="click">Rule builder: <strong>Assurance rules</strong></span>
+          </td>
+          <td class="say">
+            <span class="chip tier">Requirements</span>
+            <span class="lede">Bob's workspace needs a second factor (AAL2), enforced at its gateway. Each IdP's outcome comes from the gate.</span>
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">10</td>
+          <td class="act">
+            <span class="where">Observatory</span>
+            <span class="click">Identity Continuity: drain <strong>Auth0</strong> and Save, then <span class="btn deny">Simulate IdP outage</span> on <strong>Sterling &amp; Vance (Keycloak)</strong></span>
+          </td>
+          <td class="say">
+            <span class="chip held">Weaker IdP</span>
+            <span class="lede">Sign-in falls to the contingency IdP: a password, nothing more.</span>
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">11</td>
+          <td class="act">
+            <span class="where">Observatory</span>
+            <span class="click">The banner, then <strong>Assurance rules</strong>: <strong>What if</strong></span>
+          </td>
+          <td class="say">
+            <span class="chip refused">Fail closed</span>
+            <span class="lede">The workspace and Ledgerline fail closed. A contingency sign-in gets 401 there; the console keeps serving.</span>
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">12</td>
+          <td class="act">
+            <span class="where">Right screen</span>
+            <span class="click">New private window: kagent as <strong>bob / bob-demo</strong> at the contingency IdP, then ask Bob's agent to list his clients</span>
+          </td>
+          <td class="say">
+            <span class="chip refused">Refused</span>
+            <span class="lede">Signed in, but the workspace refuses a password-only session. Traffic shows the gate's reason.</span>
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">13</td>
+          <td class="act">
+            <span class="where">Observatory</span>
+            <span class="click"><span class="btn approve">Restore IdP network</span>, then undrain <strong>Auth0</strong> and Save</span>
+          </td>
+          <td class="say">
+            <span class="chip through">Recovered</span>
+            <span class="lede">The broker never stepped anyone up. A stronger sign-in only ever comes from the IdP.</span>
           </td>
         </tr>
         </tbody>
