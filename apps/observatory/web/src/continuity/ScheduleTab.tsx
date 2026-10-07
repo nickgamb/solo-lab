@@ -66,7 +66,7 @@ export function ScheduleTab({ ic, spec, setSpec, dirty }: {
             <input type="checkbox" checked={on} onChange={e => toggle(e.target.checked)} />Scheduled sync
           </label>
         </div>
-        <p className="subtle small">Reads each employee's profile from the primary IdP into S&amp;V's profile, then writes it to each failover IdP, creating the user there if the primary has them (they're emailed to set their own password). Never passwords, never the username.</p>
+        <p className="subtle small">Reads each employee's profile from the primary IdP into the broker's profile, then writes it to each failover IdP, creating the user there if the primary has them (they're emailed to set their own password). Never passwords, never the username.</p>
         {!sync ? <p className="subtle small">No scheduled sync yet. Turn it on to run daily at 02:00 UTC.</p> : (
           <div className={on ? 'cm-presets' : 'cm-presets off'}>
             <div className="seg" role="radiogroup" aria-label="Schedule">
@@ -123,7 +123,7 @@ export function ScheduleTab({ ic, spec, setSpec, dirty }: {
             <dt>CronJob</dt><dd className="mono">{st.cronJob ?? 'not created yet'}</dd>
             <dt>Last run</dt><dd>{when(st.lastRun)}</dd>
             <dt>Last success</dt><dd>{when(st.lastSuccess)}</dd>
-            <dt>Users</dt><dd>{st.users ?? 0} · {st.updated ?? 0} S&amp;V profiles updated · {st.written ?? 0} failover accounts written · {st.created ?? 0} created · <span className={st.failed ? 'danger-text' : ''}>{st.failed ?? 0} failed</span></dd>
+            <dt>Users</dt><dd>{st.users ?? 0} · {st.updated ?? 0} broker profiles updated · {st.written ?? 0} failover accounts written · {st.created ?? 0} created · <span className={st.failed ? 'danger-text' : ''}>{st.failed ?? 0} failed</span></dd>
             {st.message && <><dt>Message</dt><dd>{st.message}</dd></>}
           </dl>
         ) : <p className="subtle small">The sync hasn't run yet.</p>}

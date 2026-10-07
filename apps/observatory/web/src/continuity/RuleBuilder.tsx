@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { isConflict, putContinuity, putSecret, type ContinuitySpec, type IdentityContinuity, type Tier } from '../api'
+import { isConflict, putContinuity, putSecret, type ContinuitySpec, type IdentityContinuity, type Tier, type TierStatus } from '../api'
+import { AssuranceRules } from './AssuranceRules'
+import { enforced } from './rulesCode'
 import { DirectorySync } from './DirectorySync'
 import { clone, noFill, stable, syncSummary } from './mapping'
 
@@ -21,7 +23,7 @@ function norm(s: ContinuitySpec): string {
 // counts as a failure, draining, health thresholds and failback. Saving
 // writes the IdentityContinuity spec as the signed-in admin; the continuity
 // controller does the rest.
-export function RuleBuilder({ ic, broker }: { ic: IdentityContinuity; broker: string }) {
+export function RuleBuilder({ ic, broker, profiles }: { ic: IdentityContinuity; broker: string; profiles: { name: string; phase?: string; mode?: string }[] }) {
   const ns = ic.metadata.namespace
   const [spec, setSpec] = useState<ContinuitySpec>(() => clone(ic.spec))
   const [base, setBase] = useState(() => norm(ic.spec))
@@ -38,6 +40,7 @@ export function RuleBuilder({ ic, broker }: { ic: IdentityContinuity; broker: st
   const [msg, setMsg] = useState<{ ok: boolean; text: string; conflict?: boolean }>()
   const [busy, setBusy] = useState(false)
   const [mapping, setMapping] = useState(false)
+  const [rules, setRules] = useState(false)
   const staged = useMemo(() => new Set(secrets.current.keys()), [secretsVersion]) // eslint-disable-line react-hooks/exhaustive-deps
   const dirty = norm(spec) !== base || staged.size > 0
 
@@ -132,6 +135,7 @@ export function RuleBuilder({ ic, broker }: { ic: IdentityContinuity; broker: st
                 <input className="field bare" value={t.displayName ?? ''} placeholder={t.name} aria-label={`Display name of ${t.name}`}
                   onChange={e => set(i, { displayName: e.target.value || undefined })} />
                 <div className="subtle mono small ellipsis">{t.oidc?.issuer}</div>
+                <Trust status={ic.status?.tiers?.find(x => x.name === t.name)} />
               </div>
               <button className="btn ghost small" disabled={k === 0} onClick={() => move(k, -1)} title="Move up" aria-label={`Move ${t.name} up`}>↑</button>
               <button className="btn ghost small" disabled={k === idps.length - 1} onClick={() => move(k, 1)} title="Move down" aria-label={`Move ${t.name} down`}>↓</button>
@@ -177,6 +181,12 @@ export function RuleBuilder({ ic, broker }: { ic: IdentityContinuity; broker: st
         <span className="subtle small">{syncSummary(ic.spec)}</span>
       </div>
       {mapping && <DirectorySync ic={ic} onSaved={adopt} onClose={() => setMapping(false)} />}
+      <div className="cm-open">
+        <button className="btn small" disabled={dirty} onClick={() => setRules(true)}
+          title={dirty ? 'Save or reset the rule changes first' : 'What a sign-in must prove to reach each resource, whichever IdP it came through'}>Assurance rules</button>
+        <span className="subtle small">{assuranceSummary(ic, profiles)}</span>
+      </div>
+      {rules && <AssuranceRules ic={ic} onClose={() => setRules(false)} />}
 
       <div className="label" style={{ marginTop: 18 }}>Health checks</div>
       <div className="grid2">
@@ -192,6 +202,24 @@ export function RuleBuilder({ ic, broker }: { ic: IdentityContinuity; broker: st
       </label>
     </aside>
   )
+}
+
+// Trust: the controller's checks of the broker's registration at this IdP,
+// as a badge; each check on hover.
+function Trust({ status }: { status?: TierStatus }) {
+  const checks = status?.trust?.checks
+  if (!checks?.length) return null
+  const fails = checks.filter(c => c.result === 'Fail')
+  const detail = checks.map(c => `${c.result === 'Pass' ? '✓' : c.result === 'Fail' ? '✗' : '?'} ${c.name}${c.message ? `: ${c.message}` : ''}`).join('\n')
+  return fails.length
+    ? <span className="chip bad small" title={detail}>trust: {fails.map(f => f.name).join(', ')}</span>
+    : <span className="chip ok small" title={detail}>trust ok</span>
+}
+
+function assuranceSummary(ic: IdentityContinuity, profiles: { name: string; phase?: string; mode?: string }[]): string {
+  const closed = profiles.filter(p => p.phase === 'FailedClosed' && enforced(p)).length
+  const min = ic.spec.assurancePolicy?.minimum
+  return [`${profiles.length} rule${profiles.length === 1 ? '' : 's'}`, min && `default ${min}`, closed && `${closed} failing closed`].filter(Boolean).join(' · ')
 }
 
 // NumField: a whole number, at least 1. While it's being typed in, an empty

@@ -14,10 +14,14 @@ rules:
 - apiGroups: [""]
   resources: [namespaces, nodes, pods, services]
   verbs: [get, list, watch]
-- apiGroups: [apps, gateway.networking.k8s.io, gateway.kgateway.dev, agentgateway.dev, kagent.dev, ate.dev,
-    security.istio.io, networking.istio.io, postgresql.cnpg.io, continuity.lab.solo.io]
+- apiGroups: [apps, gateway.networking.k8s.io, gateway.kgateway.dev, agentgateway.dev, enterpriseagentgateway.solo.io,
+    kagent.dev, ate.dev, security.istio.io, networking.istio.io, postgresql.cnpg.io, continuity.lab.solo.io]
   resources: ["*"]
   verbs: [get, list, watch]
+- apiGroups: [apiextensions.k8s.io]   # the assurance rules' choices, as their CRDs define them
+  resources: [customresourcedefinitions]
+  resourceNames: [workloadprofiles.continuity.lab.solo.io, identitycontinuities.continuity.lab.solo.io]
+  verbs: [get]
 - apiGroups: [""]
   resources: [users]
   resourceNames: ["observatory:admin"]
@@ -77,6 +81,9 @@ rules:
 - apiGroups: [continuity.lab.solo.io]
   resources: [identitycontinuities]
   verbs: [update, patch]
+- apiGroups: [continuity.lab.solo.io]   # assurance rules: a resource's are added, changed and removed
+  resources: [workloadprofiles]
+  verbs: [create, update, patch, delete]
 - apiGroups: [authorization.k8s.io]   # "may I?", for the editor's read-only mode
   resources: [selfsubjectaccessreviews]
   verbs: [create]

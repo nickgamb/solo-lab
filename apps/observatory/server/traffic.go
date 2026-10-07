@@ -407,6 +407,11 @@ func normalize(a map[string]string, ts string, ix *Index) (Traffic, bool) {
 }
 
 func summarize(t Traffic, a map[string]string, host string) string {
+	// refused by the assurance gate: its decision names the resource's rules
+	// and why
+	if d := a["continuity.decision"]; d != "" && !strings.HasPrefix(d, "allow ") {
+		return "Assurance rules: " + d
+	}
 	switch t.Kind {
 	case "mcp":
 		m := a["mcp.method.name"]

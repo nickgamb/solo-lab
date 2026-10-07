@@ -17,6 +17,11 @@ expect '^yes$' "may change an AuthorizationPolicy" "$(can patch authorizationpol
 expect '^yes$' "may change an HTTPRoute" "$(can patch httproutes.gateway.networking.k8s.io -n agentgateway-system)"
 expect '^yes$' "may change an IdentityContinuity" "$(can update identitycontinuities.continuity.lab.solo.io -n sv-identity)"
 expect '^no$' "may not change its status (the active IdP is the controller's)" "$(can update identitycontinuities.continuity.lab.solo.io --subresource=status -n sv-identity)"
+expect '^yes yes yes$' "may add, change and remove a resource's assurance rules (WorkloadProfile)" \
+  "$(can create workloadprofiles.continuity.lab.solo.io -n sv-identity) $(can update workloadprofiles.continuity.lab.solo.io -n sv-identity) $(can delete workloadprofiles.continuity.lab.solo.io -n sv-identity)"
+expect '^yes yes$' "may let a gateway policy ask the assurance gate (a ReferenceGrant and an AuthorizationPolicy beside it)" \
+  "$(can create referencegrants.gateway.networking.k8s.io -n sv-identity) $(can create authorizationpolicies.security.istio.io -n sv-identity)"
+expect '^no$' "may not change their status (whether they're met is the controller's)" "$(can update workloadprofiles.continuity.lab.solo.io --subresource=status -n sv-identity)"
 expect '^no$' "may not read a Secret" "$(can get secrets -n sv-identity)"
 expect '^no$' "may not list Secrets anywhere" "$(can list secrets -A)"
 expect '^yes$' "may change the model chain (AI gateway backends)" "$(can update agentgatewaybackends.agentgateway.dev -n agentgateway-system)"
@@ -97,7 +102,23 @@ else
   warn "no unlabelled Secret in agentgateway-system to try a takeover on"
 fi
 
-step "Its own account: one Role, to grant the sync a directory's Secret"
+step "Admission: the assurance gate fails closed"
+# a policy that asks the gate, changed to let requests through when it can't
+# answer (as an admin might in the policy editor)
+kind=$(echo "$AGW_POLICY_KIND" | tr '[:upper:]' '[:lower:]')
+gate=$(K get "$kind" bob-workspace-caller -n sv-mcp -o json 2>/dev/null \
+  | jq -c '{apiVersion, kind, metadata: {name: .metadata.name, namespace: .metadata.namespace, resourceVersion: .metadata.resourceVersion}, spec}') || gate=""
+if [ -n "$gate" ]; then
+  plural=$(echo "$kind" | sed 's/y$/ie/')s
+  expect '^201 ' "may change the policy that asks the gate (still FailClosed)" \
+    "$(as_admin PUT "/apis/$AGW_POLICY_API/namespaces/sv-mcp/$plural/bob-workspace-caller" "$gate")"
+  expect '^(403|422) .*fails closed' "may not make it fail open" \
+    "$(as_admin PUT "/apis/$AGW_POLICY_API/namespaces/sv-mcp/$plural/bob-workspace-caller" "$(jq -c '.spec.traffic.extAuth.failureMode = "FailOpen"' <<<"$gate")")"
+else
+  warn "no sv-mcp/bob-workspace-caller policy (make layer-95): gate admission not checked"; fail=$((fail+1))
+fi
+
+step "Its own account: one Role, to grant the sync a directory's Secret; the rules' CRDs"
 SA=system:serviceaccount:observatory:observatory
 as_self() {  # as_self <method> <path> <json>: as the Observatory's own account, dry run
   curl -s -X "$1" "http://127.0.0.1:$port$2?dryRun=All&fieldManager=observatory" -H 'Content-Type: application/json' \
@@ -113,5 +134,7 @@ other=$(K get role continuity-controller-secrets -n sv-identity -o json | jq -c 
 expect '^403 ' "may not change any other Role (the controller's)" \
   "$(as_self PUT /apis/rbac.authorization.k8s.io/v1/namespaces/sv-identity/roles/continuity-controller-secrets "$other")"
 expect '^no$' "may not read a Secret itself" "$(K auth can-i get secrets -n sv-identity --as="$SA" 2>/dev/null)"
+expect '^yes no$' "may read the assurance rules' CRDs (their choices), and no other" \
+  "$(K auth can-i get customresourcedefinitions/workloadprofiles.continuity.lab.solo.io --as="$SA" 2>/dev/null) $(K auth can-i get customresourcedefinitions/agents.kagent.dev --as="$SA" 2>/dev/null)"
 
 echo; [ $fail -eq 0 ] && ok "observatory: $pass/$((pass+fail)) checks passed" || die "observatory: $fail of $((pass+fail)) checks failed"

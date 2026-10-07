@@ -41,6 +41,6 @@ spec:
   description: The kagent console, where advisors talk to their agents
   criticality: Standard
   owner: Wealth platform
-  workloads: [{namespace: kagent, serviceAccount: kagent-controller}]
+  workloads: [{namespace: kagent, serviceAccount: kagent-ui}, {namespace: kagent, serviceAccount: kagent-controller}]
   clients: [kagent]
   allowBreakGlass: true

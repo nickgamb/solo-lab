@@ -105,6 +105,17 @@ type ContinuityView struct {
 	Items      []map[string]any `json:"items"`
 	Partitions []Partition      `json:"partitions"`
 	Paths      []SignInPath     `json:"paths"`
+	// each WorkloadProfile's phase on its chain (its assurance rules met,
+	// or failed closed)
+	Profiles []ProfilePhase `json:"profiles"`
+}
+
+type ProfilePhase struct {
+	Namespace  string `json:"namespace"`
+	Name       string `json:"name"`
+	Continuity string `json:"continuity"`
+	Phase      string `json:"phase,omitempty"`
+	Mode       string `json:"mode,omitempty"`
 }
 
 // SignInPath is derived from the edge's SSO config: an app that signs people
@@ -129,7 +140,11 @@ type Partition struct {
 }
 
 func (c *Continuity) View(ix *Index) ContinuityView {
-	v := ContinuityView{Items: []map[string]any{}, Partitions: []Partition{}, Paths: []SignInPath{}}
+	v := ContinuityView{Items: []map[string]any{}, Partitions: []Partition{}, Paths: []SignInPath{}, Profiles: []ProfilePhase{}}
+	for _, p := range c.k.List("workloadprofiles") {
+		v.Profiles = append(v.Profiles, ProfilePhase{Namespace: p.GetNamespace(), Name: p.GetName(),
+			Continuity: str(p.Object, "spec", "continuity"), Phase: str(p.Object, "status", "phase"), Mode: str(p.Object, "spec", "mode")})
+	}
 	for _, o := range c.k.List("identitycontinuities") {
 		v.Items = append(v.Items, clean(o).Object)
 		broker := ix.hostOf(str(o.Object, "spec", "broker", "keycloak", "url"))

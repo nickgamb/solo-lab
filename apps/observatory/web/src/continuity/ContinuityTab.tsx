@@ -7,6 +7,7 @@ import { nodeTypes, type CardData } from '../topology/nodes'
 import { CAPTION_H, LABEL_H, LABEL_W, TILE } from '../topology/layout'
 import { TrafficRow } from '../traffic/TrafficRow'
 import { RuleBuilder } from './RuleBuilder'
+import { enforced } from './rulesCode'
 import './continuity.css'
 
 const instanceKey = (ic: IdentityContinuity) => `${ic.metadata.namespace}/${ic.metadata.name}`
@@ -143,11 +144,15 @@ function Continuity({ lab, ic, items, setPick }: {
       : t.kind === 'oidc' && (!hops.size || [t.source, t.target, t.via].some(id => !!id && hops.has(id)))).slice(0, 120),
   [lab.traffic, key, idpNames, hops])
   const activeName = tiers.find(t => t.name === active)?.displayName ?? active
+  // this instance's resources with assurance rules, and those the active IdP can't meet
+  const profiles = useMemo(() => (lab.continuity?.profiles ?? []).filter(p => p.namespace === ic.metadata.namespace && p.continuity === ic.metadata.name),
+    [lab.continuity?.profiles, ic.metadata.namespace, ic.metadata.name])
+  const closed = profiles.filter(p => p.phase === 'FailedClosed' && enforced(p)).map(p => p.name)
 
   return (
     <div className="cont">
       <Banner phase={phase} active={activeName} primary={primary?.displayName ?? primary?.name} target={targetName || undefined} since={ic.status?.activeSince}
-        reason={pst && !pst.healthy ? `${pst.reason}${pst.message ? `: ${pst.message}` : ''}` : undefined}
+        reason={pst && !pst.healthy ? `${pst.reason}${pst.message ? `: ${pst.message}` : ''}` : undefined} closed={closed}
         cut={cut} checks={phase === 'recovering' ? `${pst?.consecutiveSuccesses ?? 0}/${health.healthyThreshold ?? 3} healthy checks`
           : phase === 'detecting' ? `${status.get(target?.name ?? '')?.consecutiveFailures ?? 0}/${health.unhealthyThreshold ?? 2} failed checks` : undefined} />
       <div className="cont-main">
@@ -184,7 +189,7 @@ function Continuity({ lab, ic, items, setPick }: {
           </ReactFlow>
           <TierHealth tiers={tiers} status={status} />
         </div>
-        <RuleBuilder key={key} ic={ic} broker={brokerNode?.label ?? 'the broker'} />
+        <RuleBuilder key={key} ic={ic} broker={brokerNode?.label ?? 'the broker'} profiles={profiles} />
       </div>
       <div className="cont-foot">
         <div className="cont-col">
@@ -217,8 +222,8 @@ type Phase = 'ok' | 'detecting' | 'failover' | 'recovering' | 'held' | 'down'
 // Banner: the one line a room reads from the back: which IdP is signing
 // people in, and, during an outage, what happened and what the lab did.
 // target is the IdP the outage button cuts.
-function Banner({ phase, active, primary, target, since, cut, checks, reason }: {
-  phase: Phase; active?: string; primary?: string; target?: string; since?: string; cut?: { path?: string; since?: string; by?: string }; checks?: string; reason?: string
+function Banner({ phase, active, primary, target, since, cut, checks, reason, closed }: {
+  phase: Phase; active?: string; primary?: string; target?: string; since?: string; cut?: { path?: string; since?: string; by?: string }; checks?: string; reason?: string; closed: string[]
 }) {
   const up = (x?: string) => String(x ?? '').toUpperCase()
   const cls = phase === 'ok' ? 'ok' : phase === 'detecting' || phase === 'recovering' || phase === 'held' ? 'warn' : 'bad'
@@ -239,6 +244,7 @@ function Banner({ phase, active, primary, target, since, cut, checks, reason }: 
       <span className={`dot ${cls}`} />
       <span className="bhead">{head}</span>
       {checks && <span className="chip">{checks}</span>}
+      {!!closed.length && <span className="chip bad" title={`their assurance rules can't be met by sign-ins through ${active ?? 'no IdP'}: requests to them are refused`}>failing closed: {closed.join(', ')}</span>}
       {why && <span className="why">{why}</span>}
       {since && phase !== 'detecting' && <span className="since">active since {new Date(since).toLocaleTimeString()}</span>}
     </div>

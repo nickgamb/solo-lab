@@ -1,6 +1,6 @@
 // Where the directory sync canvas puts things: the IdPs stacked in chain
 // order on the left (the primary on top), each wired into the same inputs of
-// S&V's profile on the right. The mapping pairs attributes; which way a value
+// the broker's profile on the right. The mapping pairs attributes; which way a value
 // moves is the IdP's role (primary: read into the profile; failover: written
 // from it).
 

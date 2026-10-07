@@ -17,7 +17,7 @@ type Creds = { id: string; secret: string }
 const TABS: [Tab, string][] = [['canvas', 'Canvas'], ['code', 'Code'], ['schedule', 'Schedule']]
 
 // DirectorySync edits the directory sync: how each IdP's profile attributes
-// pair with S&V's profile on the broker (the primary's read in, the
+// pair with the broker's profile (the primary's read in, the
 // failovers' written out), where each IdP's directory is, and when the sync
 // runs. It works on a copy of the spec; Save writes the whole spec back, so
 // every field it doesn't edit passes through as it was.
@@ -233,7 +233,7 @@ export function DirectorySync({ ic, onClose, onSaved }: { ic: IdentityContinuity
             )}
             {tab === 'code' && (
               <div className="cm-code">
-                <p className="subtle small">Each S&amp;V profile attribute, and each IdP's attribute paired with it as <span className="mono">"idp.attribute"</span>, in chain order: the primary's is read into the profile, the failovers' are written from it. A new key adds an attribute to the profile. Leaving this tab applies it.</p>
+                <p className="subtle small">Each attribute of the broker's profile, and each IdP's attribute paired with it as <span className="mono">"idp.attribute"</span>, in chain order: the primary's is read into the profile, the failovers' are written from it. A new key adds an attribute to the profile. Leaving this tab applies it.</p>
                 <div className="monaco">
                   <Guard>
                     <Suspense fallback={<div className="subtle small">Loading editor…</div>}>

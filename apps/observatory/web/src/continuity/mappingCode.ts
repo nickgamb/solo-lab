@@ -2,7 +2,7 @@ import { BUILTIN_ATTRIBUTES, type AttributeMapping, type ContinuitySpec, type Pr
 import { ATTR_NAME, isBuiltin, withProfile } from './mapping'
 
 // The Code tab: the directory sync's attribute mapping, as JSON. Each key is
-// an attribute of S&V's profile on the broker; its value lists the IdPs'
+// an attribute of the broker's profile; its value lists the IdPs'
 // attributes paired with it, as "<idp>.<attribute path>", in chain order. The
 // primary's (the chain's first IdP) is read into the profile; each
 // failover's is written from it. A key that isn't built in is a profile

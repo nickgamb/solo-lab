@@ -38,6 +38,7 @@ jobs:
         cache-dependency-path: apps/observatory/web/package-lock.json
     - run: npm ci
     - run: npm run lint
+    - run: npm test
     - run: npm run build
   shell:
     runs-on: ubuntu-latest

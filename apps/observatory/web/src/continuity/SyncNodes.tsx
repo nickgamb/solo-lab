@@ -25,7 +25,7 @@ function useRows(id: string, rows: string[]) {
   useEffect(() => { update(id) }, [id, key, update])
 }
 
-// AttrForm adds an attribute to S&V's profile, or edits one: its name (fixed
+// AttrForm adds an attribute to the broker's profile, or edits one: its name (fixed
 // once added), display name, value type, and whether it holds a list.
 function AttrForm({ attr, taken, onDone, onCancel }: {
   attr?: ProfileAttribute; taken: (name: string) => boolean
@@ -73,7 +73,7 @@ function AttrForm({ attr, taken, onDone, onCancel }: {
 
 const host = (u?: string) => { try { return u ? new URL(u).host : '' } catch { return u ?? '' } }
 
-// IdpNode: one IdP's attributes, each wired to the S&V attribute it pairs
+// IdpNode: one IdP's attributes, each wired to the broker's attribute it pairs
 // with. The role says which way the sync moves values.
 export const IdpNode = memo(({ id, data }: NodeProps) => {
   const d = data as IdpData
@@ -90,7 +90,7 @@ export const IdpNode = memo(({ id, data }: NodeProps) => {
         </div>
         <div className="row">
           <span className="mono subtle small ellipsis grow" title={t.oidc?.issuer}>{host(t.oidc?.issuer) || 'no issuer'}</span>
-          <span className="chip" title={primary ? 'Read into S&V\'s profile' : 'Written from S&V\'s profile; users the primary has are created here'}>
+          <span className="chip" title={primary ? "Read into the broker's profile" : "Written from the broker's profile; users the primary has are created here"}>
             {primary ? 'primary · read' : 'failover · written'}</span>
         </div>
       </div>
@@ -119,7 +119,7 @@ export const IdpNode = memo(({ id, data }: NodeProps) => {
   )
 })
 
-// ProfileNode: S&V's profile on the broker, the standard every IdP maps to.
+// ProfileNode: the broker's profile, the standard every IdP maps to.
 // Its attributes are the inputs every IdP wires into.
 export const ProfileNode = memo(({ id, data }: NodeProps) => {
   const d = data as ProfileData
@@ -157,7 +157,7 @@ export const ProfileNode = memo(({ id, data }: NodeProps) => {
         <li className="cm-row add">
           {adding
             ? <AttrForm taken={taken} onDone={x => { const e = c.addAttribute(x); if (!e) setAdding(false); return e }} onCancel={() => setAdding(false)} />
-            : <button className="cm-addbtn nodrag" onClick={() => setAdding(true)} title="Add an attribute to S&V's profile">+ attribute</button>}
+            : <button className="cm-addbtn nodrag" onClick={() => setAdding(true)} title="Add an attribute to the broker's profile">+ attribute</button>}
         </li>
       </ul>
     </div>

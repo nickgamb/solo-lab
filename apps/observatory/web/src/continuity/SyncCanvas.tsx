@@ -53,7 +53,7 @@ function Canvas({ ic, spec, schemas, pending, positions, onMap }: Props) {
       ...(spec.profile?.attributes ?? []).map(a => ({ name: a.name, builtin: false, declared: true, type: a.type ?? 'string', multivalued: !!a.multivalued, displayName: a.displayName })),
       ...[...new Set(orphans)].map(name => ({ name, builtin: false, declared: false, type: 'string' as AttributeType })),
     ]
-    const profile: ProfileData = { title: "S&V profile", issuer: ic.status?.broker?.issuer, attrs }
+    const profile: ProfileData = { title: `${ic.spec.broker?.keycloak?.realm || ic.metadata.name} profile`, issuer: ic.status?.broker?.issuer, attrs }
     nodes.push({ id: 'profile', type: 'profile', position: positions.get('profile') ?? { x: 0, y: 0 }, data: profile, deletable: false, style: { width: PROFILE_W } })
     const edges: Edge[] = idps.flatMap((t, k) => (t.attributes ?? []).map(m => {
       const id = edgeId(t.name, m.attribute)
@@ -86,7 +86,7 @@ function Canvas({ ic, spec, schemas, pending, positions, onMap }: Props) {
     requestAnimationFrame(() => { rf.fitView({ padding: 0.08 }) })
   }, [ready, rf])
 
-  // an IdP's attribute -> the S&V attribute it pairs with
+  // an IdP's attribute -> the broker's attribute it pairs with
   const parse = (x: Connection | Edge) => (x.source.startsWith('idp:') && x.target === 'profile' && x.targetHandle?.startsWith('in:')
     ? { idp: x.source.slice(4), path: x.sourceHandle?.slice(2), attribute: x.targetHandle.slice(3) } : undefined)
   const valid = (x: Connection | Edge) => !!parse(x)?.path
@@ -105,7 +105,7 @@ function Canvas({ ic, spec, schemas, pending, positions, onMap }: Props) {
   return (
     <div className="cm-canvas">
       <div className="cm-legend">
-        <span className="subtle small grow">Wire each IdP's attributes to the S&amp;V attributes they pair with. The sync reads the primary into S&amp;V's profile,
+        <span className="subtle small grow">Wire each IdP's attributes to the broker's profile attributes they pair with. The sync reads the primary into the broker's profile,
           then writes the profile to every failover, so its users can sign in there if it takes over.</span>
         {legend.map(l => <span key={l.name} className="cm-swatch small" style={{ '--tier': l.color } as CSSProperties} title={l.role}>{l.name}</span>)}
       </div>

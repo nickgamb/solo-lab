@@ -19,13 +19,15 @@ import 'monaco-editor/features/wordHighlighter/register'
 import 'monaco-editor/features/wordOperations/register'
 import 'monaco-editor/languages/features/json/register'
 import 'monaco-editor/languages/definitions/yaml/register'
+import 'monaco-editor/languages/definitions/hcl/register'
 import editorWorker from 'monaco-editor/editor/editor.worker?worker'
 import jsonWorker from 'monaco-editor/language/json/json.worker?worker'
 
 // Monaco from the bundle, not a CDN: the observatory works offline and
 // under a strict CSP. Only the editor core, the editing features it uses,
-// and two languages: YAML (the resource editor, tokenized in the page) and
-// JSON (the directory sync's Code tab, checked in its own worker).
+// and three languages: YAML (the resource editor) and HCL (the assurance
+// rules' Code tab), tokenized in the page, and JSON (the directory sync's
+// Code tab, checked in its own worker).
 self.MonacoEnvironment = { getWorker: (_, label) => (label === 'json' ? new jsonWorker() : new editorWorker()) }
 loader.config({ monaco })
 monaco.editor.defineTheme('solo-dark', {
