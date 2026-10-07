@@ -208,15 +208,6 @@ ledgerline_research() {
       .issuer = strenv(RESOURCE_AS_ISSUER) | .jwks.remote = {"url": strenv(LEDGERLINE_AS_JWKS_URI), "cacheDuration": "5m"})'
 }
 
-# ledgerline_edition: OSS agentgateway's MCP policy can't tell a listing from
-# a call, so a per-tool rule would empty the public catalog: there the
-# gateway lists and passes every tool, and the server decides per tool
-ledgerline_edition() {
-  if [ "$AGW_EDITION" = enterprise ]; then cat; return; fi
-  yq '(select(.metadata.name == "research-tools") | .spec.backend.mcp.authorization.policy.matchExpressions)
-    = ["mcp.tool.name in [\"sector_outlook\", \"research_note\", \"account_info\"]"]'
-}
-
 # ledgerline_egress_hosts: internet hosts Ledgerline's own services reach:
 # its Gluu AS's keys (MCP server), the keys of each upstream it trusts for
 # ID-JAGs (its Keycloak). The lab's own hosts are reached through the edge.

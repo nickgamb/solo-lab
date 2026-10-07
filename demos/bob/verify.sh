@@ -102,12 +102,8 @@ check 'http": 40[13]|RBAC'                      "straight to Ledgerline with Bob
 # Ledgerline's own MCP gateway decides per tool from the MCP request itself
 check 'sector_outlook'                          "Ledgerline's catalog is public: listed without a token" $AGENT https://mcp.ledgerline.lab/mcp list
 check 'http": 400.*[Mm]ismatch'                 "a call claiming to be tools/list (mcp-method header): refused at Ledgerline's gateway" $AGENT https://mcp.ledgerline.lab/mcp call sector_outlook '{"sector": "technology"}' --header mcp-method=tools/list
-if [ "$AGW_EDITION" = enterprise ]; then
-  check 'http": 40[13]|not allowed|[Uu]nknown tool|[Ff]orbidden' \
+check 'http": 40[13]|not allowed|[Uu]nknown tool|[Ff]orbidden' \
                                                 "a research call with no Ledgerline token: refused at Ledgerline's gateway" $AGENT https://mcp.ledgerline.lab/mcp call sector_outlook '{"sector": "technology"}'
-else
-  skipped "a research call with no Ledgerline token refused at the gateway: per-tool MCP policy by method is Solo Enterprise for agentgateway's (on OSS the server refuses it)"
-fi
 # and through Bob's agent itself, as in the chat (the model picks the tool)
 if ! why=$(llm_ready); then
   skipped "Bob's agent, in chat: needs the model ($why)"

@@ -27,7 +27,6 @@ running config, with the check that proves it.
 
 | Where | OSS | Solo Enterprise for agentgateway | Checked by |
 | --- | --- | --- | --- |
-| Ledgerline's MCP gateway | validates any Ledgerline token, refuses a forged `mcp-method` header, edge only; the MCP server decides per tool | also decides per tool at the gateway: anyone may list the catalog, research needs scope `research:read`, a call with no token never reaches the server (`mcp.methodName`) | `make bob-verify` |
 
 ## Licences
 
