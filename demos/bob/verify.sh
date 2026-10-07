@@ -110,6 +110,13 @@ check 'http": 40[13]'                           "right token, wrong workload (ob
 check 'http": 40[13]|refused|reset|Broken pipe|Connection' \
                                                 "ask the ID-token exchange directly (ai-gateway only)" $AGENT http://idtoken-exchange.agentgateway-system:8080/mcp call account_info '{}' --token "$BOB"
 check 'http": 40[13]|RBAC'                      "straight to Ledgerline with Bob's S&V token"      $AGENT https://mcp.ledgerline.lab/mcp call account_info '{}' --token "$BOB"
+if [ "$KGATEWAY_EDITION" = enterprise ]; then
+  code=$(curl -s -m 20 --cacert "$LAB_CA_DIR/ca.crt" -o /dev/null -w '%{http_code}' "https://mcp.ledgerline.lab/mcp?q=1%20union%20select%20password%20from%20users")
+  if [ "$code" = 403 ]; then res ok "SQL injection at the edge: refused by the WAF"
+  else res no "SQL injection at the edge: refused by the WAF" "HTTP $code"; fi
+else
+  skipped "SQL injection at the edge refused: the WAF is Solo Enterprise for kgateway's"
+fi
 # Ledgerline's own MCP gateway decides per tool from the MCP request itself
 check 'sector_outlook'                          "Ledgerline's catalog is public: listed without a token" $AGENT https://mcp.ledgerline.lab/mcp list
 check 'http": 400.*[Mm]ismatch'                 "a call claiming to be tools/list (mcp-method header): refused at Ledgerline's gateway" $AGENT https://mcp.ledgerline.lab/mcp call sector_outlook '{"sector": "technology"}' --header mcp-method=tools/list
@@ -163,6 +170,33 @@ else
   if [ "$(echo "$out" | tail -1)" = 200 ] && echo "$out" | sed '$d' | jq -e '.type == "message" and (.content | length > 0)' >/dev/null 2>&1; then
     res ok "Anthropic-format call with an API key, answered by the firm's model"
   else res no "Anthropic-format call with an API key, answered by the firm's model" "$(echo "$out" | tail -1) $(echo "$out" | sed '$d' | head -c 200)"; fi
+fi
+
+# Solo Enterprise for agentgateway: spend controls (platform/40-agentgateway/llm/enterprise.yaml)
+if [ "$AGW_EDITION" != enterprise ]; then
+  skipped "an agent over its token rate limit refused: Solo Enterprise for agentgateway (global token rate limiting)"
+  skipped "an API key over its budget refused: Solo Enterprise for agentgateway (EnterpriseAgentgatewayBudget)"
+elif ! why=$(llm_ready); then
+  skipped "spend controls: need the model ($why)"
+else
+  # advisor-desk may spend 2000 tokens a minute: one long prompt, then any call
+  probe_pod sv-agents advisor-desk
+  pad=$(printf 'The quarterly review covers every client account in the book. %.0s' $(seq 1 220))
+  ask_as_desk() {
+    jq -nc --arg c "$1" '{model: "any", messages: [{role: "user", content: $c}], max_tokens: 50}' \
+      | K exec -i -n sv-agents probe-advisor-desk -- sh -c \
+        "curl -s -m 180 -o /dev/null -w '%{http_code}' http://ai-gateway.agentgateway-system/v1/chat/completions -H 'content-type: application/json' -d @-"
+  }
+  first=$(ask_as_desk "$pad Summarize in one word.") || first=""
+  second=$(ask_as_desk "Say hi.") || second=""
+  if [ "$second" = 429 ]; then res ok "an agent over its token rate limit: refused (advisor-desk, 2000 tokens a minute)"
+  else res no "an agent over its token rate limit: refused (advisor-desk, 2000 tokens a minute)" "first $first, then $second"; fi
+  # key "capped" has a budget of one token a day: its second call, at the latest, is over
+  capped=$(lab_secret_get LLM_API_KEY_CAPPED)
+  a=$(ext /v1/chat/completions '{"model": "any", "max_tokens": 20, "messages": [{"role": "user", "content": "Say hi."}]}' "$capped" | tail -1)
+  b=$(ext /v1/chat/completions '{"model": "any", "max_tokens": 20, "messages": [{"role": "user", "content": "Say hi."}]}' "$capped" | tail -1)
+  if [ "$b" = 429 ]; then res ok "an API key over its budget: refused (key capped, 1 token a day)"
+  else res no "an API key over its budget: refused (key capped, 1 token a day)" "first $a, then $b"; fi
 fi
 
 fallback=$(K get ns agentgateway-system -o jsonpath='{.metadata.annotations.lab\.solo\.io/llm-fallback}' 2>/dev/null || true)

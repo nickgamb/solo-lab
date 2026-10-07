@@ -42,6 +42,8 @@ ok "issued by lab-ca; each party holds its own key"
 
 step "Edge gateway (kgateway-system/edge)"
 apply_tmpl "$D/edge-gateway.yaml" "$D/redirect.yaml"
+# Solo Enterprise for kgateway: a web application firewall on the edge
+[ "$ED" = enterprise ] && K apply -f "$D/waf.yaml" >/dev/null && ok "WAF on the edge: SQL and script injection refused"
 wait_for "edge gateway Programmed" 60 3 \
   K wait -n kgateway-system gateway/edge --for=condition=Programmed --timeout=2s
 # The edge takes traffic in; everything it forwards to is in the cluster.

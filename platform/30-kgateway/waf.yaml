@@ -1,0 +1,23 @@
+# Solo Enterprise for kgateway: a web application firewall on the edge, every
+# party's hostnames (Coraza, run by the shared waf-server). Targeted rules:
+# SQL and script injection in a query string are refused with 403. The OWASP
+# Core Rule Set is one stanza away (coreRuleSet); tune it against the OIDC
+# redirects first, which carry long encoded query strings.
+apiVersion: waf.solo.io/v1alpha1
+kind: WAFPolicy
+metadata: {name: edge-waf, namespace: kgateway-system}
+spec:
+  ruleEngineSettings:
+    inline: |
+      SecRuleEngine On
+  customDirectives:
+  - inline: |
+      SecRule QUERY_STRING "@rx (?i:union[\s+]+select|select[\s+].*[\s+]from|drop[\s+]+table|insert[\s+]+into)" "phase:1,t:none,t:urlDecodeUni,deny,status:403,id:1001,msg:'SQL injection in query string'"
+      SecRule QUERY_STRING "@rx (?i:<script|javascript:|onerror=|onload=)" "phase:1,t:none,t:urlDecodeUni,deny,status:403,id:1002,msg:'script injection in query string'"
+---
+apiVersion: enterprisekgateway.solo.io/v1alpha1
+kind: EnterpriseKgatewayTrafficPolicy
+metadata: {name: edge-waf, namespace: kgateway-system}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: edge}]
+  entWAF: {wafPolicyRef: {name: edge-waf}}

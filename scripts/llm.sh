@@ -69,12 +69,27 @@ else
 fi
 # API keys for callers outside the mesh (llm/external.yaml): only their
 # SHA-256 is in the cluster; the key itself is in .lab/secrets.env
-key=$(lab_secret LLM_API_KEY)
-jq -nc --arg h "sha256:$(printf '%s' "$key" | openssl dgst -sha256 -r | cut -d' ' -f1)" \
+# ("capped" has next to no budget on Solo Enterprise, to show a block)
+hash() { printf 'sha256:%s' "$(printf '%s' "$1" | openssl dgst -sha256 -r | cut -d' ' -f1)"; }
+jq -nc --arg d "$(hash "$(lab_secret LLM_API_KEY)")" --arg c "$(hash "$(lab_secret LLM_API_KEY_CAPPED)")" \
   '{apiVersion: "v1", kind: "ConfigMap", metadata: {name: "llm-api-keys", namespace: "agentgateway-system",
     labels: {"lab.solo.io/llm-api-keys": "true"}},
-    data: {developer: ({keyHash: $h, metadata: {id: "developer", user_id: "developer"}} | tojson)}}' | K apply -f - >/dev/null
-apply_tmpl "$D/route.yaml" "$D/policy.yaml" "$D/external.yaml"
+    data: {developer: ({keyHash: $d, metadata: {id: "developer", user_id: "developer"}} | tojson),
+           capped: ({keyHash: $c, metadata: {id: "capped", user_id: "capped"}} | tojson)}}' | K apply -f - >/dev/null
+apply_tmpl "$D/policy.yaml"
+if [ "$AGW_EDITION" = enterprise ]; then
+  # Solo Enterprise: per-agent token limits and budgets, on the routes'
+  # existing policies (two policies on one route would override each other)
+  apply_tmpl "$D/enterprise.yaml" || warn "token limits and budgets (llm/enterprise.yaml) not applied"
+  render "$D/route.yaml" | yq '(select(.metadata.name == "llm-callers") | .spec.traffic) +=
+    {"entRateLimit": {"global": {"rateLimitConfigRefs": [{"name": "llm-tokens-per-agent"}]}}, "entBudgetEnforcement": {}}' | K apply -f - >/dev/null \
+    || { warn "per-agent token limits not attached; the route without them"; apply_tmpl "$D/route.yaml"; }
+  render "$D/external.yaml" | yq '(select(.metadata.name == "llm-external" and .kind != "HTTPRoute") | .spec.traffic) +=
+    {"entBudgetEnforcement": {}}' | K apply -f - >/dev/null \
+    || { warn "budgets not attached to the external route"; apply_tmpl "$D/external.yaml"; }
+else
+  apply_tmpl "$D/route.yaml" "$D/external.yaml"
+fi
 K annotate namespace agentgateway-system lab.solo.io/llm-provider="$P" lab.solo.io/llm-model="$MODEL" \
   lab.solo.io/llm-fallback="${F:+$F/$FMODEL}" --overwrite >/dev/null
 ok "llm -> $P ($MODEL)${F:+, then $F ($FMODEL)}"

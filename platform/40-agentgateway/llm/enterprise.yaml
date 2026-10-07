@@ -1,0 +1,43 @@
+# Solo Enterprise for agentgateway: spend controls on the model route.
+# (Applied by make llm on the enterprise edition only; docs/ENTERPRISE.md.)
+#
+# Token rate limits per agent, counted by the Solo rate limiter in tokens
+# the provider reports, keyed on the calling agent pool's mesh identity: one
+# agent can't spend another's share. advisor-desk is held tight so the limit
+# shows.
+apiVersion: ratelimit.solo.io/v1alpha1
+kind: RateLimitConfig
+metadata: {name: llm-tokens-per-agent, namespace: agentgateway-system}
+spec:
+  raw:
+    descriptors:
+    - key: caller
+      rateLimit: {unit: MINUTE, requestsPerUnit: 100000}
+    - key: caller
+      value: sv-agents/advisor-desk
+      rateLimit: {unit: MINUTE, requestsPerUnit: 2000}
+    rateLimits:
+    - type: TOKEN
+      actions:
+      - cel:
+          key: caller
+          expression: 'source.identity.namespace + "/" + source.identity.serviceAccount'
+---
+# Budgets, in tokens or dollars (priced from llm/costs.yaml), per API key
+# for callers outside the mesh: the developer key gets a daily allowance;
+# key "capped" has next to none, so a block shows.
+apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+kind: EnterpriseAgentgatewayBudget
+metadata: {name: llm-budgets, namespace: agentgateway-system}
+spec:
+  budgets:
+  - name: developer-daily-usd
+    subject: {virtualKey: developer}
+    limit: {unit: USD, amount: 5}
+    window: {unit: Day}
+    onBudgetExceeded: Block
+  - name: capped-daily-tokens
+    subject: {virtualKey: capped}
+    limit: {unit: Tokens, amount: 1}
+    window: {unit: Day}
+    onBudgetExceeded: Block
