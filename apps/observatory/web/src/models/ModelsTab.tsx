@@ -112,7 +112,7 @@ function Models({ lab, view, setView, reload, err }: {
   const pool = useCallback((n: LabNode) => {
     if (n.kind !== 'substrate' || !lab.substrate) return undefined
     const ws = substrateFor(lab.substrate, n).workers
-    return ws.length ? `Agent Substrate · ${ws.filter(w => w.actorId).length}/${ws.length} busy` : undefined
+    return ws.length ? `Substrate · ${ws.filter(w => w.actorId).length}/${ws.length} busy` : undefined
   }, [lab.substrate])
   const { rfNodes, rfEdges } = useMemo(() => {
     const rfNodes: Node[] = []
@@ -151,7 +151,9 @@ function Models({ lab, view, setView, reload, err }: {
     tile(gw.id, gw, 1, mid, { highlight: ok ? 'ok' : 'bad' })
     ps.forEach((p, i) => {
       const h = health(p)
-      const isLive = p.name === live?.name
+      // the provider answering: the one that answered last, else the first in
+      // rotation (right after a cut, before the next call)
+      const isLive = p.name === (live ?? up)?.name
       const n: LabNode = { id: `model:${p.name}`, kind: 'llm', label: `${i + 1}. ${p.name} · ${kindLabel(p)}`, sub: p.model, group: '',
         status: isLive ? 'ok' : p.outage || h.cls === 'bad' ? 'down' : 'idle', summary: {}, products: [] }
       tile(n.id, n, 2, mid - (ps.length - 1) / 2 + i, { highlight: isLive ? 'ok' : p.outage || h.cls === 'bad' ? 'bad' : undefined,

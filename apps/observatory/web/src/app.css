@@ -27,7 +27,7 @@
 
 /* narrower windows: the four tabs keep their room; the traffic totals are
    on the Traffic tab anyway */
-@media (max-width: 1280px) {
+@media (max-width: 1480px) {
   .top { grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; }
   .tabs { justify-self: center; }
   .product, .status .stat { display: none; }
