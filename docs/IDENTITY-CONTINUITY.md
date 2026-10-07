@@ -288,22 +288,22 @@ failover takes about 10 s after the cut and failback about 15 s after the heal.
 ![Failover: the network to Auth0 cut at the egress, sign-in through the next IdP](images/observatory-continuity-failover.jpg)
 
 - **Map:** every app that signs people in through the broker (found from the
-  edge's SSO configuration), the broker, the egress gateway, and the tiers in
-  order. The live path is green.
+  edge's SSO configuration), the broker, the egress gateway, and the IdPs in
+  chain order. The live path is green.
 - **Banner:**
 
 | State | Banner |
 | --- | --- |
-| first tier active | green: `CONNECTED · <tier> SIGNING PEOPLE IN` |
-| cut, not failed over yet | amber, pulsing: `OUTAGE · <tier> UNREACHABLE · FAILING OVER`, with failed checks counted |
+| first IdP active | green: `CONNECTED · <idp> SIGNING PEOPLE IN` |
+| cut, not failed over yet | amber, pulsing: `OUTAGE · <idp> UNREACHABLE · FAILING OVER`, with failed checks counted |
 | failed over | red, pulsing: `FAILOVER ACTIVE · <active> → REPLACING <first>`, with who cut what and when |
-| healed, verifying | amber: `NETWORK RESTORED · VERIFYING <tier> BEFORE FAILING BACK`, with healthy checks counted |
-| no healthy tier | red: `SIGN-IN UNAVAILABLE · NO HEALTHY TIER` |
+| healed, verifying | amber: `<idp> ANSWERING AGAIN · VERIFYING BEFORE FAILING BACK`, with healthy checks counted |
+| no healthy IdP | red: `SIGN-IN UNAVAILABLE · NO HEALTHY IDP` |
 
 - **Simulate IdP outage / Restore IdP network:** creates or deletes the kill
-  switch policy for the active upstream (a picker appears with more than one
-  upstream). The cut wire reads `NETWORK CUT`, the tier is stamped `OUTAGE`,
-  and the egress gateway turns red. The policy records who cut it.
+  switch policy for the active IdP (a picker appears with more than one).
+  The cut wire reads `NETWORK CUT`, the IdP is stamped `OUTAGE`, and the
+  egress gateway turns red. The policy records who cut it.
 - **Rule builder** (right): IdP order, enable, drain, failover conditions,
   latency limit, client secrets (write-only), new OIDC IdPs (the redirect URI
   to register is shown), health settings, and **Fail back automatically**. Save applies the spec as
@@ -321,6 +321,13 @@ failover takes about 10 s after the cut and failback about 15 s after the heal.
   **Schedule** sets the sync's cron, pauses it, shows the last run and runs
   it now. Directory credentials are write-only and readable by the sync
   alone.
+
+  ![Directory sync canvas: Auth0's detected attributes wired to S&V's profile, S&V's own Keycloak written from it](images/observatory-directory-sync-canvas.jpg)
+
+  ![The same mapping as JSON](images/observatory-directory-sync-code.jpg)
+
+  ![Schedule: cron presets, next runs, the last run and Run now](images/observatory-directory-sync-schedule.jpg)
+
 - **Transitions** and **Identity traffic** (bottom): failovers, cuts and
   restores, and OIDC calls.
 
