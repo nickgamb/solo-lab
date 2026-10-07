@@ -106,8 +106,28 @@ fingerprint before the record is kept.
 
 ### Identity Continuity
 
-The sign-in chain for each `IdentityContinuity`, the outage button and the
-rule builder. See [IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#in-the-observatory).
+The sign-in chain for each `IdentityContinuity`, the outage button, the rule
+builder, and the directory sync window. See
+[IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#in-the-observatory).
+
+![Identity Continuity: the chain from the apps through the broker and the egress to each IdP, with the rule builder](images/observatory-continuity-connected.jpg)
+
+- **Directory sync, Canvas:** the IdPs in chain order on the left (the
+  primary is read, the failovers are written), S&V's profile on the right.
+  Each IdP lists the attributes its directory has; wires pair them with S&V's.
+
+  ![Directory sync canvas](images/observatory-directory-sync-canvas.jpg)
+
+- **Code:** the same mapping as JSON: each S&V attribute, then each IdP's
+  attribute paired with it, in chain order. Leaving the tab applies it to
+  the canvas.
+
+  ![Directory sync as JSON](images/observatory-directory-sync-code.jpg)
+
+- **Schedule:** when the sync runs (UTC cron, with presets), the last run's
+  outcome, and **Run now**.
+
+  ![Directory sync schedule and last run](images/observatory-directory-sync-schedule.jpg)
 
 ## Where the data comes from
 

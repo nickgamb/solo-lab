@@ -231,10 +231,12 @@ function Banner({ phase, active, primary, since, cut, checks, reason }: {
   )
 }
 
+// TierHealth: each IdP's last probe. The broker's break-glass accounts are
+// not an IdP, so they aren't listed.
 function TierHealth({ tiers }: { tiers: TierStatus[] }) {
   return (
     <div className="health">
-      {tiers.map(t => (
+      {tiers.filter(t => t.type !== 'local').map(t => (
         <div key={t.name} className="hrow">
           <span className={`dot ${t.configured === false ? 'idle' : t.healthy ? 'ok' : 'bad'}`} />
           <b>{t.name}</b>

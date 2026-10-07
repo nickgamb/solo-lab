@@ -140,8 +140,22 @@ different lab renders the same way.
   views (All, Identity, Agents & tools, Cross-party), and PNG export.
 - **Traffic:** every gateway's access log, with the verified token claims on
   each request.
-- **Identity Continuity:** the sign-in chain, the outage button, and the rule
-  builder.
+- **Identity Continuity:** the sign-in chain, the outage button, the rule
+  builder, and the directory sync.
+
+![Identity Continuity: Auth0 signing people in through the S&V egress, S&V's own Keycloak as the failover, the rule builder on the right](docs/images/observatory-continuity-connected.jpg)
+
+S&V's broker (Keycloak at `idp.sterling.lab`) routes sign-in to the firm's
+IdPs in failover order: here Auth0, then the Keycloak S&V runs itself at
+`login.sterling.lab`. The directory sync keeps those IdPs in step so
+whichever one is active signs each employee in with the same profile: it
+reads the primary IdP's user attributes into S&V's profile on the broker,
+then writes that profile to every failover IdP, creating the users the
+primary has. Each IdP's attributes are detected from its directory and wired
+to S&V's on a canvas; the same mapping is editable as JSON, and the sync runs
+on a schedule or on demand.
+
+![Directory sync: each IdP's detected attributes wired to S&V's profile; the primary is read, the failovers are written](docs/images/observatory-directory-sync-canvas.jpg)
 
 [![Observatory walkthrough at 4x speed: topology views, hover, details and live YAML, traffic with token claims, and an IdP outage with failover and failback](docs/videos/observatory.gif)](https://youtu.be/Y3P4a7HRvVs)
 
