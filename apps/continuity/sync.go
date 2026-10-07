@@ -65,12 +65,15 @@ func runSync(args []string) int {
 	}
 	orig := ic.DeepCopy()
 	started := metav1.Now()
-	res, err := syncOnce(ctx, c, &ic, *caFile, log)
+	res, schemas, err := syncOnce(ctx, c, &ic, *caFile, log)
 	st := ic.Status.Sync
 	if st == nil {
 		st = &v1.SyncStatus{CronJob: controller.SyncJobName(&ic)}
 	}
 	st.LastRun = &started
+	if len(schemas) > 0 {
+		st.Schemas = schemas
+	}
 	st.Users, st.Updated, st.Written, st.Created, st.Failed = int32(res.Users), int32(res.Updated), int32(res.Written), int32(res.Created), int32(res.Failed)
 	switch {
 	case err != nil:
@@ -94,7 +97,7 @@ func runSync(args []string) int {
 	return 0
 }
 
-func syncOnce(ctx context.Context, c client.Client, ic *v1.IdentityContinuity, caFile string, log *slog.Logger) (profilesync.Result, error) {
+func syncOnce(ctx context.Context, c client.Client, ic *v1.IdentityContinuity, caFile string, log *slog.Logger) (profilesync.Result, map[string][]string, error) {
 	// a run needs no schedule: spec.sync only times them
 	ref := ""
 	if ic.Spec.Sync != nil {
@@ -105,16 +108,17 @@ func syncOnce(ctx context.Context, c client.Client, ic *v1.IdentityContinuity, c
 	}
 	id, secret, err := readCredentials(ctx, c, ic.Namespace, ref, "")
 	if err != nil {
-		return profilesync.Result{}, fmt.Errorf("broker credentials: %w", err)
+		return profilesync.Result{}, nil, fmt.Errorf("broker credentials: %w", err)
 	}
 	b := ic.Spec.Broker.Keycloak
 	kc := keycloak.New(b.URL, b.Realm)
 	kc.SetCredentials(id, secret)
 	prober, err := probe.New(caFile)
 	if err != nil {
-		return profilesync.Result{}, err
+		return profilesync.Result{}, nil, err
 	}
 	hc := prober.HTTPClient(20 * time.Second)
+	schemas := map[string][]string{}
 
 	// The chain's first IdP is the primary: read. Every other IdP with a
 	// directory is a failover: written.
@@ -127,7 +131,7 @@ func syncOnce(ctx context.Context, c client.Client, ic *v1.IdentityContinuity, c
 		}
 		isPrimary := first
 		first = false
-		if t.Directory == nil || len(t.Attributes) == 0 {
+		if t.Directory == nil {
 			continue
 		}
 		dir, err := directory(ctx, c, ic.Namespace, t, prober, hc)
@@ -135,6 +139,11 @@ func syncOnce(ctx context.Context, c client.Client, ic *v1.IdentityContinuity, c
 			// nothing is read from or written to it this run
 			log.Warn("directory unavailable", "idp", t.Name, "err", err.Error())
 			dir = failed{err}
+		} else if s, err := dir.Schema(ctx); err == nil {
+			schemas[t.Name] = s // what the canvas lists for it
+		}
+		if len(t.Attributes) == 0 {
+			continue
 		}
 		p := profilesync.IdP{Name: t.Name, Attributes: t.Attributes, Dir: dir}
 		if isPrimary {
@@ -144,9 +153,9 @@ func syncOnce(ctx context.Context, c client.Client, ic *v1.IdentityContinuity, c
 		}
 	}
 	if primary == nil && len(failovers) == 0 {
-		return profilesync.Result{}, errors.New("no IdP has both a directory and an attribute mapping")
+		return profilesync.Result{}, schemas, errors.New("no IdP has both a directory and an attribute mapping")
 	}
-	return profilesync.Run(ctx, kc, primary, failovers, controller.Writable(ic), func(msg string, kv ...any) { log.Info(msg, kv...) }), nil
+	return profilesync.Run(ctx, kc, primary, failovers, controller.Writable(ic), controller.Lists(ic), func(msg string, kv ...any) { log.Info(msg, kv...) }), schemas, nil
 }
 
 // testDirectory checks one tier's directory along the sync's own path and
@@ -182,6 +191,13 @@ func testDirectory(ctx context.Context, c client.Client, ic *v1.IdentityContinui
 		res.Message = err.Error()
 	} else {
 		res.OK, res.Message = true, fmt.Sprintf("connected: token issued, %d users readable", res.Users)
+		// the canvas lists what the IdP has: keep it in status
+		if len(res.Attributes) > 0 {
+			body, _ := json.Marshal(map[string]any{"status": map[string]any{"sync": map[string]any{"schemas": map[string]any{tier: res.Attributes}}}})
+			if perr := c.Status().Patch(ctx, ic, client.RawPatch(types.MergePatchType, body)); perr != nil {
+				log.Warn("status", "err", perr.Error())
+			}
+		}
 	}
 	b, _ := json.Marshal(res)
 	_ = os.WriteFile("/dev/termination-log", b, 0o644)

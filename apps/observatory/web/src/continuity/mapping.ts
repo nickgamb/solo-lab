@@ -62,16 +62,20 @@ export const setDirectory = (spec: ContinuitySpec, tier: string, d: Directory | 
     return next
   })
 
-export const addAttribute = (spec: ContinuitySpec, name: string) =>
-  withProfile(spec, { ...spec.profile, attributes: [...(spec.profile?.attributes ?? []), { name }] })
+// a profile attribute without its defaults (type string, one value)
+function tidy(a: ProfileAttribute): ProfileAttribute {
+  const out: ProfileAttribute = { ...a }
+  if (!out.displayName) delete out.displayName
+  if (!out.type || out.type === 'string') delete out.type
+  if (!out.multivalued) delete out.multivalued
+  return out
+}
 
-export const toggleMultivalued = (spec: ContinuitySpec, name: string) =>
-  withProfile(spec, { ...spec.profile, attributes: (spec.profile?.attributes ?? []).map(a => {
-    if (a.name !== name) return a
-    const next: ProfileAttribute = { ...a, multivalued: !a.multivalued }
-    if (!next.multivalued) delete next.multivalued
-    return next
-  }) })
+export const addAttribute = (spec: ContinuitySpec, a: ProfileAttribute) =>
+  withProfile(spec, { ...spec.profile, attributes: [...(spec.profile?.attributes ?? []), tidy(a)] })
+
+export const updateAttribute = (spec: ContinuitySpec, a: ProfileAttribute) =>
+  withProfile(spec, { ...spec.profile, attributes: (spec.profile?.attributes ?? []).map(x => (x.name === a.name ? tidy(a) : x)) })
 
 // removing an attribute removes every mapping into it, so none is left dangling
 export function removeAttribute(spec: ContinuitySpec, name: string): ContinuitySpec {

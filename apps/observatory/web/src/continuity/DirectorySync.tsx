@@ -22,7 +22,6 @@ export function DirectorySync({ ic, onClose }: { ic: IdentityContinuity; onClose
   const ns = ic.metadata.namespace
   const [spec, setSpec] = useState<ContinuitySpec>(() => m.clone(ic.spec))
   const [base, setBase] = useState(() => m.stable(ic.spec))
-  const [extras, setExtras] = useState<Record<string, string[]>>({})
   // each IdP's attribute schema, as its directory test read it
   const [schemas, setSchemas] = useState<Record<string, string[]>>({})
   // staged directory credentials, written on Save; a ref so they never sit in rendered state
@@ -80,18 +79,16 @@ export function DirectorySync({ ic, onClose }: { ic: IdentityContinuity; onClose
   }
 
   const actions = useMemo<SyncActions>(() => ({
-    addPath: (tier, path) => setExtras(x => ({ ...x, [tier]: [...(x[tier] ?? []), path] })),
-    dropPath: (tier, path) => setExtras(x => ({ ...x, [tier]: (x[tier] ?? []).filter(p => p !== path) })),
     setDirectory: (tier, d) => setSpec(s => m.setDirectory(s, tier, d)),
     stageCredentials: (tier, id, secret) => { creds.current.set(tier, { id, secret }); setCredsVersion(v => v + 1) },
     writeCredentials,
-    addAttribute: name => {
-      const err = m.attributeError(name, latest.current)
-      if (!err) setSpec(s => m.addAttribute(s, name))
+    addAttribute: a => {
+      const err = m.attributeError(a.name, latest.current)
+      if (!err) setSpec(s => m.addAttribute(s, a))
       return err
     },
+    updateAttribute: a => setSpec(s => m.updateAttribute(s, a)),
     removeAttribute: name => setSpec(s => m.removeAttribute(s, name)),
-    toggleMultivalued: name => setSpec(s => m.toggleMultivalued(s, name)),
     removeMapping: (tier, attribute) => setSpec(s => m.removeMapping(s, tier, attribute)),
     directorySaved: tier => {
       const saved = ic.spec.tiers.find(t => t.name === tier)?.directory
@@ -136,7 +133,7 @@ export function DirectorySync({ ic, onClose }: { ic: IdentityContinuity; onClose
 
   const reset = () => {
     const s = m.clone(ic.spec)
-    setSpec(s); setBase(m.stable(ic.spec)); setExtras({}); setMsg(undefined); setCodeErr(undefined)
+    setSpec(s); setBase(m.stable(ic.spec)); setMsg(undefined); setCodeErr(undefined)
     creds.current.clear(); setCredsVersion(v => v + 1)
     if (tab === 'code') { const y = toCode(s); setCode(y); setCodeBase(y) }
   }
@@ -190,7 +187,7 @@ export function DirectorySync({ ic, onClose }: { ic: IdentityContinuity; onClose
         <SyncContext.Provider value={actions}>
           <div className="cm-body">
             {tab === 'canvas' && (
-              <SyncCanvas ic={ic} spec={spec} extras={extras} schemas={schemas} pending={pending} positions={positions.current}
+              <SyncCanvas ic={ic} spec={spec} schemas={schemas} pending={pending} positions={positions.current}
                 onMap={(idp, path, attribute) => setSpec(s => m.setMapping(s, idp, path, attribute))} />
             )}
             {tab === 'code' && (

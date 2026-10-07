@@ -116,13 +116,11 @@ export function RuleBuilder({ ic, broker }: { ic: IdentityContinuity; broker: st
         <label>unhealthy after<input className="field" type="number" min={1} value={health.unhealthyThreshold ?? 2} onChange={e => setSpec(s => ({ ...s, health: { ...s.health, unhealthyThreshold: Number(e.target.value) } }))} /></label>
         <label>healthy after<input className="field" type="number" min={1} value={health.healthyThreshold ?? 3} onChange={e => setSpec(s => ({ ...s, health: { ...s.health, healthyThreshold: Number(e.target.value) } }))} /></label>
       </div>
-      <div className="label" style={{ marginTop: 14 }}>Failback</div>
-      <div className="seg">
-        {(['Automatic', 'Manual'] as const).map(f => (
-          <button key={f} className={(spec.failback ?? 'Automatic') === f ? 'on' : ''} onClick={() => setSpec(s => ({ ...s, failback: f }))}>{f}</button>
-        ))}
-      </div>
-      <p className="subtle small">Automatic moves back up the chain once a higher IdP passes its healthy threshold. Manual stays put until you drain the active IdP or reorder.</p>
+      <label className="tog" style={{ marginTop: 14 }}
+        title="On: sign-in moves back to a higher IdP once it's healthy again. Off: it stays on the current IdP until that one fails or you drain it.">
+        <input type="checkbox" checked={(spec.failback ?? 'Automatic') === 'Automatic'}
+          onChange={e => setSpec(s => ({ ...s, failback: e.target.checked ? 'Automatic' : 'Manual' }))} />Fail back automatically
+      </label>
     </aside>
   )
 }

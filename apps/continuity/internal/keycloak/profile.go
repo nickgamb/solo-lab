@@ -12,10 +12,25 @@ import (
 // OwnerAnnotation marks the user profile attributes this controller owns.
 const OwnerAnnotation = "continuity.lab.solo.io/instance"
 
-// Attr is one attribute of the unified profile.
+// Attr is one attribute of the profile: its value's type (string, integer,
+// number, boolean, date, email, uri) and whether it holds a list.
 type Attr struct {
-	Name, DisplayName string
-	Multivalued       bool
+	Name, DisplayName, Type string
+	Multivalued             bool
+}
+
+// typeRules are the user profile validators and admin console input for
+// each type.
+var typeRules = map[string]struct {
+	validations map[string]any
+	input       string
+}{
+	"integer": {map[string]any{"integer": map[string]any{}}, "html5-number"},
+	"number":  {map[string]any{"double": map[string]any{}}, "html5-number"},
+	"boolean": {map[string]any{"options": map[string]any{"options": []any{"true", "false"}}}, "select"},
+	"date":    {map[string]any{"local-date": map[string]any{}}, "html5-date"},
+	"email":   {map[string]any{"email": map[string]any{}}, "html5-email"},
+	"uri":     {map[string]any{"uri": map[string]any{}}, "html5-url"},
 }
 
 // Builtin are the realm's own profile attributes: never added or removed here.
@@ -91,6 +106,12 @@ func profileAttr(owner string, a Attr, base map[string]any) map[string]any {
 		ann = map[string]any{}
 	}
 	ann[OwnerAnnotation] = owner
+	delete(ann, "inputType")
+	m["validations"] = map[string]any{}
+	if r, ok := typeRules[a.Type]; ok {
+		m["validations"] = r.validations
+		ann["inputType"] = r.input
+	}
 	m["annotations"] = ann
 	return m
 }

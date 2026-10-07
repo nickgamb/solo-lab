@@ -61,7 +61,7 @@ export function applyCode(spec: ContinuitySpec, text: string): ContinuitySpec {
       maps.get(idp)!.push({ attribute: attr, path })
     }
   }
-  // attributes keep their display name and multivalued setting
+  // attributes keep their display name
   const prev = new Map((spec.profile?.attributes ?? []).map(a => [a.name, a]))
   const attributes: ProfileAttribute[] = attrs.map(name => prev.get(name) ?? { name })
   const next = withProfile(spec, { ...spec.profile, attributes })

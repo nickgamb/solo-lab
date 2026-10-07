@@ -48,7 +48,8 @@ type Directory interface {
 	Enroll(ctx context.Context, id string) error
 	// Check gets a token and reads the users' count, never their records.
 	Check(ctx context.Context) (int, error)
-	// Schema lists the attribute paths the directory knows.
+	// Schema lists the attribute paths the directory has: its schema, and
+	// the custom attribute names its users carry (names only).
 	Schema(ctx context.Context) ([]string, error)
 }
 
@@ -363,10 +364,25 @@ func (d *auth0) Check(ctx context.Context) (int, error) {
 	return r.Total, err
 }
 
-// Schema: Auth0 has no schema API; its root profile fields, and metadata by
-// path (user_metadata.<key>, app_metadata.<key>).
-func (d *auth0) Schema(context.Context) ([]string, error) {
-	return slices.Clone(auth0Root), nil
+// Schema: Auth0 has no schema API: its root profile fields, and the
+// user_metadata and app_metadata keys its users carry (a sample of users,
+// only the keys read back).
+func (d *auth0) Schema(ctx context.Context) ([]string, error) {
+	var users []map[string]any
+	if err := d.call(ctx, http.MethodGet, "/users?per_page=100&fields=user_metadata,app_metadata&include_fields=true", nil, &users); err != nil {
+		return nil, err
+	}
+	out := slices.Clone(auth0Root)
+	for _, u := range users {
+		for _, root := range []string{"user_metadata", "app_metadata"} {
+			if m, ok := u[root].(map[string]any); ok {
+				for k := range m {
+					out = append(out, root+"."+k)
+				}
+			}
+		}
+	}
+	return uniq(out), nil
 }
 
 // ---- Keycloak admin API, one realm (base .../admin/realms/<realm>). The id
@@ -471,7 +487,8 @@ func (d *keycloakDir) Check(ctx context.Context) (int, error) {
 	return n, d.call(ctx, http.MethodGet, "/users/count", nil, &n)
 }
 
-// Schema: the realm's user profile attributes.
+// Schema: the realm's user profile attributes, and the attribute names its
+// users carry (a sample of users, only the names read back).
 func (d *keycloakDir) Schema(ctx context.Context) ([]string, error) {
 	var r struct {
 		Attributes []struct {
@@ -487,7 +504,17 @@ func (d *keycloakDir) Schema(ctx context.Context) ([]string, error) {
 			out = append(out, a.Name)
 		}
 	}
-	return out, nil
+	var users []struct {
+		Attributes map[string]any `json:"attributes"`
+	}
+	if err := d.call(ctx, http.MethodGet, "/users?briefRepresentation=false&max=100", nil, &users); err == nil {
+		for _, u := range users {
+			for k := range u.Attributes {
+				out = append(out, k)
+			}
+		}
+	}
+	return uniq(out), nil
 }
 
 // ---- paths
@@ -615,6 +642,18 @@ func Values(v any) []string {
 	default:
 		return []string{fmt.Sprint(x)}
 	}
+}
+
+// uniq: in first-seen order, without repeats
+func uniq(l []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range l {
+		if !seen[s] {
+			seen[s], out = true, append(out, s)
+		}
+	}
+	return out
 }
 
 func sortedKeys(m map[string][]string) []string {

@@ -172,11 +172,27 @@ spec:
                         displayName:
                           type: string
                         multivalued:
+                          description: Holds a list of values; otherwise one.
                           type: boolean
                         name:
                           description: The attribute's name in the broker's user profile.
                           maxLength: 64
                           pattern: ^[a-zA-Z][a-zA-Z0-9_.-]*$
+                          type: string
+                        type:
+                          default: string
+                          description: |-
+                            The value's type, checked by the broker when a value is written:
+                            string, integer, number, boolean (true or false), date (yyyy-mm-dd),
+                            email or uri.
+                          enum:
+                          - string
+                          - integer
+                          - number
+                          - boolean
+                          - date
+                          - email
+                          - uri
                           type: string
                       required:
                       - name
@@ -541,6 +557,15 @@ spec:
                     type: string
                   message:
                     type: string
+                  schemas:
+                    additionalProperties:
+                      items:
+                        type: string
+                      type: array
+                    description: |-
+                      The attribute paths each IdP's directory has, as last read (names
+                      only, never values).
+                    type: object
                   updated:
                     format: int32
                     type: integer

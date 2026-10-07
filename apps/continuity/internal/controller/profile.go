@@ -45,7 +45,7 @@ func profileAttrs(ic *v1.IdentityContinuity) []keycloak.Attr {
 	}
 	out := make([]keycloak.Attr, 0, len(ic.Spec.Profile.Attributes))
 	for _, a := range ic.Spec.Profile.Attributes {
-		out = append(out, keycloak.Attr{Name: a.Name, DisplayName: a.DisplayName, Multivalued: a.Multivalued})
+		out = append(out, keycloak.Attr{Name: a.Name, DisplayName: a.DisplayName, Type: a.Type, Multivalued: a.Multivalued})
 	}
 	return out
 }
@@ -56,6 +56,17 @@ func Writable(ic *v1.IdentityContinuity) []string {
 	out := slices.Clone(keycloak.Builtin)
 	for _, a := range profileAttrs(ic) {
 		out = append(out, a.Name)
+	}
+	return out
+}
+
+// Lists are the profile attributes that hold a list of values.
+func Lists(ic *v1.IdentityContinuity) []string {
+	var out []string
+	for _, a := range profileAttrs(ic) {
+		if a.Multivalued {
+			out = append(out, a.Name)
+		}
 	}
 	return out
 }

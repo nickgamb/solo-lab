@@ -72,7 +72,14 @@ type ProfileAttribute struct {
 	// +kubebuilder:validation:MaxLength=64
 	Name        string `json:"name"`
 	DisplayName string `json:"displayName,omitempty"`
-	Multivalued bool   `json:"multivalued,omitempty"`
+	// The value's type, checked by the broker when a value is written:
+	// string, integer, number, boolean (true or false), date (yyyy-mm-dd),
+	// email or uri.
+	// +kubebuilder:validation:Enum=string;integer;number;boolean;date;email;uri
+	// +kubebuilder:default=string
+	Type string `json:"type,omitempty"`
+	// Holds a list of values; otherwise one.
+	Multivalued bool `json:"multivalued,omitempty"`
 }
 
 // Sync schedules the directory sync. For each user linked at the broker:
@@ -342,4 +349,7 @@ type SyncStatus struct {
 	Created int32  `json:"created,omitempty"`
 	Failed  int32  `json:"failed,omitempty"`
 	Message string `json:"message,omitempty"`
+	// The attribute paths each IdP's directory has, as last read (names
+	// only, never values).
+	Schemas map[string][]string `json:"schemas,omitempty"`
 }

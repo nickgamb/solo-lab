@@ -4,15 +4,14 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { BUILTIN_ATTRIBUTES, type ContinuitySpec, type Directory, type IdentityContinuity } from '../api'
-import { kindOf } from './mapping'
+import { BUILTIN_ATTRIBUTES, type AttributeType, type ContinuitySpec, type IdentityContinuity } from '../api'
 import { useSync } from './syncContext'
 import { IDP_W, PROFILE_W, idpColor, idpPositions } from './syncLayout'
 import { IdpNode, MappingEdge, ProfileNode, type AttrRow, type IdpData, type MapEdgeData, type PathRow, type ProfileData } from './SyncNodes'
 
 type XY = { x: number; y: number }
 type Props = {
-  ic: IdentityContinuity; spec: ContinuitySpec; extras: Record<string, string[]>; schemas: Record<string, string[]>
+  ic: IdentityContinuity; spec: ContinuitySpec; schemas: Record<string, string[]>
   pending: Set<string>; positions: Map<string, XY>; onMap: (idp: string, path: string, attribute: string) => void
 }
 
@@ -20,20 +19,11 @@ const nodeTypes = { idp: IdpNode, profile: ProfileNode }
 const edgeTypes = { mapping: MappingEdge }
 const edgeId = (idp: string, attribute: string) => `${idp}|${attribute}`
 
-const ENTERPRISE = 'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User'
-// what each kind of IdP commonly holds, until its directory's schema is read
-const COMMON: Record<Directory['type'], string[]> = {
-  scim: ['emails[primary eq true].value', 'name.givenName', 'name.familyName', 'displayName', 'title',
-    'phoneNumbers[type eq "work"].value', `${ENTERPRISE}:department`, `${ENTERPRISE}:employeeNumber`, `${ENTERPRISE}:costCenter`],
-  auth0: ['email', 'given_name', 'family_name', 'name', 'nickname', 'user_metadata.department'],
-  keycloak: ['email', 'firstName', 'lastName'],
-}
-
 export function SyncCanvas(props: Props) {
   return <ReactFlowProvider><Canvas {...props} /></ReactFlowProvider>
 }
 
-function Canvas({ ic, spec, extras, schemas, pending, positions, onMap }: Props) {
+function Canvas({ ic, spec, schemas, pending, positions, onMap }: Props) {
   const c = useSync()
   const [sel, setSel] = useState<string>()
 
@@ -42,12 +32,11 @@ function Canvas({ ic, spec, extras, schemas, pending, positions, onMap }: Props)
     const idps = spec.tiers.filter(t => t.type === 'oidc')
     const declared = new Set((spec.profile?.attributes ?? []).map(a => a.name))
     const data: IdpData[] = idps.map((t, k) => {
+      // what the IdP has: its directory's attributes as last detected (by
+      // the sync or Test connection), and any already mapped
       const mapped = (t.attributes ?? []).map(m => m.path)
-      const known = [...COMMON[t.directory?.type ?? kindOf(t.oidc?.issuer)], ...(schemas[t.name] ?? [])]
-      const extra = extras[t.name] ?? []
-      const paths: PathRow[] = [...new Set([...mapped, ...known, ...extra])].map(path => ({
-        path, mapped: mapped.includes(path), custom: extra.includes(path) && !known.includes(path),
-      }))
+      const detected = schemas[t.name] ?? ic.status?.sync?.schemas?.[t.name] ?? []
+      const paths: PathRow[] = [...new Set([...mapped, ...detected])].map(path => ({ path, mapped: mapped.includes(path) }))
       return { tier: t, order: k + 1, role: k === 0 ? 'primary' : 'failover', color: idpColor(k), paths, credsPending: pending.has(t.name) }
     })
     const at = idpPositions(data.map(d => d.paths.length))
@@ -60,9 +49,9 @@ function Canvas({ ic, spec, extras, schemas, pending, positions, onMap }: Props)
     const orphans = idps.flatMap(t => (t.attributes ?? []).map(m => m.attribute))
       .filter(a => !(BUILTIN_ATTRIBUTES as readonly string[]).includes(a) && !declared.has(a))
     const attrs: AttrRow[] = [
-      ...BUILTIN_ATTRIBUTES.filter(a => a !== 'username').map(name => ({ name, builtin: true, multivalued: false, declared: true })),
-      ...(spec.profile?.attributes ?? []).map(a => ({ name: a.name, builtin: false, multivalued: !!a.multivalued, declared: true })),
-      ...[...new Set(orphans)].map(name => ({ name, builtin: false, multivalued: false, declared: false })),
+      ...BUILTIN_ATTRIBUTES.filter(a => a !== 'username').map(name => ({ name, builtin: true, declared: true, type: (name === 'email' ? 'email' : 'string') as AttributeType })),
+      ...(spec.profile?.attributes ?? []).map(a => ({ name: a.name, builtin: false, declared: true, type: a.type ?? 'string', multivalued: !!a.multivalued, displayName: a.displayName })),
+      ...[...new Set(orphans)].map(name => ({ name, builtin: false, declared: false, type: 'string' as AttributeType })),
     ]
     const profile: ProfileData = { title: "S&V profile", issuer: ic.status?.broker?.issuer, attrs }
     nodes.push({ id: 'profile', type: 'profile', position: positions.get('profile') ?? { x: 0, y: 0 }, data: profile, deletable: false, style: { width: PROFILE_W } })
@@ -76,7 +65,7 @@ function Canvas({ ic, spec, extras, schemas, pending, positions, onMap }: Props)
     }))
     const legend = data.map(d => ({ name: d.tier.displayName || d.tier.name, color: d.color, role: d.role }))
     return { built: nodes, edges, legend }
-  }, [ic, spec, extras, schemas, pending, positions, sel])
+  }, [ic, spec, schemas, pending, positions, sel])
 
   // React Flow owns positions and measurements; the spec owns what each node shows
   const [nodes, setNodes, onNodesChange] = useNodesState(built)

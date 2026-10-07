@@ -98,3 +98,23 @@ func TestEnsureProfileOwnsOnlyItsAttributes(t *testing.T) {
 		t.Errorf("an unchanged profile must not be written again (puts %d)", f.puts)
 	}
 }
+
+func TestProfileAttributeTypes(t *testing.T) {
+	f := &fakeAdmin{profile: map[string]any{"attributes": []any{map[string]any{"name": "username"}}}}
+	c := newFake(t, f)
+	if _, err := c.EnsureProfile(context.Background(), "ns/a", []Attr{{Name: "employeeNumber", Type: "integer"},
+		{Name: "groups", Multivalued: true}, {Name: "department", Type: "string"}}); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]map[string]any{}
+	for _, x := range f.profile["attributes"].([]any) {
+		m := x.(map[string]any)
+		got[m["name"].(string)] = m
+	}
+	if v := got["employeeNumber"]["validations"].(map[string]any); v["integer"] == nil || got["employeeNumber"]["annotations"].(map[string]any)["inputType"] != "html5-number" {
+		t.Errorf("integer: %v", got["employeeNumber"])
+	}
+	if got["groups"]["multivalued"] != true || len(got["department"]["validations"].(map[string]any)) != 0 || got["department"]["multivalued"] != false {
+		t.Errorf("groups %v, department %v", got["groups"], got["department"])
+	}
+}

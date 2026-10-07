@@ -97,10 +97,8 @@
 .cm-row.undeclared { background: color-mix(in hsl, var(--bad) 8%, transparent); }
 .cm-row.add:hover { background: transparent; }
 .cm-disc { font: 500 9.5px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .04em; color: var(--text-subtle); flex: none; }
-.cm-x, .cm-multi, .cm-link, .cm-addbtn { border: 0; background: transparent; cursor: pointer; padding: 0 3px; color: var(--text-subtle); border-radius: 4px; flex: none; }
+.cm-x, .cm-link, .cm-addbtn { border: 0; background: transparent; cursor: pointer; padding: 0 3px; color: var(--text-subtle); border-radius: 4px; flex: none; }
 .cm-x:hover { color: var(--bad); }
-.cm-multi { font: 500 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .04em; padding: 3px 5px; border: 1px solid var(--border-soft); }
-.cm-multi.on { background: var(--accent-soft); color: var(--accent-2); }
 .cm-link { color: var(--accent-2); font-size: 12px; }
 .cm-link:hover, .cm-addbtn:hover { text-decoration: underline; }
 .cm-addbtn { font-size: 12px; color: var(--accent-2); padding: 0; }
@@ -148,3 +146,8 @@
 .cm-cron .mono { font-size: 13px; color: var(--accent-2); }
 .cm-test { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .cm-test .ok-text { color: var(--ok); }
+.cm-type { font: 500 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .04em; color: var(--text-subtle); padding: 3px 5px; border: 1px solid var(--border-soft); border-radius: 4px; background: transparent; flex: none; }
+button.cm-type { cursor: pointer; }
+button.cm-type:hover { color: var(--text); border-color: var(--border); }
+.cm-attr-form { display: flex; flex-direction: column; gap: 6px; width: 100%; padding: 6px 0; }
+.cm-attr-form label.small { display: flex; flex-direction: column; gap: 3px; }

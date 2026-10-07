@@ -120,7 +120,7 @@ doesn't create flows or roles, so the realm needs them first
 | `tiers[].failoverWhen` | which probe results count against the tier: `unreachable`, `serverError`, `invalidDiscovery` (each default true), `latencyAboveMs` (must be below `health.timeoutSeconds`: a slower answer times out first) |
 | `health` | `intervalSeconds`, `timeoutSeconds`, `unhealthyThreshold` (failures in a row to go down), `healthyThreshold` (successes in a row to come back) |
 | `failback` | `Automatic` (move back up as soon as a higher tier is healthy) or `Manual` |
-| `profile.attributes[]` | S&V's profile beyond `username`, `email`, `firstName`, `lastName`: `name`, `displayName`, `multivalued` |
+| `profile.attributes[]` | S&V's profile beyond `username`, `email`, `firstName`, `lastName`: `name`, `displayName`, `type` (`string` default, `integer`, `number`, `boolean`, `date`, `email`, `uri`: checked by the broker), `multivalued` (a list) |
 | `sync.schedule` | cron, UTC; `sync.suspend` pauses it |
 | `sync.credentialsRef` | Secret with the sync's realm client (default `continuity-sync`) |
 
@@ -132,7 +132,8 @@ the local tier), `activeSince`, `broker.issuer`, `egressNamespace`, per tier (`c
 successes, and `redirectURI`: the callback the upstream app must allow),
 the last 20 `transitions`, `sync` (CronJob, last run and last success,
 users, S&V profiles updated, failover accounts written and created,
-failures), and
+failures, and each IdP's attribute paths as its directory last showed
+them), and
 conditions `Ready`, `Degraded` (not on the first tier) and `ProfileApplied`. The controller also emits Kubernetes events (`TierHealthy`,
 `TierUnhealthy`, failovers).
 
@@ -305,13 +306,15 @@ failover takes about 10 s after the cut and failback about 15 s after the heal.
   and the egress gateway turns red. The policy records who cut it.
 - **Rule builder** (right): IdP order, enable, drain, failover conditions,
   latency limit, client secrets (write-only), new OIDC IdPs (the redirect URI
-  to register is shown), health settings, failback. Save applies the spec as
+  to register is shown), health settings, and **Fail back automatically**. Save applies the spec as
   you.
 - **Directory sync** (from the rule builder): the IdPs in chain order on
   the left (primary, failovers), S&V's profile on the right. Each IdP lists
-  its attributes (its directory's usual ones, the schema Test connection
-  reads, or added with **+**); wire them to the S&V attributes they pair
-  with. Each IdP's directory has **Test connection** (the saved settings,
+  the attributes its directory has, as the sync or **Test connection** last
+  detected them (Auth0: its profile fields and the metadata keys its users
+  carry); wire them to the S&V attributes they pair with. Attributes are
+  added only to S&V's profile (**+ attribute**: name, display name, type,
+  list). Each IdP's directory has **Test connection** (the saved settings,
   run as the sync). **Code** edits the same mapping as JSON, each S&V
   attribute and the IdPs' attributes paired with it, in chain order
   (`"department": ["auth0.user_metadata.department", "keycloak.department"]`);

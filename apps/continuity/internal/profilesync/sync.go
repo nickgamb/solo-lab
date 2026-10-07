@@ -47,7 +47,7 @@ const (
 // to each failover, creating the user there if the primary has them and the
 // failover doesn't. writable are the
 // broker attributes a mapping may carry; username never is.
-func Run(ctx context.Context, b Broker, primary *IdP, failovers []IdP, writable []string, logf func(string, ...any)) Result {
+func Run(ctx context.Context, b Broker, primary *IdP, failovers []IdP, writable, lists []string, logf func(string, ...any)) Result {
 	var res Result
 	for first := 0; ; first += pageSize {
 		page, err := b.Users(ctx, first, pageSize)
@@ -56,7 +56,7 @@ func Run(ctx context.Context, b Broker, primary *IdP, failovers []IdP, writable 
 			return res
 		}
 		for _, u := range page {
-			syncUser(ctx, b, u, primary, failovers, writable, logf, &res)
+			syncUser(ctx, b, u, primary, failovers, writable, lists, logf, &res)
 		}
 		if len(page) < pageSize {
 			return res
@@ -64,7 +64,14 @@ func Run(ctx context.Context, b Broker, primary *IdP, failovers []IdP, writable 
 	}
 }
 
-func syncUser(ctx context.Context, b Broker, u keycloak.User, primary *IdP, failovers []IdP, writable []string, logf func(string, ...any), res *Result) {
+func syncUser(ctx context.Context, b Broker, u keycloak.User, primary *IdP, failovers []IdP, writable, lists []string, logf func(string, ...any), res *Result) {
+	// one value, unless the profile attribute holds a list
+	fit := func(attr string, v []string) []string {
+		if slices.Contains(lists, attr) {
+			return v
+		}
+		return v[:1]
+	}
 	id, _ := u["id"].(string)
 	if id == "" || u["serviceAccountClientId"] != nil {
 		return
@@ -94,7 +101,7 @@ func syncUser(ctx context.Context, b Broker, u keycloak.User, primary *IdP, fail
 			inPrimary = err == nil
 			if err != nil {
 				fail("%s: %v", primary.Name, err)
-			} else if values := read(rec, primary.Attributes, writable); apply(u, values) {
+			} else if values := read(rec, primary.Attributes, writable, fit); apply(u, values) {
 				if err := b.UpdateUser(ctx, u); err != nil {
 					fail("broker update: %v", err)
 				} else {
@@ -114,7 +121,7 @@ func syncUser(ctx context.Context, b Broker, u keycloak.User, primary *IdP, fail
 		for _, m := range f.Attributes {
 			if slices.Contains(writable, m.Attribute) && m.Attribute != "username" {
 				if v := brokerValue(u, m.Attribute); len(v) > 0 {
-					want[m.Path] = v
+					want[m.Path] = fit(m.Attribute, v)
 				}
 			}
 		}
@@ -204,14 +211,14 @@ func verify(ctx context.Context, f IdP, id string, set map[string][]string, fail
 }
 
 // read maps the primary's record onto broker attributes.
-func read(rec map[string]any, ms []v1.AttributeMapping, writable []string) map[string][]string {
+func read(rec map[string]any, ms []v1.AttributeMapping, writable []string, fit func(string, []string) []string) map[string][]string {
 	values := map[string][]string{}
 	for _, m := range ms {
 		if !slices.Contains(writable, m.Attribute) || m.Attribute == "username" {
 			continue
 		}
 		if v := Values(Lookup(rec, m.Path)); len(v) > 0 {
-			values[m.Attribute] = v
+			values[m.Attribute] = fit(m.Attribute, v)
 		}
 	}
 	return values
