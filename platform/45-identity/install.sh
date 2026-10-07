@@ -3,7 +3,8 @@
 # in sv-identity, published at https://idp.sterling.lab, which routes sign-ins
 # to the firm's IdPs and maps them into one profile; the firm's own workforce
 # IdP (Keycloak, realm workforce) in sv-workforce at https://login.sterling.lab,
-# the keycloak in ENTERPRISE_IDP; and the client secrets each S&V component
+# the keycloak in ENTERPRISE_IDP; its contingency IdP (realm contingency) in
+# sv-contingency at https://login-dr.sterling.lab; and the client secrets each S&V component
 # needs, each placed in the namespace that uses it.
 # Alice's IdP is hers and is installed by demos/bob-to-alice, not here.
 . "$(dirname "$0")/../../scripts/lib.sh"
@@ -15,7 +16,7 @@ step "Sterling & Vance mesh baseline, before the firm's first workload"
 # unfenced while the layers in between install. Layer 80 owns these and
 # applies them again.
 apply_tmpl "$LAB_ROOT/platform/80-mesh-policy/sterling-vance.yaml"
-deny_internet sv-identity sv-workforce kagent sv-agents sv-mcp agentregistry
+deny_internet sv-identity sv-workforce sv-contingency kagent sv-agents sv-mcp agentregistry
 ok "STRICT mTLS, identity-scoped ALLOWs and no-internet for S&V's namespaces"
 
 step "Sterling & Vance Keycloak $KEYCLOAK_VERSION (sv-identity)"
@@ -63,10 +64,14 @@ step "Sterling & Vance workforce IdP, Keycloak $KEYCLOAK_VERSION (sv-workforce)"
 # broker's sign-ins like any upstream that vouches. S&V's client there
 # (sterling-vance-broker) takes the broker's and the egress's keys;
 # continuity-directory lets the profile sync read users.
+# The broker's sign-ins there take a second factor (acr aal2): employees'
+# authenticator-app (TOTP) seeds, .lab/secrets.env (make totp prints a code).
 secret_apply sv-workforce kc-secrets \
   KC_BOOTSTRAP_ADMIN_USERNAME=admin \
   KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret SV_WORKFORCE_KC_ADMIN_PASSWORD)" \
-  SV_WORKFORCE_DIRECTORY_SECRET="$(lab_secret SV_WORKFORCE_DIRECTORY_SECRET)"
+  SV_WORKFORCE_DIRECTORY_SECRET="$(lab_secret SV_WORKFORCE_DIRECTORY_SECRET)" \
+  SV_WORKFORCE_TOTP_BOB="$(lab_secret SV_WORKFORCE_TOTP_BOB)" \
+  SV_WORKFORCE_TOTP_CAROL="$(lab_secret SV_WORKFORCE_TOTP_CAROL)"
 mkdir -p "$LAB_STATE/realm"
 workforce_realm "$D/realm-workforce.json" >"$LAB_STATE/realm/realm-workforce.json"
 KC_HOST=login KC_IMAGE="localhost:${LAB_REGISTRY_PORT}/$KC_IDJAG" \
@@ -74,7 +79,22 @@ KC_HOST=login KC_IMAGE="localhost:${LAB_REGISTRY_PORT}/$KC_IDJAG" \
   token-exchange-standard,identity-assertion-jwt
 wait_for "https://login.$SV_DOMAIN discovery" 30 3 \
   sh -c "curl -sf --cacert '$LAB_CA_DIR/ca.crt' https://login.$SV_DOMAIN/realms/workforce/.well-known/openid-configuration >/dev/null"
-ok "issuer https://login.$SV_DOMAIN/realms/workforce  (bob / bob-demo; admin: see .lab/secrets.env)"
+ok "issuer https://login.$SV_DOMAIN/realms/workforce  (bob / bob-demo + make totp; admin: see .lab/secrets.env)"
+
+step "Sterling & Vance contingency IdP, Keycloak $KEYCLOAK_VERSION (sv-contingency)"
+# The IdP S&V keeps for when its own is down (contingency in ENTERPRISE_IDP):
+# its own accounts, password only (acr aal1), in its own namespace. Workloads
+# that need more than a password fail closed while it carries sign-ins
+# (docs/IDENTITY-CONTINUITY.md). S&V's client there takes the broker's key.
+secret_apply sv-contingency kc-secrets \
+  KC_BOOTSTRAP_ADMIN_USERNAME=admin \
+  KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret SV_CONTINGENCY_KC_ADMIN_PASSWORD)"
+contingency_realm "$D/realm-contingency.json" >"$LAB_STATE/realm/realm-contingency.json"
+KC_HOST=login-dr \
+  deploy_keycloak sv-contingency "$SV_DOMAIN" https-sterling "$LAB_STATE/realm/realm-contingency.json"
+wait_for "https://login-dr.$SV_DOMAIN discovery" 30 3 \
+  sh -c "curl -sf --cacert '$LAB_CA_DIR/ca.crt' https://login-dr.$SV_DOMAIN/realms/contingency/.well-known/openid-configuration >/dev/null"
+ok "issuer https://login-dr.$SV_DOMAIN/realms/contingency  (bob / bob-demo; admin: see .lab/secrets.env)"
 
 step "Client secrets, in the namespace that uses each"
 # kgateway OAuth2 (edge SSO for kagent) lives with the kagent route

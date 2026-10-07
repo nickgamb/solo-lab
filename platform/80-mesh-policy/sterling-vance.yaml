@@ -18,6 +18,11 @@ spec: {mtls: {mode: STRICT}}
 ---
 apiVersion: security.istio.io/v1
 kind: PeerAuthentication
+metadata: {name: strict, namespace: sv-contingency}
+spec: {mtls: {mode: STRICT}}
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
 metadata: {name: strict, namespace: kagent}
 spec: {mtls: {mode: STRICT}}
 ---
@@ -58,6 +63,11 @@ spec: {}
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata: {name: default-deny, namespace: sv-workforce}
+spec: {}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: default-deny, namespace: sv-contingency}
 spec: {}
 ---
 # Keycloak: the edge (browsers, SSO token calls), the firm's gateways (JWKS,
@@ -102,6 +112,20 @@ spec:
         principals:
         - cluster.local/ns/kgateway-system/sa/edge
         - cluster.local/ns/sv-identity/sa/continuity-sync
+---
+# S&V's contingency IdP: the same, through the edge only (no directory: its
+# accounts are its own).
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: keycloak-callers, namespace: sv-contingency}
+spec:
+  selector: {matchLabels: {app: keycloak}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/kgateway-system/sa/edge
 ---
 # The continuity controller only calls out (Keycloak, upstreams, kube API).
 apiVersion: security.istio.io/v1

@@ -44,7 +44,7 @@ metadata:
 rules:
 - apiGroups: [""]
   resources: [secrets]
-  resourceNames: [continuity-controller, upstream-okta, upstream-auth0, upstream-gluu, upstream-keycloak]
+  resourceNames: [continuity-controller, upstream-okta, upstream-auth0, upstream-gluu, upstream-keycloak, upstream-contingency]
   verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

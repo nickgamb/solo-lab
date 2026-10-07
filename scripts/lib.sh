@@ -523,27 +523,35 @@ user_token() { kc_token "$@" | jq -r '.access_token // empty'; }
 
 # browser_signin <start url> <callback prefix> <user> <pass>: a browser
 # sign-in from a script. Follows redirects from <start url> across the lab's
-# IdPs, fills the login form of S&V's workforce IdP (login.<sv domain>) once,
-# and prints the URL it lands on under <callback prefix> (the app's callback,
-# with its code). A sign-in page anywhere else (an IdP on the internet, an
-# unexpected step) stops it with an error naming the page.
+# IdPs, fills the login form of S&V's own IdPs (login.<sv domain> and
+# login-dr.<sv domain>) once, and the one-time code their second factor asks
+# for (totp_code), and prints the URL it lands on under <callback prefix>
+# (the app's callback, with its code). A sign-in page anywhere else (an IdP on
+# the internet, an unexpected step) stops it with an error naming the page.
 browser_signin() {
-  local url=$1 cb=$2 jar body hdr loc posted="" i action
+  local url=$1 cb=$2 jar body hdr loc posted="" otp="" i action code
   jar=$(mktemp) body=$(mktemp); on_exit "rm -f $jar $body"
   for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
     case "$url" in "$cb"*) echo "$url"; return 0 ;; esac
     case "$url" in
-      https://idp."$SV_DOMAIN"/*|https://login."$SV_DOMAIN"/*|https://idp."$LEDGERLINE_DOMAIN"/*) ;;
+      https://idp."$SV_DOMAIN"/*|https://login."$SV_DOMAIN"/*|https://login-dr."$SV_DOMAIN"/*|https://idp."$LEDGERLINE_DOMAIN"/*) ;;
       *) echo "browser_signin: sign-in continues at ${url%%\?*}, outside S&V's own IdP" >&2; return 1 ;;
     esac
     hdr=$(curl -s --cacert "$LAB_CA_DIR/ca.crt" -b "$jar" -c "$jar" -D - -o "$body" "$url")
     loc=$(echo "$hdr" | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r')
-    if [ -z "$loc" ] && [ -z "$posted" ] && grep -q 'id="kc-form-login"' "$body" && case "$url" in https://login."$SV_DOMAIN"/*) true ;; *) false ;; esac; then
+    if [ -z "$loc" ] && [ -z "$posted" ] && grep -q 'id="kc-form-login"' "$body" && case "$url" in https://login."$SV_DOMAIN"/*|https://login-dr."$SV_DOMAIN"/*) true ;; *) false ;; esac; then
       action=$(grep -o 'id="kc-form-login"[^>]*action="[^"]*"' "$body" | sed 's/.*action="//; s/"$//; s/&amp;/\&/g')
       [ -n "$action" ] || action=$(grep -o 'action="[^"]*"' "$body" | head -1 | sed 's/action="//; s/"$//; s/&amp;/\&/g')
       hdr=$(_U=$3 _P=$4 jq -rn '{username: $ENV._U, password: $ENV._P, credentialId: ""} | to_entries | map("\(.key)=\(.value | @uri)") | join("&")' \
         | curl -s --cacert "$LAB_CA_DIR/ca.crt" -b "$jar" -c "$jar" -D - -o "$body" "$action" --data @-)
       loc=$(echo "$hdr" | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r'); posted=1
+    fi
+    if [ -z "$loc" ] && [ -n "$posted" ] && [ -z "$otp" ] && grep -q 'id="kc-otp-login-form"' "$body"; then
+      action=$(grep -o 'id="kc-otp-login-form"[^>]*action="[^"]*"' "$body" | sed 's/.*action="//; s/"$//; s/&amp;/\&/g')
+      code=$(totp_code "$3") || return 1
+      hdr=$(_O=$code jq -rn '{otp: $ENV._O} | to_entries | map("\(.key)=\(.value | @uri)") | join("&")' \
+        | curl -s --cacert "$LAB_CA_DIR/ca.crt" -b "$jar" -c "$jar" -D - -o "$body" "$action" --data @-)
+      loc=$(echo "$hdr" | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r'); otp=1
     fi
     if [ -z "$loc" ]; then
       echo "browser_signin: stopped at ${url%%\?*}: $(echo "$hdr" | head -1 | tr -d '\r'), page: $(grep -o '<title>[^<]*' "$body" | head -1 | sed 's/<title>//') $(grep -o 'kc-feedback-text">[^<]*' "$body" | head -1 | sed 's/.*">//')" >&2
@@ -555,9 +563,29 @@ browser_signin() {
   echo "browser_signin: too many redirects" >&2; return 1
 }
 
+# totp_code <user>: the current one-time code of <user>'s authenticator app at
+# S&V's own Keycloak (its seed, SV_WORKFORCE_TOTP_<USER>, .lab/secrets.env).
+# Keycloak takes a code once, so a second sign-in in the same 30-second window
+# waits for the next one.
+totp_code() {
+  local seed f="$LAB_STATE/totp-last-$1" last now wait
+  seed=$(lab_secret_get "SV_WORKFORCE_TOTP_$(echo "$1" | tr '[:lower:]' '[:upper:]')") || return 1
+  now=$(date +%s); last=$(cat "$f" 2>/dev/null || echo 0)
+  if [ $((now / 30)) -le "$last" ]; then
+    wait=$(( (last + 1) * 30 - now )); sleep "$wait"; now=$((now + wait))
+  fi
+  (umask 077; echo $((now / 30)) >"$f")
+  _K=$seed _T=$now python3 -c '
+import hashlib, hmac, os, struct
+h = hmac.new(os.environ["_K"].encode(), struct.pack(">Q", int(os.environ["_T"]) // 30), hashlib.sha1).digest()
+o = h[-1] & 15
+print("%06d" % ((struct.unpack(">I", h[o:o + 4])[0] & 0x7fffffff) % 1000000))'
+}
+
 # sso_token <user> <pass>: an S&V employee signs in to kagent as in the
 # browser (the edge's SSO client, authorization code with PKCE) through the
-# broker's active IdP, which must be S&V's own (keycloak). Prints the tokens.
+# broker's active IdP, which must be one of S&V's own (keycloak, contingency).
+# Prints the tokens.
 sso_token() {
   local verifier challenge state cb code
   verifier=$(openssl rand -hex 32) state=$(openssl rand -hex 8)

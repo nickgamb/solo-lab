@@ -106,7 +106,7 @@ desired=$({ for n in $CHAIN; do
   fi
   jq -nc --arg n "$n" --arg iss "$(_idp_var "$n" ISSUER)" --arg cid "$(_idp_var "$n" CLIENT_ID)" \
     --arg auth "$(idp_client_auth "$n")" --argjson store "$store" --argjson dir "$dir" '{name: $n,
-    displayName: ({okta: "Okta", auth0: "Auth0", gluu: "Gluu", keycloak: "Sterling & Vance (Keycloak)"}[$n] // $n), type: "oidc",
+    displayName: ({okta: "Okta", auth0: "Auth0", gluu: "Gluu", keycloak: "Sterling & Vance (Keycloak)", contingency: "Sterling & Vance (contingency)"}[$n] // $n), type: "oidc",
     oidc: ({issuer: $iss, clientID: $cid, clientAuth: $auth}
       + (if $auth == "private_key_jwt" then {clientAssertionSigningAlg: "PS256"} else {clientSecretRef: {name: "upstream-\($n)"}} end)
       + (if $store then {scopes: ["openid", "email", "profile"], storeTokens: true} else {} end)),
