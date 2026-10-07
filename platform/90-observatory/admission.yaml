@@ -1,9 +1,11 @@
 # What the Observatory's admins may write where RBAC alone can't say it.
 #
 # Secrets: only the IdP and directory credentials (label
-# continuity.lab.solo.io/credentials), both on create and on the object
-# being replaced, and only plain Opaque ones: never a service-account token,
-# a realm's signing key or the controller's own client.
+# continuity.lab.solo.io/credentials) and, in agentgateway-system, the model
+# providers' keys (label lab.solo.io/model-credentials), both on create and
+# on the object being replaced, and only plain Opaque ones: never a
+# service-account token, a realm's signing key, the controller's own client
+# or the gateway's license.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata: {name: observatory-secrets}
@@ -18,10 +20,20 @@ spec:
   variables:
   - name: label
     expression: "'continuity.lab.solo.io/credentials'"
+  - name: modelLabel
+    expression: "'lab.solo.io/model-credentials'"
+  - name: models
+    expression: "request.namespace == 'agentgateway-system'"
   validations:
-  - expression: "has(object.metadata.labels) && variables.label in object.metadata.labels && object.metadata.labels[variables.label] == 'true'"
-    message: "the Observatory writes only IdP and directory credentials (label continuity.lab.solo.io/credentials)"
-  - expression: "request.operation != 'UPDATE' || (has(oldObject.metadata.labels) && variables.label in oldObject.metadata.labels && oldObject.metadata.labels[variables.label] == 'true')"
+  - expression: >-
+      has(object.metadata.labels) && (
+      (variables.label in object.metadata.labels && object.metadata.labels[variables.label] == 'true')
+      || (variables.models && variables.modelLabel in object.metadata.labels && object.metadata.labels[variables.modelLabel] == 'true'))
+    message: "the Observatory writes only IdP and directory credentials (label continuity.lab.solo.io/credentials) and, in agentgateway-system, model provider keys (label lab.solo.io/model-credentials)"
+  - expression: >-
+      request.operation != 'UPDATE' || (has(oldObject.metadata.labels) && (
+      (variables.label in oldObject.metadata.labels && oldObject.metadata.labels[variables.label] == 'true')
+      || (variables.models && variables.modelLabel in oldObject.metadata.labels && oldObject.metadata.labels[variables.modelLabel] == 'true')))
     message: "the Observatory can't take over a Secret it doesn't own"
   - expression: "!has(object.type) || object.type == 'Opaque'"
     message: "the Observatory writes Opaque Secrets only"

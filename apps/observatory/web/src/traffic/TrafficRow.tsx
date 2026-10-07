@@ -6,7 +6,7 @@ const time = (s: string) => {
   return d.toLocaleTimeString([], { hour12: false }) + '.' + String(d.getMilliseconds()).padStart(3, '0')
 }
 
-const KIND: Record<string, string> = { http: 'HTTP', mcp: 'MCP', a2a: 'A2A', llm: 'LLM', oidc: 'OIDC', lifecycle: 'K8S', substrate: 'SUBSTRATE', continuity: 'IDP' }
+const KIND: Record<string, string> = { http: 'HTTP', mcp: 'MCP', a2a: 'A2A', llm: 'LLM', oidc: 'OIDC', lifecycle: 'K8S', substrate: 'SUBSTRATE', continuity: 'IDP', model: 'MODEL' }
 
 // TrafficRow is one entry of the inspector: a summary line that expands to
 // the parsed fields and the raw record.

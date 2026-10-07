@@ -69,7 +69,7 @@ type Graph struct {
 type Traffic struct {
 	ID       string            `json:"id"`
 	Time     string            `json:"time"`
-	Kind     string            `json:"kind"` // http mcp a2a llm oidc lifecycle substrate continuity
+	Kind     string            `json:"kind"` // http mcp a2a llm oidc lifecycle substrate continuity model
 	Reporter string            `json:"reporter"`
 	Source   string            `json:"source,omitempty"`   // node id
 	Target   string            `json:"target,omitempty"`   // node id

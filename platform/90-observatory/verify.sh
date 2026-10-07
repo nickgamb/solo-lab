@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The Observatory's reach: what its signed-in admins may change (policy,
-# routing, identity continuity) and what they may not (workloads, RBAC,
+# routing, identity and model continuity) and what they may not (workloads, RBAC,
 # admission, reading Secrets), checked as the identity the Observatory
 # impersonates. Writes are server-side dry runs: nothing is changed.
 . "$(dirname "$0")/../../scripts/lib.sh"
@@ -19,6 +19,8 @@ expect '^yes$' "may change an IdentityContinuity" "$(can update identitycontinui
 expect '^no$' "may not change its status (the active IdP is the controller's)" "$(can update identitycontinuities.continuity.lab.solo.io --subresource=status -n sv-identity)"
 expect '^no$' "may not read a Secret" "$(can get secrets -n sv-identity)"
 expect '^no$' "may not list Secrets anywhere" "$(can list secrets -A)"
+expect '^yes$' "may change the model chain (AI gateway backends)" "$(can update agentgatewaybackends.agentgateway.dev -n agentgateway-system)"
+expect '^no$' "may not read a model provider's key" "$(can get secrets -n agentgateway-system)"
 expect '^no$' "may not change a Deployment" "$(can patch deployments.apps -n sv-agents)"
 expect '^no$' "may not create a pod" "$(can create pods -n kagent)"
 expect '^no$' "may not exec into a pod" "$(can create pods/exec -n sv-identity)"
@@ -68,6 +70,32 @@ expect '^(403|422) .*continuity-sync' "may not run the sync as another account" 
   "$(as_admin POST /apis/batch/v1/namespaces/sv-identity/jobs "$(job '.spec.template.spec.serviceAccountName = "continuity-controller"')")"
 expect '^(403|422) .*Secret' "may not mount a Secret into the sync" \
   "$(as_admin POST /apis/batch/v1/namespaces/sv-identity/jobs "$(job '.spec.template.spec.volumes += [{name: "s", secret: {secretName: "continuity-controller"}}]')")"
+
+step "Admission: model provider keys, next to the AI gateway only"
+model_secret() {  # model_secret <namespace> <name> <labelled>: a model provider's key
+  jq -nc --arg ns "$1" --arg n "$2" --argjson l "$3" '{apiVersion: "v1", kind: "Secret", type: "Opaque",
+    metadata: ({name: $n, namespace: $ns} + (if $l then {labels: {"lab.solo.io/model-credentials": "true"}} else {} end)),
+    stringData: {Authorization: "verify"}}'
+}
+expect '^201 ' "may write a model provider's key (labelled, in agentgateway-system)" \
+  "$(as_admin POST /api/v1/namespaces/agentgateway-system/secrets "$(model_secret agentgateway-system verify-model true)")"
+expect '^(403|422) .*lab.solo.io/model-credentials' "may not write an unlabelled Secret there" \
+  "$(as_admin POST /api/v1/namespaces/agentgateway-system/secrets "$(model_secret agentgateway-system verify-other false)")"
+expect '^(403|422) .*continuity.lab.solo.io/credentials' "may not write a model key in another namespace" \
+  "$(as_admin POST /api/v1/namespaces/sv-identity/secrets "$(model_secret sv-identity verify-model true)")"
+# a Secret the gateway already has (its license, a helm release), labelled as
+# a model key: the old object decides
+taken=$(K get secrets -n agentgateway-system -o json | jq -c '[.items[] | select(.metadata.labels["lab.solo.io/model-credentials"] != "true")]
+  | (map(select(.metadata.name | test("license"))) + .) | first // empty
+  | {apiVersion: "v1", kind: "Secret", type, metadata: {name: .metadata.name, namespace: .metadata.namespace,
+     labels: {"lab.solo.io/model-credentials": "true"}}, stringData: {Authorization: "verify"}}')
+if [ -n "$taken" ]; then
+  name=$(jq -r .metadata.name <<<"$taken")
+  expect '^(403|422) .*own' "may not take over $name by labelling it" \
+    "$(as_admin PUT "/api/v1/namespaces/agentgateway-system/secrets/$name" "$taken")"
+else
+  warn "no unlabelled Secret in agentgateway-system to try a takeover on"
+fi
 
 step "Its own account: one Role, to grant the sync a directory's Secret"
 SA=system:serviceaccount:observatory:observatory

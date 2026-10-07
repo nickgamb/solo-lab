@@ -21,6 +21,7 @@
 .chip.k-oidc { color: var(--k-oidc); }
 .chip.k-substrate { color: var(--k-substrate); }
 .chip.k-continuity { color: var(--warn); }
+.chip.k-model { color: var(--warn); }
 .tsum { font-family: var(--font-mono); font-size: 12px; }
 .tpath { font-size: 11.5px; }
 .tdur { font-size: 11px; text-align: right; }

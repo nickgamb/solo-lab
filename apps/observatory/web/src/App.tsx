@@ -4,13 +4,15 @@ import wordmark from './assets/solo-wordmark.svg?raw'
 import { Topology } from './topology/Topology'
 import { TrafficTab } from './traffic/TrafficTab'
 import { ContinuityTab } from './continuity/ContinuityTab'
+import { ModelsTab } from './models/ModelsTab'
 import './app.css'
 
-type Tab = 'topology' | 'traffic' | 'continuity'
+type Tab = 'topology' | 'traffic' | 'continuity' | 'models'
 const TABS: { id: Tab; label: string }[] = [
   { id: 'topology', label: 'Topology' },
   { id: 'traffic', label: 'Traffic' },
   { id: 'continuity', label: 'Identity Continuity' },
+  { id: 'models', label: 'Model Continuity' },
 ]
 
 const initialTab = (): Tab => {
@@ -68,6 +70,7 @@ export default function App() {
         {tab === 'topology' && <Topology lab={lab} focus={focus} onFocused={() => setFocus(undefined)} />}
         {tab === 'traffic' && <TrafficTab lab={lab} onOpenNode={open} />}
         {tab === 'continuity' && <ContinuityTab lab={lab} />}
+        {tab === 'models' && <ModelsTab lab={lab} />}
       </main>
     </div>
   )

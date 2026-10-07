@@ -1,0 +1,6 @@
+/* the recent model calls, as a table: time, caller, served model, status, tokens, cost */
+.mcall { display: grid; grid-template-columns: 70px minmax(0, 1fr) minmax(0, 1.3fr) 48px 120px 70px; gap: 10px; align-items: center; padding: 3px 0; font-size: 12.5px; }
+.mcall .chip { justify-self: start; }
+.ent-models { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--border-soft); }
+.ent-list { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; margin: 0; }
+.ent-list dd { margin: 0; overflow-wrap: anywhere; }

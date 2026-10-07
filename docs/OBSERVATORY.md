@@ -91,6 +91,7 @@ Every request any gateway saw, plus runtime events, newest first.
 | `lifecycle` | pods created, ready, not ready, restarted |
 | `substrate` | Substrate actors starting, suspending, resuming |
 | `continuity` | sign-in failovers, and outages cut or restored from the Observatory |
+| `model` | model provider outages cut or restored from the Observatory |
 
 Filters: kind, outcome, free text (user, workload, tool, path), **Hide tool
 discovery** (MCP `initialize` and `tools/list`), **Carries a token**, and Pause.
@@ -134,6 +135,44 @@ builder, and the directory sync window. See
 
   ![Directory sync schedule and last run](images/observatory-directory-sync-schedule.jpg)
 
+### Model Continuity
+
+The AI gateway's model chain: HTTPRoute `llm` (agentgateway-system), the
+`AgentgatewayBackend` behind it, and the failover rules on policies
+`llm-backend` and `llm-callers` (`AgentgatewayPolicy` on OSS,
+`EnterpriseAgentgatewayPolicy` on enterprise). `make llm` rewrites the
+chain from `.env`.
+
+- **Map:** the callers `llm-callers` allows (agent pools, by mesh identity),
+  the API-key callers of route `llm-external` when it exists, ai-gateway, and
+  the providers in priority order. The provider that answered the latest call
+  is lit; each has a health pill from the last five minutes of calls:
+  Healthy, Errors, Outage (simulated) or Idle. Calls are matched to providers
+  by the model that served them (`gen_ai.response.model`, else the request's).
+- **Simulate model outage / Restore model provider:** points the chosen
+  provider at a closed port (its own host on port 1, or `127.0.0.1:1` for a
+  cloud provider) and keeps its host and port in backend annotation
+  `lab.solo.io/outage-<provider>`; Restore puts them back. Calls to it fail as
+  in a real outage and the gateway fails over. Both show in Traffic (`model`)
+  with who did it, and the banner names the provider serving meanwhile.
+- **Failover rules:** the providers in priority order (reorder, remove, edit
+  the model) and **+ Add model connection**: Ollama / OpenAI-compatible
+  (host, port, model; written as a `custom` provider speaking both the OpenAI
+  and Anthropic APIs), OpenAI or Anthropic (model and API key). Save writes
+  the backend (one provider as `spec.ai.provider`, two to four as one
+  `spec.ai.groups` entry each), then only `backend.health` on `llm-backend`
+  (**Fail over on** 5xx and/or 429, **take a failed provider out for**,
+  **after N failures**) and only `traffic.retry` on `llm-callers` (**Retry
+  the call**). A provider cut at the time stays cut. A chain changed since it
+  was loaded is refused: Reload and edit again.
+- **API keys** are write-only: key `Authorization` of the Secret the provider
+  names (default `model-<name>`), labelled `lab.solo.io/model-credentials`.
+  A new connection's key is written once Save has stored it.
+- **Model traffic:** each recent call's caller, served model, status, tokens
+  and cost (when the gateway prices it, `agw.ai.usage.cost.total`).
+- **Enterprise controls** (enterprise only): the
+  `EnterpriseAgentgatewayBudget` and `RateLimitConfig` objects, by name.
+
 ## Where the data comes from
 
 | Data | Source |
@@ -156,7 +195,9 @@ How the graph is built:
 - Solo products are recognised from images and gateway classes.
 
 The browser gets everything over one Server-Sent Events stream (`/api/stream`:
-`graph`, `stats`, `traffic`, `continuity`, `substrate`).
+`graph`, `stats`, `traffic`, `continuity`, `substrate`), except the model
+chain, which the Model Continuity tab reads from `/api/models` as the
+signed-in admin.
 
 ## Access model
 
@@ -175,7 +216,7 @@ The browser gets everything over one Server-Sent Events stream (`/api/stream`:
   `observatory-read`: read the lab's resources (no Secrets), and impersonate
   exactly one identity.
 - Every write (Apply, rule edits, secrets, outages, directory sync runs and
-  directory tests) is made by impersonating
+  directory tests) and the model chain's reads are made by impersonating
   user `observatory:admin` in group `observatory:observatory-admins`, with the
   signed-in person's name as the extra `observatory-user`. RBAC names all
   three (`platform/90-observatory/rbac.yaml`), so no request can make the
@@ -188,11 +229,14 @@ The browser gets everything over one Server-Sent Events stream (`/api/stream`:
   admission (`platform/90-observatory/admission.yaml`) narrows both: Opaque
   Secrets labelled `continuity.lab.solo.io/credentials` only (the IdPs' and
   directories' credentials, never another Secret), and Jobs only from the
-  profile sync's template. Granting a directory's Secret to the sync's Role
+  profile sync's template. In `agentgateway-system` it may write Secrets, and
+  admission allows only Opaque ones labelled `lab.solo.io/model-credentials`
+  (model provider keys) that it created: never the gateway's license or any
+  Secret it doesn't own. Granting a directory's Secret to the sync's Role
   is done as the Observatory's own account, which may update that one Role.
 - With API server audit logging on, each write records the person in
   `impersonatedUser.extra`. `make observatory-verify` checks the scope.
-- Client secrets entered in the rule builder are write-only.
+- Client secrets and API keys entered in the rule builders are write-only.
 - The namespace is STRICT mTLS; only the edge (8080) and the collector
   (4318) may call in.
 - For Agent Substrate's runtime it calls kagent's `/api/substrate/status` with

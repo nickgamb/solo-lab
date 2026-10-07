@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -172,7 +173,7 @@ func (s *TrafficStore) Rates() (map[string]EdgeStats, float64, float64) {
 		if s.at[k].Before(cut) {
 			break
 		}
-		if t.Kind == "lifecycle" || t.Kind == "substrate" || t.Kind == "continuity" {
+		if t.Kind == "lifecycle" || t.Kind == "substrate" || t.Kind == "continuity" || t.Kind == "model" {
 			continue
 		}
 		total++
@@ -416,14 +417,19 @@ func summarize(t Traffic, a map[string]string, host string) string {
 			return "MCP " + m
 		}
 	case "llm":
-		model := a["gen_ai.request.model"]
-		if model == "" {
-			model = a["llm.request.model"]
+		// the model that answered, where the gateway logs it, and its provider
+		model, provider := servedBy(t)
+		if provider != "" {
+			model = provider + "/" + model
+		}
+		cost := ""
+		if c := usd(a["agw.ai.usage.cost.total"]); c != "" { // absent: unpriced
+			cost = " · " + c
 		}
 		if in, out := a["gen_ai.usage.input_tokens"], a["gen_ai.usage.output_tokens"]; in != "" {
-			return fmt.Sprintf("LLM %s · %s in / %s out", model, in, out)
+			return fmt.Sprintf("LLM %s · %s in / %s out%s", model, in, out, cost)
 		}
-		return "LLM " + model
+		return "LLM " + model + cost
 	case "oidc":
 		p := t.Path
 		if i := strings.LastIndex(p, "/"); i >= 0 {
@@ -432,4 +438,19 @@ func summarize(t Traffic, a map[string]string, host string) string {
 		return "OIDC " + p + " · " + host
 	}
 	return fmt.Sprintf("%s %s%s", t.Method, host, t.Path)
+}
+
+// usd prints a call's cost in dollars to two significant digits (a call costs
+// fractions of a cent); empty when it isn't a number.
+func usd(v string) string {
+	f, err := strconv.ParseFloat(v, 64)
+	switch {
+	case v == "" || err != nil || f < 0 || math.IsInf(f, 0) || math.IsNaN(f):
+		return ""
+	case f == 0:
+		return "$0"
+	case f >= 0.01:
+		return fmt.Sprintf("$%.2f", f)
+	}
+	return fmt.Sprintf("$%.*f", int(-math.Floor(math.Log10(f)))+1, f)
 }

@@ -83,6 +83,33 @@ export type IdentityContinuity = {
 export type SignInPath = { instance: string; name: string; hosts: string[]; entry?: string; broker: string; app: string; after: string[][] }
 export type ContinuityView = { items: IdentityContinuity[]; partitions: { tier: string; namespace: string; name: string; since?: string; by?: string; path?: string }[]; paths: SignInPath[] }
 export type Me = { name: string; email?: string; groups: string[] }
+// Mirrors server/models.go: the AI gateway's model chain.
+// ollama (or another custom provider's override), openai, anthropic; other: a kind the editor doesn't write
+export type ModelKind = 'openai' | 'anthropic' | 'ollama' | 'other' | (string & {})
+export type ModelStats = { calls: number; errors: number; lastServed?: string; lastStatus?: number }
+export type ModelProvider = {
+  group: number; name: string; kind: ModelKind; model: string; host?: string; port?: number; secret?: string
+  outage?: { host?: string; port?: number; by?: string; since?: string }; stats: ModelStats
+}
+export type FailoverRules = {
+  on5xx: boolean; on429: boolean; condition: string; custom: boolean
+  consecutiveFailures: number; duration: string; retryAttempts: number; retryCodes: number[]
+}
+export type ModelView = {
+  edition: 'enterprise' | 'oss'
+  backend: { namespace: string; name: string; resourceVersion: string; policies: string[] } | null
+  gateway?: string
+  external?: { name: string; hosts: string[] } // the route for callers outside the mesh (API keys)
+  providers: ModelProvider[]
+  rules: FailoverRules
+  callers?: { namespace: string; serviceAccount: string; nodes?: string[] }[]
+  declared?: { provider?: string; model?: string; fallback?: string }
+  unattributed: ModelStats
+  enterprise: { budgets: string[]; rateLimits: string[] }
+}
+// what a save writes: the providers in priority order, and the failover rules
+export type ProviderIn = { name: string; kind: 'openai' | 'anthropic' | 'ollama'; model: string; host?: string; port?: number; secret?: string }
+export type RulesIn = { on5xx: boolean; on429: boolean; consecutiveFailures: number; duration: string; retryAttempts: number }
 
 const TRAFFIC_KEEP = 3000
 
@@ -193,3 +220,18 @@ export const putSecret = (ns: string, name: string, body: { key?: string; value?
   api(`/api/continuity/${ns}/secrets/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(body) })
 
 export const refKey = (r: Ref) => `${r.apiVersion}/${r.kind}/${r.namespace ?? ''}/${r.name}`
+
+export const getModels = () => api<ModelView>('/api/models')
+
+// Rewrites the model chain, at the resourceVersion it was read at (409 if it
+// changed since); the result is the chain as stored.
+export const putModels = (ns: string, name: string, resourceVersion: string, providers: ProviderIn[], rules: RulesIn) =>
+  api<ModelView>(`/api/models/${ns}/${name}`, { method: 'PUT', body: JSON.stringify({ resourceVersion, providers, rules }) })
+
+// Writes a model provider's API key. Write-only: nothing reads it back.
+export const putModelSecret = (ns: string, name: string, value: string) =>
+  api(`/api/models/${ns}/secrets/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify({ value }) })
+
+// Cuts (a simulated outage) or restores one provider of the chain.
+export const cutModel = (ns: string, name: string, provider: string, cut: boolean) =>
+  api(`/api/models/${ns}/${name}/outage`, { method: 'POST', body: JSON.stringify({ provider, cut }) })
