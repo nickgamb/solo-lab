@@ -1,5 +1,6 @@
 // continuity-controller: keeps a Keycloak broker signing users in through the
-// first healthy upstream IdP of an IdentityContinuity chain.
+// first healthy upstream IdP of an IdentityContinuity chain. "sync" runs one
+// scheduled profile sync (the controller's CronJob).
 package main
 
 import (
@@ -20,13 +21,18 @@ import (
 )
 
 func main() {
-	var ns, caFile, metrics, health string
+	if len(os.Args) > 1 && os.Args[1] == "sync" {
+		os.Exit(runSync(os.Args[2:]))
+	}
+	var ns, caFile, metrics, health, syncImage, syncCA string
 	var leaderElect bool
 	flag.StringVar(&ns, "namespace", os.Getenv("POD_NAMESPACE"), "namespace to watch (IdentityContinuity and credential Secrets)")
 	flag.StringVar(&caFile, "ca-file", "", "extra CA bundle to trust for upstream probes (system roots always apply)")
 	flag.StringVar(&metrics, "metrics-bind-address", ":8080", "")
 	flag.StringVar(&health, "health-probe-bind-address", ":8081", "")
 	flag.BoolVar(&leaderElect, "leader-elect", true, "")
+	flag.StringVar(&syncImage, "sync-image", os.Getenv("SYNC_IMAGE"), "image of the scheduled profile sync (this controller's)")
+	flag.StringVar(&syncCA, "sync-ca-configmap", "", "ConfigMap (ca.crt) the profile sync trusts besides the system roots")
 	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -60,6 +66,9 @@ func main() {
 		Reader:   mgr.GetAPIReader(),
 		Recorder: mgr.GetEventRecorder("continuity-controller"),
 		Prober:   prober,
+
+		SyncImage:       syncImage,
+		SyncCAConfigMap: syncCA,
 	}
 	if err := r.SetupWithManager(mgr); err != nil {
 		log.Error(err, "controller")

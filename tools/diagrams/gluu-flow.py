@@ -32,7 +32,7 @@ P = dict(bob=C["teal"], solo=C["lime"], gluu=C["amber"], kc=C["kc"])
 NODES = [  # lane, product, kicker, title, body lines
     ("bob", "bob", "Bob · browser", "Signs in to kagent", ["kagent.sterling.lab, passkey", "at S&V's Gluu"]),
     ("svidp", "gluu", "Gluu · S&V's IdP", "Authenticates Bob", ["passkey (acr fido2), OIDC", "code flow + PKCE S256"]),
-    ("plat", "kc", "Keycloak · S&V's broker", "Links Bob, keeps his Gluu tokens", ["ID + refresh token (storeTokens);", "S&V session for kagent at the edge"]),
+    ("plat", "kc", "Keycloak · S&V's broker", "Links Bob, keeps his Gluu tokens", ["Gluu tokens (storeTokens), renewed here;", "S&V session for kagent at the edge"]),
     ("bob", "bob", "Bob · kagent chat", "Asks his agent", ["“Which Ledgerline account", "am I using?”"]),
     ("plat", "solo", "kagent · Bob's agent", "Calls the Ledgerline tool", ["tools/call account_info to ai-gateway,", "with Bob's S&V access token only"]),
     ("plat", "solo", "agentgateway · S&V egress", "Admits it, gets Bob's ID token", ["JWT + the agent's SPIFFE ID + advisors;", "idtoken-exchange: Gluu ID token, renewed"]),
@@ -54,7 +54,7 @@ def add(s): out.append(s)
 add(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" '
     'aria-labelledby="t d">')
 add('<title id="t">Gluu: Cross App Access, end to end</title>')
-add('<desc id="d">Bob signs in with a passkey at S&amp;V\'s Gluu; S&amp;V\'s Keycloak keeps his Gluu tokens. His agent calls '
+add('<desc id="d">Bob signs in with a passkey at S&amp;V\'s Gluu; S&amp;V\'s broker keeps his Gluu tokens. His agent calls '
     'Ledgerline through S&amp;V\'s egress gateway with only his S&amp;V access token. The egress gets his Gluu ID token, '
     'S&amp;V\'s Gluu issues an ID-JAG, the egress checks it, Ledgerline\'s Gluu redeems it for a Ledgerline token, and '
     'Ledgerline answers as its own account for Bob.</desc>')
@@ -70,7 +70,7 @@ add(f'<text x="40" y="62" font-family="{SANS}" font-size="32" font-weight="700" 
     'Gluu · Cross App Access, end to end</text>')
 for k, line in enumerate([
     "Bob signs in with a passkey at S&V's Gluu. His agent reaches Ledgerline as him: S&V's Gluu vouches (ID-JAG), Ledgerline's Gluu redeems it.",
-    "The agent only ever holds Bob's S&V access token. Gluu unreachable: S&V's Keycloak vouches instead. Gluu refuses: the call is refused.",
+    "The agent only ever holds Bob's S&V access token. Gluu unreachable: Bob signs in through the next IdP, which vouches. Gluu refuses: the call is refused.",
 ]):
     add(f'<text x="40" y="{96 + k * 22}" font-family="{SANS}" font-size="15.5" fill="{C["mid"]}">{escape(line)}</text>')
 legend = [("Bob", P["bob"]), ("Solo", P["solo"]), ("Gluu", P["gluu"]), ("Keycloak", P["kc"])]
@@ -205,7 +205,7 @@ def panel(num, x, y, w, tab, caption, lines, leaders=()):
 PX, PW = 1340, 720
 def lead(i): return [anchors[i]]
 panel("1", PX, 436, PW, "gluu-id-token.json", "Bob's Gluu ID token, kept by S&V's broker", [
-    "// Gluu → S&V's Keycloak: OIDC code flow, PKCE S256, offline_access",
+    "// Gluu → S&V's broker: OIDC code flow, PKCE S256",
     "{",
     '  "iss": "https://sv.gluu.example",',
     '  "sub": "7c1e0a4e-3d9b-4f61-9b2e-0b0b0b0b0b0b",',
@@ -213,7 +213,7 @@ panel("1", PX, 436, PW, "gluu-id-token.json", "Bob's Gluu ID token, kept by S&V'
     '  "email": "bob@sterling.lab", "email_verified": true,',
     '  "acr": "fido2", "exp": 1791305100',
     "}",
-    "// + refresh_token: read later by the egress only (kagent, API v2)",
+    "// refresh token stays in the broker; the egress gets the access token (API v2)",
 ], lead(1))
 panel("2", PX, 768, PW, "tools-call.http", "What the agent sends, and all it holds", [
     "POST /xaa/ledgerline/mcp HTTP/1.1",

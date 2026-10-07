@@ -29,8 +29,9 @@ next() {
 }
 
 step "Signing in (Bob at S&V, Alice at her own IdP)"
-TOK=$(kc_token sv-identity sterling-vance kagent "$(lab_secret SV_KAGENT_CLIENT_SECRET)" bob bob-demo)
-BOB=$(echo "$TOK" | jq -r .access_token); unset TOK
+. "$LAB_ROOT/scripts/idp.sh"
+prefer_tier keycloak   # Bob signs in through S&V's own IdP, which a script can drive
+BOB=$(sso_token bob bob-demo | jq -r .access_token)
 [ -n "$BOB" ] && [ "$BOB" != null ] || die "could not get Bob's token"
 probe_pod kagent kagent-ui; probe_pod sv-agents bob-assistant; probe_pod sv-agents; probe_pod observability
 AGENT=sv-agents/probe-bob-assistant   # Bob's agent's workload identity
@@ -144,7 +145,7 @@ YAML
     look "Banner: amber OUTAGE while failed checks count, then red FAILOVER ACTIVE."
     t=$(date +%s); until [ "$(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}')" != auth0 ] || [ $(( $(date +%s) - t )) -gt 60 ]; do sleep 1; done
     say "failed over to $(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}') after $(( $(date +%s) - t ))s"
-    look "A new sign-in to kagent now gets S&V's own login form. Bob's sessions keep working."
+    look "A new sign-in to kagent now goes to the next IdP, S&V's own Keycloak. Bob's sessions keep working."
     next
     K delete authorizationpolicy continuity-partition-auth0 -n sv-egress --ignore-not-found >/dev/null
     look "Network restored. Amber while healthy checks count, then it fails back and turns green."

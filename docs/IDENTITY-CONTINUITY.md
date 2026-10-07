@@ -1,15 +1,18 @@
 # Identity continuity
 
-Sterling & Vance's Keycloak (`https://idp.sterling.lab`, realm `sterling-vance`)
-brokers workforce sign-in to an ordered chain of upstream IdPs
-(`ENTERPRISE_IDP`) and falls back to its own accounts. S&V's own services
-trust only Keycloak. When an upstream goes down, new sign-ins move to the next
-healthy tier and nothing downstream changes: same issuer, same `sub`, same
-groups. An upstream that issues ID-JAGs (Gluu) also vouches for its users to
-other companies (Cross App Access), with the same fallback
+Sterling & Vance's broker (Keycloak at `https://idp.sterling.lab`, realm
+`sterling-vance`) routes workforce sign-in to an ordered chain of the firm's
+IdPs (`ENTERPRISE_IDP`: Okta, Auth0, Gluu, or the Keycloak S&V runs itself)
+and maps each into one profile. The broker is not an IdP for the workforce:
+it holds no employee passwords, only break-glass accounts for platform admins.
+S&V's own services trust only the broker. When an IdP goes down, new sign-ins
+move to the next healthy one and nothing downstream changes: same issuer,
+same `sub`, same groups. An IdP that issues ID-JAGs (Gluu, S&V's Keycloak)
+also vouches for its users to other companies (Cross App Access),
+with the same failover
 ([IDENTITY-FLOWS.md](IDENTITY-FLOWS.md#2-cross-app-access-id-jag-to-a-saas)).
 
-[![Identity continuity at 4x speed: the upstream IdP signing people in, a simulated outage at the firm's egress, failover to S&V's own accounts, and failback](videos/identity-continuity.gif)](videos/identity-continuity.mp4)
+[![Identity continuity at 4x speed: the upstream IdP signing people in, a simulated outage at the firm's egress, failover to the next IdP, and failback](videos/identity-continuity.gif)](videos/identity-continuity.mp4)
 
 - API and controller: `apps/continuity` (`IdentityContinuity`, `continuity.lab.solo.io/v1alpha1`)
 - Install: `platform/47-continuity` (`make layer-47`, after `45-identity`)
@@ -23,16 +26,27 @@ kubectl --context kind-solo-lab get idc -n sv-identity
 ## The resource
 
 The tiers come from `ENTERPRISE_IDP` in `config/lab.env` (default
-`auth0,keycloak`): each upstream in order, then `keycloak`, S&V's own
-accounts, always last. An upstream without `<NAME>_ISSUER` in `.env` is left
-out, so with no Auth0 tenant the lab runs on local accounts only. Failback is
-automatic (`platform/47-continuity/identitycontinuity.yaml`).
+`auth0,keycloak`), in any order, then `break-glass`, the broker's own
+accounts for platform admins. An IdP without `<NAME>_ISSUER` in `.env` is
+left out, so with no Auth0 tenant the lab signs people in through S&V's own
+Keycloak. Failback is automatic
+(`platform/47-continuity/identitycontinuity.yaml`).
+
+| IdP | Where | Vouches for its users (ID-JAG) |
+| --- | --- | --- |
+| `okta` | `OKTA_ISSUER`, `OKTA_CLIENT_ID` | no: the broker vouches for those sign-ins |
+| `auth0` | `AUTH0_ISSUER`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | no: the broker vouches for those sign-ins |
+| `gluu` (experimental) | `GLUU_ISSUER`, `GLUU_CLIENT_ID` ([GLUU.md](GLUU.md)) | yes |
+| `keycloak` | S&V's own Keycloak: `https://login.sterling.lab`, realm `workforce`, namespace `sv-workforce` (layer 45), or `KEYCLOAK_ISSUER` | yes |
 
 Every IdP in the chain is trusted for S&V's workforce: a user who signs in
-through it is linked to the S&V account with the same verified email. Chain
+through it is linked to the S&V account with the same verified email. The
+broker has an account for each employee, without a password, and never
+creates one at sign-in. Chain
 only IdPs that are authoritative for S&V's users. Accounts with role
 `local-only` (the `platform-admins` group: break-glass and platform admins)
-are never linked to an upstream. Only the active tier's IdP is enabled in
+are never linked to an upstream; with every IdP down they are the only ones
+who can sign in. Only the active tier's IdP is enabled in
 Keycloak; the others keep their users' links but can't sign anyone in, not
 even by `kc_idp_hint`.
 
@@ -55,10 +69,11 @@ or by hand) is kept.
 
 | `ENTERPRISE_IDP` | Sign-in |
 | --- | --- |
-| `keycloak` | S&V's own accounts |
-| `auth0,keycloak` (default) | Auth0, else S&V's own accounts |
-| `gluu,keycloak` | Gluu, else S&V's own accounts; Gluu also vouches for Bob in Cross App Access ([GLUU.md](GLUU.md)) |
-| `gluu,auth0,keycloak` | any order; `keycloak` last |
+| `keycloak` | S&V's own Keycloak |
+| `auth0,keycloak` (default) | Auth0, else S&V's own Keycloak |
+| `okta,auth0,keycloak` | Okta, else Auth0, else S&V's own Keycloak |
+| `keycloak,auth0` | S&V's own Keycloak, else Auth0 |
+| `gluu,keycloak` | Gluu, else S&V's own Keycloak ([GLUU.md](GLUU.md)) |
 
 ### What the broker realm must already have
 
@@ -73,8 +88,11 @@ doesn't create flows or roles, so the realm needs them first
   `idp-auto-link`);
 - a service-account client whose roles include realm-management
   `manage-identity-providers` and `manage-realm` (editing the redirector's
-  config is realm config), with its credentials in the Secret
-  `broker.keycloak.credentialsRef` names.
+  config is realm config; so is the user profile), with its credentials in
+  the Secret `broker.keycloak.credentialsRef` names;
+- for `sync`: a second service-account client with realm-management
+  `view-users` and `manage-users` only (`continuity-sync`), its credentials
+  in the Secret `sync.credentialsRef` names.
 
 ### spec
 
@@ -90,25 +108,33 @@ doesn't create flows or roles, so the realm needs them first
 | `tiers[]` | ordered; the first eligible, healthy tier is active |
 | `tiers[].name` | also the Keycloak IdP alias |
 | `tiers[].displayName` | shown on the login page and in the Observatory |
-| `tiers[].type` | `oidc` (an upstream) or `local` (the broker's own accounts) |
+| `tiers[].type` | `oidc` (an IdP) or `local` (the broker's own accounts: break-glass) |
 | `tiers[].enabled` | `false`: never active, Keycloak IdP disabled |
 | `tiers[].drain` | out of rotation; sessions in flight keep working |
 | `tiers[].oidc.issuer` | exactly as the upstream publishes it (Auth0's ends in `/`) |
 | `tiers[].oidc.clientID` | optional; falls back to the Secret's `client-id` key |
 | `tiers[].oidc.clientSecretRef` | Secret and key (default `client-secret`); missing means `NotConfigured` |
 | `tiers[].oidc.scopes` | default `openid email profile` |
+| `tiers[].attributes[]` | the IdP's attributes paired with S&V's profile for the directory sync: `attribute` (built-in or `profile.attributes`) and `path` (the attribute in the IdP's user record) |
+| `tiers[].directory` | where the sync reads and writes this IdP's users: `type` (`scim`, `auth0`, `keycloak`), `url`, `credentialsRef` (`client-secret`, and `client-id` unless `clientID` is set), `scopes`, `audience` (Auth0) |
 | `tiers[].failoverWhen` | which probe results count against the tier: `unreachable`, `serverError`, `invalidDiscovery` (each default true), `latencyAboveMs` (must be below `health.timeoutSeconds`: a slower answer times out first) |
 | `health` | `intervalSeconds`, `timeoutSeconds`, `unhealthyThreshold` (failures in a row to go down), `healthyThreshold` (successes in a row to come back) |
 | `failback` | `Automatic` (move back up as soon as a higher tier is healthy) or `Manual` |
+| `profile.attributes[]` | S&V's profile beyond `username`, `email`, `firstName`, `lastName`: `name`, `displayName`, `type` (`string` default, `integer`, `number`, `boolean`, `date`, `email`, `uri`: checked by the broker), `multivalued` (a list) |
+| `sync.schedule` | cron, UTC; `sync.suspend` pauses it |
+| `sync.credentialsRef` | Secret with the sync's realm client (default `continuity-sync`) |
 
 ### status
 
 `active` (where logins go now: the tier Keycloak's redirector points at, or
 the local tier), `activeSince`, `broker.issuer`, `egressNamespace`, per tier (`configured`, `healthy`,
 `partitioned`, `latencyMs`, `reason`, `message`, consecutive failures and
-successes, and `redirectURI`: the callback the upstream app must allow), the
-last 20 `transitions`, and conditions `Ready` and `Degraded` (not on the first
-tier). The controller also emits Kubernetes events (`TierHealthy`,
+successes, and `redirectURI`: the callback the upstream app must allow),
+the last 20 `transitions`, `sync` (CronJob, last run and last success,
+users, S&V profiles updated, failover accounts written and created,
+failures, and each IdP's attribute paths as its directory last showed
+them), and
+conditions `Ready`, `Degraded` (not on the first tier) and `ProfileApplied`. The controller also emits Kubernetes events (`TierHealthy`,
 `TierUnhealthy`, failovers).
 
 ## What the controller does
@@ -136,7 +162,8 @@ Every `health.intervalSeconds`, two replicas, one leader (Lease
      missing its IdP stays (hidden), so users' links to it survive; only
      removing the tier from the spec deletes it;
    - the `continuity-browser` flow's IdP redirector set to the active tier,
-     or cleared when the active tier is `local`, so S&V's own form shows.
+     or cleared when the active tier is `local`, so the broker's own form
+     shows (platform admins only).
 4. **Keep the egress path:** a ServiceEntry `sv-egress/continuity-<tier>` for
    each external upstream, bound to `sv-egress/egress-waypoint`, so the
    back-channel (probes, token, JWKS, userinfo) leaves the lab under S&V
@@ -163,6 +190,69 @@ Lease, events, and `get` on the Secrets it is configured with, by name
 never sees Keycloak's own admin or signing-key Secrets. Credentials are re-read
 on every reconcile, so a rotated secret takes effect within one interval. The DNS capture that makes the
 ServiceEntry apply is Istio ambient's (`AMBIENT_DNS_CAPTURE`, on in 1.31).
+
+## Directory sync
+
+The IdPs in the chain must agree on who each employee is and what their
+profile says, so that whichever one is active signs them in with the same
+details. The directory sync keeps them in step with the primary, on a
+schedule (`spec.sync`), through S&V's profile on the broker:
+
+1. **Primary → S&V's profile.** The chain's first IdP is the primary. For
+   each employee the broker has, the sync reads their record from the
+   primary's directory and writes the mapped attributes into S&V's profile,
+   the standard every IdP maps to.
+2. **S&V's profile → each failover.** It then writes S&V's profile to every
+   other IdP with a directory, through that IdP's mapping. A user the
+   primary has and a failover doesn't is created there, and the failover
+   emails them to set their own password (Keycloak's "execute actions"
+   email; the realm needs its SMTP settings). A directory that can't create
+   a user without a password (Auth0) reports them instead.
+
+Reorder the chain and the roles follow. A user is found at an IdP by the
+broker's link to it, else by email (one match, never a guess). After each
+write the sync reads the record back, so an attribute the directory drops
+is reported. It never reads or writes a password or other credential,
+never writes the username, and never deletes a user; accounts with role
+`local-only` are left alone. Tokens carry the standard claims only.
+
+```yaml
+spec:
+  profile:
+    attributes: [{name: department, displayName: Department}]
+  sync: {schedule: "0 2 * * *"}
+  tiers:
+  - name: auth0                      # primary: read
+    attributes:
+    - {attribute: firstName, path: given_name}
+    - {attribute: department, path: user_metadata.department}
+    directory: {type: auth0, url: https://<tenant>/api/v2, audience: https://<tenant>/api/v2/,
+      credentialsRef: {name: directory-auth0}}
+  - name: keycloak                   # failover: written
+    attributes:
+    - {attribute: firstName, path: firstName}
+    - {attribute: department, path: department}
+    directory: {type: keycloak, url: http://keycloak.sv-workforce.svc/admin/realms/workforce,
+      credentialsRef: {name: directory-keycloak}}
+```
+
+| Directory | Client | Paths |
+| --- | --- | --- |
+| `scim` (Gluu, Ping, most enterprise IdPs) | `client_credentials` with the SCIM read and write scopes | `name.givenName`, `emails[primary eq true].value`, `urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:department` |
+| `auth0` | Machine-to-Machine app for the Management API, `read:users`, `update:users` | `given_name`, `user_metadata.department`, `app_metadata.<key>` |
+| `keycloak` | service-account client with `view-users`, `manage-users` in that realm | `firstName`, `department` (the realm's user profile must keep it, or allow unmanaged attributes) |
+
+Auth0 has no SCIM API for its own users; its Management API is the
+directory. **Test connection** (`sync --test-tier <idp>`, a Job from the
+CronJob) gets a token, counts the users and reads the directory's attribute
+schema along the sync's own path and credentials; its result (never user
+records) is the container's termination message.
+
+The sync runs as ServiceAccount `continuity-sync`: `get` on its instance,
+`patch` on its status, and `get` on its own Secret and the directories'
+Secrets by name (Role `continuity-sync-secrets`). It reaches the broker and
+the directories under the same mesh policy as the controller; directory
+hosts get ServiceEntries on the IdP's egress path.
 
 ## Kill switch
 
@@ -195,7 +285,7 @@ failover takes about 10 s after the cut and failback about 15 s after the heal.
 
 ![Connected: Auth0 signing people in, through the S&V egress](images/observatory-continuity-connected.jpg)
 
-![Failover: the network to Auth0 cut at the egress, sign-in on S&V's own accounts](images/observatory-continuity-failover.jpg)
+![Failover: the network to Auth0 cut at the egress, sign-in through the next IdP](images/observatory-continuity-failover.jpg)
 
 - **Map:** every app that signs people in through the broker (found from the
   edge's SSO configuration), the broker, the egress gateway, and the tiers in
@@ -214,10 +304,23 @@ failover takes about 10 s after the cut and failback about 15 s after the heal.
   switch policy for the active upstream (a picker appears with more than one
   upstream). The cut wire reads `NETWORK CUT`, the tier is stamped `OUTAGE`,
   and the egress gateway turns red. The policy records who cut it.
-- **Rule builder** (right): tier order, enable, drain, failover conditions,
-  latency limit, client secrets (write-only), new OIDC tiers (the redirect URI
-  to register is shown), health settings, failback. Save applies the spec as
+- **Rule builder** (right): IdP order, enable, drain, failover conditions,
+  latency limit, client secrets (write-only), new OIDC IdPs (the redirect URI
+  to register is shown), health settings, and **Fail back automatically**. Save applies the spec as
   you.
+- **Directory sync** (from the rule builder): the IdPs in chain order on
+  the left (primary, failovers), S&V's profile on the right. Each IdP lists
+  the attributes its directory has, as the sync or **Test connection** last
+  detected them (Auth0: its profile fields and the metadata keys its users
+  carry); wire them to the S&V attributes they pair with. Attributes are
+  added only to S&V's profile (**+ attribute**: name, display name, type,
+  list). Each IdP's directory has **Test connection** (the saved settings,
+  run as the sync). **Code** edits the same mapping as JSON, each S&V
+  attribute and the IdPs' attributes paired with it, in chain order
+  (`"department": ["auth0.user_metadata.department", "keycloak.department"]`);
+  **Schedule** sets the sync's cron, pauses it, shows the last run and runs
+  it now. Directory credentials are write-only and readable by the sync
+  alone.
 - **Transitions** and **Identity traffic** (bottom): failovers, cuts and
   restores, and OIDC calls.
 
@@ -269,13 +372,51 @@ slash (`https://<tenant>.us.auth0.com/`). Unset, the lab has no auth0 tier.
 
 Bob's groups come from his S&V account, not from Auth0.
 
+**Auth0 as a directory** (the directory sync): **Applications → Create
+Application → Machine to Machine Applications**, authorized for the **Auth0
+Management API** with `read:users` and `update:users`. Its credentials in
+`.env`, then `make layer-47`:
+
+```
+AUTH0_DIRECTORY_CLIENT_ID=<Client ID>
+AUTH0_DIRECTORY_CLIENT_SECRET=<Client Secret>
+```
+
+This writes Secret `sv-identity/directory-auth0` and sets the auth0 IdP's
+directory (`https://<tenant>/api/v2`); map its attributes in the
+Observatory's Directory sync.
+
 ## Gluu setup
 
 Gluu as S&V's enterprise IdP: [GLUU.md](GLUU.md#sv-enterprise-idp-gluu).
 
+## S&V's own Keycloak
+
+`keycloak` in `ENTERPRISE_IDP` is a Keycloak S&V runs itself, apart from the
+broker: layer 45 installs one in `sv-workforce` at
+`https://login.sterling.lab`, realm `workforce`, with the employees
+(`bob` / `bob-demo`, `carol` / `carol-demo`). It is an upstream like the
+others: S&V's client there (`sterling-vance-broker`) authenticates with the
+broker's key and the egress's key (`private_key_jwt`), it issues ID-JAGs for
+the broker's sign-ins, and the profile sync reads its users with
+`continuity-directory` (`view-users`) over its admin API, which only the
+sync reaches. To use another Keycloak, set `KEYCLOAK_ISSUER` and
+`KEYCLOAK_CLIENT_ID` in `.env` and register the callback and keys as for any
+upstream.
+
+## Okta setup
+
+`OKTA_ISSUER` (your org's authorization server, e.g.
+`https://<org>.okta.com`) and `OKTA_CLIENT_ID` in `.env`, `okta` in
+`ENTERPRISE_IDP`. An OIDC web app integration: sign-in redirect URI
+`https://idp.sterling.lab/realms/sterling-vance/broker/okta/endpoint`,
+client authentication with a public key (the JWKS from `make xaa-keys`,
+`sv-upstream-client.jwks.json`), grant type Authorization Code, PKCE
+required. In Cross App Access the broker vouches for Okta sign-ins.
+
 ## Another upstream IdP
 
-Any OIDC provider works (Okta, Entra ID, Ping, a second Keycloak). In the
+Any OIDC provider works (Entra ID, Ping, another Keycloak). In the
 rule builder, **Add OIDC tier**: name, display name, issuer, client ID and
 secret. Register `<broker issuer>/broker/<name>/endpoint` as the app's
 callback (shown in the form and in `status.tiers[].redirectURI`), allow
@@ -306,6 +447,10 @@ interactive and is skipped.
 | outage button: "no network path is known" | no ServiceEntry for the tier: `spec.egress` unset, or the tier is `local` |
 | cut has no effect | the caller isn't in the ambient mesh, or DNS capture is off, so traffic bypasses the ServiceEntry |
 | stays on local after a heal | failback waits for `healthyThreshold` successes; `Manual` failback never moves back |
+| `ProfileApplied` False: maps to "x", not in the profile | add the attribute to S&V's profile, or fix the mapping |
+| sync: `directory token: HTTP 401` | the directory client's credentials, or it lacks `client_credentials` |
+| sync: `directory: HTTP 403` | the directory client lacks the read scope (`scopes`) or Auth0 `read:users` |
+| sync failed, attribute unchanged | that tier's directory was unreachable; its attributes are kept until the next run |
 
 Keycloak's log names the claim or step that failed:
 

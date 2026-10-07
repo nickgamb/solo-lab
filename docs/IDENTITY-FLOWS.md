@@ -126,18 +126,18 @@ Two settings in `config/lab.env` (`scripts/idp.sh`):
 
 | Setting | Values | Decides |
 | --- | --- | --- |
-| `ENTERPRISE_IDP` | `auth0,keycloak` (default), `gluu,keycloak`, ...; `keycloak` last | who signs Bob in, in failover order ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md)), and who vouches for him |
+| `ENTERPRISE_IDP` | `auth0,keycloak` (default), `okta,auth0,keycloak`, `gluu,keycloak`, ...; any order | S&V's IdPs, which sign Bob in, in failover order ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md)), and who vouches for him; `keycloak` is the Keycloak S&V runs itself (`https://login.sterling.lab`) |
 | `RESOURCE_AS` | `keycloak` (default), `gluu` with `RESOURCE_AS_ISSUER` | Ledgerline's authorization server |
 
-Who vouches is decided by Bob's session. S&V's Keycloak records the IdP a
+Who vouches is decided by Bob's session. S&V's broker records the IdP a
 session came from, and kagent's access token carries it (`idp`).
 
 | Bob's session | Vouches |
 | --- | --- |
-| S&V's own login | S&V's Keycloak |
-| an upstream that issues ID-JAGs (Gluu), while it is S&V's active tier | that upstream |
-| an upstream that doesn't (Auth0), while it is active | S&V's Keycloak, for that session |
-| an upstream that is no longer active (failed over, drained) | nobody: refused until Bob signs in again |
+| an IdP that issues ID-JAGs (Gluu, S&V's Keycloak), while it is S&V's active tier | that IdP |
+| an IdP that doesn't (Okta, Auth0), while it is active | S&V's broker, for that session |
+| the broker's break-glass accounts (platform admins) | S&V's broker |
+| an IdP that is no longer active (failed over, drained) | nobody: refused until Bob signs in again |
 
 Failover is the continuity controller's decision alone (`status.active`).
 An upstream that isn't active is disabled in Keycloak (no sign-in through
@@ -152,16 +152,16 @@ sequenceDiagram
   participant A as Bob's agent
   participant G as ai-gateway (S&V egress)
   participant X as idtoken-exchange (ext_proc)
-  participant K as S&V Keycloak (broker)
+  participant K as S&V broker (Keycloak)
   participant R as xaa-relay
-  participant E as Enterprise IdP (Gluu, or S&V Keycloak)
+  participant E as Bob's IdP (S&V's Keycloak, Gluu)
   participant L as Ledgerline AS (Keycloak or Gluu)
   participant M as ledgerline-research (behind Ledgerline's waypoint)
   A->>G: tools/call /xaa/ledgerline/mcp, Authorization: Bob's access token
   G->>G: verify JWT (aud ai-gateway), caller is an agent's pool, Bob in advisors
   G->>X: request headers, verified token as metadata
-  X->>K: as xaa-egress (its key): Bob's stored Gluu tokens (Identity Brokering API v2)
-  X->>E: refresh, as S&V's client at Gluu (the egress's key): Bob's ID token
+  X->>K: as xaa-egress (its key): Bob's upstream access token (Identity Brokering API v2, renewed by the broker)
+  X->>E: token exchange, as S&V's client there (the egress's key): Bob's ID token
   X-->>G: x-id-token (replaces any the caller sent)
   G->>R: token exchange: subject = Bob's ID token, requested type ID-JAG, audience = Ledgerline's AS
   R->>R: only this exchange, this audience, these scopes
@@ -176,9 +176,9 @@ sequenceDiagram
   M-->>A: result
 ```
 
-With S&V's Keycloak vouching, idtoken-exchange gets Bob's ID token from it
-by RFC 8693 instead (`subject_token` = the access token,
-`requested_token_type` = ID token, as `kagent`).
+With S&V's broker vouching, idtoken-exchange gets Bob's ID token from it by
+RFC 8693 instead (`subject_token` = the access token, `requested_token_type`
+= ID token, as `kagent`).
 
 - **Requesting side** (`demos/bob/manifests/40-xaa-ledgerline.yaml`):
   - Route `xaa-ledgerline` on ai-gateway, matched only with a bearer token.
@@ -194,15 +194,17 @@ by RFC 8693 instead (`subject_token` = the access token,
       agentgateway's `oauthTokenExchange` requires `token_type: Bearer` in
       the response, while RFC 8693 (2.2.1) has the IdP return `N_A` for an
       ID token.
-    - Upstream: S&V's Keycloak keeps the user's tokens from their sign-in
-      there (`storeTokens`, `offline_access`). Only client `xaa-egress` may
-      read them (Identity Brokering API v2: `external.token.idp` lists the
-      upstreams that vouch; the client authenticates with the egress's key
-      and must be in the user's token audience). The ID token is renewed at
-      the upstream on each use, at most once a minute per access token, so
-      the upstream decides each time. S&V's client there doesn't rotate
-      refresh tokens (a confidential client with `private_key_jwt`,
-      RFC 9700 4.14.2): nothing is kept between replicas.
+    - Upstream: S&V's broker keeps the user's tokens from their sign-in
+      there (`storeTokens`, no offline access: they end with the user's
+      session at the IdP). Only client `xaa-egress` may read them, and it
+      gets the upstream access token alone, renewed by the broker; the
+      refresh token never leaves the broker (Identity Brokering API v2:
+      `external.token.idp` lists the IdPs that vouch; the client
+      authenticates with the egress's key and must be in the user's token
+      audience). The IdP then exchanges that access token for Bob's ID
+      token there (RFC 8693, as S&V's client, the egress's key), on each
+      use, at most once a minute per access token, so the IdP decides each
+      time. Nothing is kept between replicas.
     - It reads the active tier from IdentityContinuity
       `sv-identity/sterling-vance` (Role: `get` on that object only), isn't
       ready until it knows it, and stops answering if it can't read it for

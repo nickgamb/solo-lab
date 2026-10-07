@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Story 1 enforcement checks, from real workload identities in the mesh.
 . "$(dirname "$0")/../../scripts/lib.sh"
-need_cluster; need_password_grant
+need_cluster
+. "$(dirname "$0")/../../scripts/idp.sh"
+# Bob signs in as in the browser: kagent's SSO at the edge, through S&V's
+# broker to S&V's own IdP (keycloak), which a script can drive
+prefer_tier keycloak
 # Bob's access token as the edge forwards it after SSO (kagent)
-BOB=$(user_token sv-identity sterling-vance kagent "$(lab_secret SV_KAGENT_CLIENT_SECRET)" bob bob-demo)
-[ -n "$BOB" ] && [ "$BOB" != null ] || die "could not get Bob's token"
-# someone else's ID token (ops, a platform admin in S&V's realm), to try to swap in
-OTHER_ID=$(kc_token sv-identity sterling-vance kagent "$(lab_secret SV_KAGENT_CLIENT_SECRET)" ops ops-demo | jq -r .id_token)
+BOB=$(sso_token bob bob-demo | jq -r .access_token)
+[ -n "$BOB" ] && [ "$BOB" != null ] || die "could not sign Bob in"
+# someone else's ID token (Carol, another S&V employee), to try to swap in
+OTHER_ID=$(sso_token carol carol-demo | jq -r .id_token)
 # Bob's agent's workload identity (its worker pool's ServiceAccount), another
 # workload in the same namespace, and one in another namespace.
 probe_pod sv-agents bob-assistant; probe_pod sv-agents; probe_pod observability; probe_pod kagent kagent-ui
@@ -37,7 +41,6 @@ check 'http": 40[13]|RBAC|isError": true|refused|reset|Broken pipe|Connection' \
 XAA=http://ai-gateway.agentgateway-system/xaa/ledgerline/mcp
 # Ledgerline's account for Bob: its own user ID (RESOURCE_AS=keycloak), or a
 # token its Gluu issued for Bob (RESOURCE_AS=gluu)
-. "$(dirname "$0")/../../scripts/idp.sh"
 ras_env
 ACCOUNT='11ed0000-0000-4000-8000-000000000b0b' CHAT='11ed0000-0000-4000-8000-000000000b0b|bob@sterling\.lab'
 if [ "$RESOURCE_AS" = gluu ]; then
@@ -46,16 +49,17 @@ if [ "$RESOURCE_AS" = gluu ]; then
   CHAT='bob'
 fi
 # the IdP that should vouch for Bob: his session's (the token's idp claim)
-# when it issues ID-JAGs and is S&V's active tier, else S&V's Keycloak. These
-# checks sign Bob in with S&V's own login; a browser session through Gluu
-# has Gluu vouch.
+# when it issues ID-JAGs and is S&V's active tier, else S&V's broker
+# ("sterling-vance"). These checks sign Bob in through S&V's own IdP, which
+# vouches for him; Ledgerline links his seat to it at his first sign-in there.
 SESSION_IDP=$(echo "$BOB" | cut -d. -f2 | python3 -c 'import base64,json,sys; s=sys.stdin.read().strip(); print(json.loads(base64.urlsafe_b64decode(s+"="*(-len(s)%4))).get("idp",""))')
 ACTIVE=$(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}' 2>/dev/null)
-VOUCHER=keycloak
+VOUCHER=sterling-vance
 if [ -n "$SESSION_IDP" ] && [ "$SESSION_IDP" = "$ACTIVE" ]; then
   case " $(idp_xaa_upstreams) " in *" $SESSION_IDP "*) VOUCHER=$SESSION_IDP ;; esac
 fi
 step "Cross App Access: Bob's agent -> Ledgerline Research (ID-JAG)"
+[ "$RESOURCE_AS" = keycloak ] && { ledgerline_signin bob bob-demo || die "Bob could not sign in to Ledgerline through $ACTIVE"; }
 check "$ACCOUNT"                                "account_info: Ledgerline's own account for Bob"  $AGENT $XAA call account_info '{}' --token "$BOB"
 # xaa-relay's record of the last ID-JAG it accepted (the gateway caches
 # Ledgerline's token for up to five minutes)
@@ -64,7 +68,7 @@ vouched=$(K logs -n agentgateway-system -l app=xaa-relay --since=6m --tail=-1 2>
 if [ "${vouched%% *}" = "$VOUCHER" ]; then ok "ID-JAG from $VOUCHER, checked at S&V's egress: ${vouched#* }"; pass=$((pass+1))
 else
   warn "ID-JAG from $VOUCHER, checked at S&V's egress"; echo "      got: ${vouched:-no ID-JAG in the xaa-relay log}"
-  [ "$VOUCHER" != keycloak ] && echo "      $VOUCHER vouches for a session through it once Bob has signed in to Ledgerline through it (https://idp.$LEDGERLINE_DOMAIN/realms/ledgerline/account)"
+  [ "$VOUCHER" != sterling-vance ] && echo "      $VOUCHER vouches for a session through it once Bob has signed in to Ledgerline through it (https://idp.$LEDGERLINE_DOMAIN/realms/ledgerline/account)"
   fail=$((fail+1))
 fi
 check 'overweight'                              "sector_outlook through XAA"                       $AGENT $XAA call sector_outlook '{"sector":"technology"}' --token "$BOB"

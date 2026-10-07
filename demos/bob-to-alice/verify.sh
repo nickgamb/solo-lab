@@ -8,8 +8,9 @@ pass=0 fail=0
 res() { if [ "$1" = ok ]; then ok "$2"; pass=$((pass+1)); else warn "$2"; echo "      got: ${3:0:300}"; fail=$((fail+1)); fi; }
 expect() { echo "$3" | tr '\n' ' ' | grep -qiE "$1" && res ok "$2" || res no "$2" "$(echo "$3" | tr '\n' ' ')"; }
 
-TOK=$(kc_token sv-identity sterling-vance kagent "$(lab_secret SV_KAGENT_CLIENT_SECRET)" bob bob-demo)
-BOB=$(echo "$TOK" | jq -r .access_token); unset TOK
+. "$LAB_ROOT/scripts/idp.sh"
+prefer_tier keycloak   # Bob signs in through S&V's own IdP, which a script can drive
+BOB=$(sso_token bob bob-demo | jq -r .access_token)
 ALICE=$(user_token alice-identity alice alice-portal "" alice alice-demo)
 [ -n "$BOB" ] && [ -n "$ALICE" ] || die "sign-in failed"
 probe_pod kagent kagent-ui; probe_pod sv-agents

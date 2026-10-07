@@ -13,6 +13,11 @@ spec: {mtls: {mode: STRICT}}
 ---
 apiVersion: security.istio.io/v1
 kind: PeerAuthentication
+metadata: {name: strict, namespace: sv-workforce}
+spec: {mtls: {mode: STRICT}}
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
 metadata: {name: strict, namespace: kagent}
 spec: {mtls: {mode: STRICT}}
 ---
@@ -43,8 +48,8 @@ metadata: {name: strict, namespace: sv-egress}
 spec: {mtls: {mode: STRICT}}
 ---
 # Keycloak: the edge (browsers, SSO token calls), the firm's gateways (JWKS,
-# token exchange), agentregistry, and the continuity controller (admin API:
-# upstream IdPs, login redirector).
+# token exchange), agentregistry, the continuity controller (admin API:
+# upstream IdPs, login redirector, profile) and its profile sync (users).
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata: {name: keycloak-callers, namespace: sv-identity}
@@ -64,7 +69,25 @@ spec:
         - cluster.local/ns/sv-mcp/sa/bob-workspace      # verifies its delegated tokens (JWKS)
         - cluster.local/ns/agentregistry/sa/agentregistry
         - cluster.local/ns/sv-identity/sa/continuity-controller
+        - cluster.local/ns/sv-identity/sa/continuity-sync
         - cluster.local/ns/observatory/sa/observatory    # its service-account token for kagent
+---
+# S&V's workforce IdP: browsers, and every in-lab caller of
+# https://login.sterling.lab (the broker, the continuity controller, the
+# egress, Ledgerline), arrive through the edge; the profile sync reads users
+# over the admin API directly. Its kill switch is a DENY in sv-workforce.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: keycloak-callers, namespace: sv-workforce}
+spec:
+  selector: {matchLabels: {app: keycloak}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/kgateway-system/sa/edge
+        - cluster.local/ns/sv-identity/sa/continuity-sync
 ---
 # The continuity controller only calls out (Keycloak, upstreams, kube API).
 apiVersion: security.istio.io/v1
@@ -74,8 +97,17 @@ spec:
   selector: {matchLabels: {app: continuity-controller}}
   action: ALLOW          # no rules: nothing in the mesh may call it
 ---
-# The firm's way out: only its IdP (brokered logins' back-channel) and the
-# continuity controller (health probes) may reach upstream IdPs on the internet.
+# So does its scheduled profile sync (Keycloak, upstream directories, kube API).
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: continuity-sync-callers, namespace: sv-identity}
+spec:
+  selector: {matchLabels: {app: continuity-sync}}
+  action: ALLOW
+---
+# The firm's way out: only its IdP (brokered logins' back-channel), the
+# continuity controller (health probes) and its profile sync (upstream
+# directories) may reach upstream IdPs on the internet.
 # A tier's partition is a DENY on its ServiceEntry, evaluated before this.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
@@ -89,6 +121,7 @@ spec:
         principals:
         - cluster.local/ns/sv-identity/sa/keycloak
         - cluster.local/ns/sv-identity/sa/continuity-controller
+        - cluster.local/ns/sv-identity/sa/continuity-sync
         - cluster.local/ns/observatory/sa/observatory    # its service-account token for kagent
         - cluster.local/ns/agentgateway-system/sa/idtoken-exchange   # Cross App Access: renews at the vouching upstream
         - cluster.local/ns/agentgateway-system/sa/xaa-relay          # Cross App Access: ID-JAG from the vouching upstream

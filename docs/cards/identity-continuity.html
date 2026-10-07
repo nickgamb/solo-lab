@@ -13,7 +13,7 @@
 <div class="wrap">
   <header class="masthead">
     <h1>Identity Continuity Demo Card</h1>
-    <p class="standfirst">Take the firm's IdP off the network. Sign-in moves to the firm's own accounts, and nothing downstream notices.</p>
+    <p class="standfirst">Take the firm's IdP off the network. Sign-in moves to the firm's next IdP, and nothing downstream notices.</p>
   </header>
   <section class="screens">
     <div class="screen left">
@@ -107,7 +107,7 @@
           </td>
           <td class="say">
             <span class="chip tier">One issuer</span>
-            <span class="lede">Every app trusts one issuer: the firm's Keycloak.</span>
+            <span class="lede">Every app trusts one issuer: the firm's broker.</span>
           </td>
         </tr>
         <tr class="port">
@@ -147,11 +147,11 @@
           <td class="num">5</td>
           <td class="act">
             <span class="where">Right screen</span>
-            <span class="click">Open a new private window, open kagent, and sign in as <strong>bob / bob-demo</strong></span>
+            <span class="click">Open a new private window, open kagent, and sign in at the firm's own Keycloak as <strong>bob / bob-demo</strong></span>
           </td>
           <td class="say">
             <span class="chip through">Still Bob</span>
-            <span class="lede">The firm's own login form, and the same Bob.</span>
+            <span class="lede">The next IdP's login page, and the same Bob.</span>
           </td>
         </tr>
         <tr class="term">

@@ -19,14 +19,15 @@
 // signs in again. The controller alone decides failover, and an upstream that
 // isn't active is never called.
 //
-//	upstream  S&V's Keycloak brokers the user's sign-in there and keeps their
-//	          upstream tokens. They are read through Keycloak's Identity
-//	          Brokering API v2 as client xaa-egress (its own key; the only
-//	          client allowed, for those upstreams only) with the user's own
-//	          access token, and the
-//	          ID token is renewed at the upstream with the stored refresh
-//	          token, so the upstream decides on every renewal. S&V is a
-//	          confidential client there (private_key_jwt), so the refresh
+//	upstream  S&V's broker brokers the user's sign-in there and keeps their
+//	          upstream tokens. Its Identity Brokering API v2 gives the
+//	          user's upstream access token, renewed by the broker with the
+//	          stored refresh token (which never leaves it), to client
+//	          xaa-egress alone (its own key, for those upstreams only) with
+//	          the user's own access token. The upstream then exchanges that
+//	          access token for the user's ID token (RFC 8693), as S&V's
+//	          client there (private_key_jwt), so the upstream decides on
+//	          every call. S&V is a confidential client there, so the refresh
 //	          token is not rotated (RFC 9700 4.14.2) and nothing is kept
 //	          between replicas. A user with no account there gets S&V's
 //	          Keycloak; an upstream that refuses (revoked, disabled) refuses
@@ -233,34 +234,42 @@ func (x *exchanger) fromUpstream(ctx context.Context, accessToken string, u op) 
 		return "", fmt.Errorf("broker: HTTP %d: %s", resp.StatusCode, oauthError(body))
 	}
 	var stored struct {
-		IDToken      string `json:"id_token"`
-		RefreshToken string `json:"refresh_token"`
+		AccessToken string `json:"access_token"`
 	}
 	if err := json.Unmarshal(body, &stored); err != nil {
 		return "", fmt.Errorf("broker: %w", err)
 	}
-	if stored.RefreshToken == "" {
-		return "", fmt.Errorf("%w: %s: no refresh token stored (offline_access)", errRefused, u.Name)
+	if stored.AccessToken == "" {
+		return "", fmt.Errorf("%w: %s: no upstream token stored for this session", errRefused, u.Name)
 	}
-	return x.renew(ctx, u, stored.RefreshToken)
+	return x.idTokenAt(ctx, u, stored.AccessToken)
 }
 
-// renew trades the refresh token for a fresh ID token at upstream u.
-func (x *exchanger) renew(ctx context.Context, u op, refreshToken string) (string, error) {
+// idTokenAt has upstream u exchange the user's access token there for their
+// ID token there (RFC 8693), as S&V's client at u.
+func (x *exchanger) idTokenAt(ctx context.Context, u op, accessToken string) (string, error) {
 	var out struct {
-		IDToken string `json:"id_token"`
+		AccessToken     string `json:"access_token"` // RFC 8693 carries any issued token here
+		IDToken         string `json:"id_token"`
+		IssuedTokenType string `json:"issued_token_type"`
 	}
 	if err := x.tokenRequest(ctx, u, url.Values{
-		"grant_type":    {"refresh_token"},
-		"refresh_token": {refreshToken},
-		"scope":         {"openid"},
+		"grant_type":           {tokenExchange},
+		"subject_token":        {accessToken},
+		"subject_token_type":   {typeAccessToken},
+		"requested_token_type": {typeIDToken},
+		"scope":                {"openid"},
 	}, &out); err != nil {
 		return "", err
 	}
-	if out.IDToken == "" {
-		return "", fmt.Errorf("%s: refresh returned no ID token", u.Name)
+	id := out.AccessToken
+	if out.IssuedTokenType != typeIDToken {
+		id = out.IDToken
 	}
-	return out.IDToken, nil
+	if id == "" {
+		return "", fmt.Errorf("%s: token exchange returned no ID token", u.Name)
+	}
+	return id, nil
 }
 
 // tokenRequest POSTs a form to o's token endpoint as S&V's client there. A
@@ -378,12 +387,17 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	hc, err := caClient(os.Getenv("CA_FILE"))
+	if err != nil {
+		slog.Error("CA_FILE", "err", err)
+		os.Exit(1)
+	}
 	x := &exchanger{
 		keycloak:  keycloak,
 		broker:    broker,
 		upstreams: upstreams,
 		brokerURL: env("BROKER_URL", "http://keycloak.sv-identity/realms/sterling-vance/broker"),
-		hc:        &http.Client{Timeout: 10 * time.Second},
+		hc:        hc,
 		now:       time.Now,
 		cache:     map[[32]byte]cached{},
 	}

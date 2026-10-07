@@ -174,7 +174,7 @@ func TestReconcileKeycloakMissingSecretKeepsIdP(t *testing.T) {
 	creds := map[string]credential{"auth0": {missing: "secret sv-identity/upstream-auth0 not found"}}
 	st := map[string]*v1.TierStatus{"auth0": {Configured: false}, "keycloak": {Configured: true, Healthy: true}}
 
-	effective, applied, err := r.reconcileKeycloak(context.Background(), ic, kc, creds, st, "keycloak")
+	effective, applied, _, err := r.reconcileKeycloak(context.Background(), ic, kc, creds, st, "keycloak")
 	if err != nil || !applied {
 		t.Fatalf("reconcile: applied=%v err=%v", applied, err)
 	}
@@ -189,7 +189,7 @@ func TestReconcileKeycloakMissingSecretKeepsIdP(t *testing.T) {
 	}
 
 	ic.Spec.Tiers = ic.Spec.Tiers[1:] // the tier itself removed from the spec
-	if _, _, err := r.reconcileKeycloak(context.Background(), ic, kc, map[string]credential{}, st, "keycloak"); err != nil {
+	if _, _, _, err := r.reconcileKeycloak(context.Background(), ic, kc, map[string]credential{}, st, "keycloak"); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := api.idps["auth0"]; ok {

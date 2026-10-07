@@ -29,17 +29,19 @@
       "lastName": "Reyes",
       "enabled": true,
       "emailVerified": true,
-      "credentials": [
-        {
-          "type": "password",
-          "value": "bob-demo",
-          "temporary": false
-        }
-      ],
       "groups": [
         "advisors"
       ],
       "id": "5b0b0000-0000-4000-8000-000000000b0b"
+    },
+    {
+      "username": "carol",
+      "email": "carol@${SV_DOMAIN}",
+      "firstName": "Carol",
+      "lastName": "Diaz",
+      "enabled": true,
+      "emailVerified": true,
+      "id": "5b0b0000-0000-4000-8000-000000000ca0"
     },
     {
       "username": "ops",
@@ -71,6 +73,18 @@
         ]
       },
       "id": "5b0b0000-0000-4000-8000-0000000000c0"
+    },
+    {
+      "username": "service-account-continuity-sync",
+      "enabled": true,
+      "serviceAccountClientId": "continuity-sync",
+      "clientRoles": {
+        "realm-management": [
+          "view-users",
+          "manage-users"
+        ]
+      },
+      "id": "5b0b0000-0000-4000-8000-0000000000c1"
     }
   ],
   "clients": [
@@ -81,7 +95,7 @@
       "publicClient": false,
       "secret": "${SV_KAGENT_CLIENT_SECRET}",
       "standardFlowEnabled": true,
-      "directAccessGrantsEnabled": "${KC_PASSWORD_GRANT}",
+      "directAccessGrantsEnabled": false,
       "redirectUris": [
         "https://kagent.${SV_DOMAIN}/oauth2/redirect"
       ],
@@ -377,6 +391,19 @@
       "enabled": true,
       "publicClient": false,
       "secret": "${SV_CONTINUITY_CLIENT_SECRET}",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "attributes": {
+        "access.token.lifespan": "120"
+      }
+    },
+    {
+      "clientId": "continuity-sync",
+      "name": "identity continuity profile sync (users' profile attributes; no credentials)",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${SV_CONTINUITY_SYNC_CLIENT_SECRET}",
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": true,

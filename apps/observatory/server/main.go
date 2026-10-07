@@ -161,6 +161,9 @@ func main() {
 	api.HandleFunc("PUT /api/continuity/{ns}/{name}", cont.PutSpec)
 	api.HandleFunc("PUT /api/continuity/{ns}/secret", cont.PutSecret)
 	api.HandleFunc("POST /api/continuity/partition", cont.Partition)
+	api.HandleFunc("POST /api/continuity/{ns}/{name}/sync", cont.RunSync)
+	api.HandleFunc("POST /api/continuity/{ns}/{name}/directory-test", cont.TestDirectory)
+	api.HandleFunc("GET /api/continuity/{ns}/jobs/{job}", cont.SyncJob)
 
 	web, _ := fs.Sub(webFS, "web")
 	mux := http.NewServeMux()

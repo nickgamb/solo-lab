@@ -88,12 +88,12 @@ workers in zones a, b and c). The full lab uses about 17 GB of memory.
 | URL | What | Sign in |
 | --- | --- | --- |
 | https://observatory.ops.lab | Observatory: topology, traffic, identity continuity | `ops` / `ops-demo` |
-| https://kagent.sterling.lab | kagent, where Bob's agents run | `bob` / `bob-demo` (or Bob's upstream IdP account) |
-| https://registry.sterling.lab | agentregistry | `bob` / `bob-demo` (S&V sign-in) |
+| https://kagent.sterling.lab | kagent, where Bob's agents run | Bob at S&V's active IdP (`bob` / `bob-demo` at S&V's own Keycloak) |
+| https://registry.sterling.lab | agentregistry | S&V sign-in, as for kagent |
 | https://portal.alice.lab | Alice's portal (her grants and terms) | `alice` / `alice-demo` |
 | https://grafana.ops.lab | Grafana | `ops` / `ops-demo` |
 | https://kiali.ops.lab | Kiali mesh graph (view-only) | `ops` / `ops-demo` |
-| https://idp.sterling.lab/realms/sterling-vance/account | S&V Keycloak: a user's own account | `bob` / `bob-demo` |
+| https://login.sterling.lab/realms/workforce/account | S&V's own Keycloak (an IdP in `ENTERPRISE_IDP`): a user's own account | `bob` / `bob-demo` |
 
 APIs on the edge, for agents and the checks rather than browsers:
 `https://as.alice.lab` (Alice's authorization server), `https://gateway.meridian.lab/mcp`
@@ -122,7 +122,7 @@ Open it in a browser (`open docs/cards/<card>.html` on macOS, `xdg-open` on Linu
 | [Bob](docs/cards/bob.html) | Bob's agent acts for Bob: RFC 8693 token exchange at the MCP waypoint, per-tool policy, human approval for writes, Cross App Access (ID-JAG) to a SaaS | `make bob-verify` |
 | [Bob to Alice](docs/cards/bob-to-alice.html) | the same agent asks Alice for her data on her terms (UMA for agents) | `make alice-verify` |
 | [Observatory tour](docs/cards/observatory.html) | every story end to end from one command, watched live: the agent waking, verified tokens per hop, refusals, Alice's terms, an IdP outage | `make tour` |
-| [Identity continuity](docs/cards/identity-continuity.html) | a real network outage of the upstream IdP, automatic failover to local accounts, and failback, live in the Observatory | `make continuity-verify` |
+| [Identity continuity](docs/cards/identity-continuity.html) | a real network outage of the active IdP, automatic failover to the next one, and failback, live in the Observatory | `make continuity-verify` |
 | [Gluu](docs/cards/gluu.html) (experimental) | Bob signs in with a passkey at Gluu, his agent reaches Ledgerline as him: Gluu vouches (ID-JAG), Ledgerline's Gluu redeems it, every hop checked and logged | `make bob-verify` |
 
 `make reset` rewinds every demo without a rebuild. The identity continuity

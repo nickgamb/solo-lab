@@ -198,9 +198,10 @@ func broker(t *testing.T, calls *int32, status int, stored map[string]string) *h
 	return srv
 }
 
-// gluu fakes the upstream token endpoint: a refresh_token grant as S&V's
-// client there (auth checks it), answered with status; on 200 a fresh ID
-// token. seen collects the refresh tokens presented.
+// gluu fakes the upstream token endpoint: an RFC 8693 exchange of the user's
+// upstream access token for their ID token, as S&V's client there (auth checks
+// it), answered with status; on 200 a fresh ID token. seen collects the
+// subject tokens presented.
 func gluu(t *testing.T, calls *int32, status int, auth func(*http.Request) error, seen *[]string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -212,16 +213,18 @@ func gluu(t *testing.T, calls *int32, status int, auth func(*http.Request) error
 		if err := auth(r); err != nil {
 			t.Errorf("upstream client auth: %v", err)
 		}
-		if r.PostForm.Get("grant_type") != "refresh_token" {
-			t.Errorf("grant_type = %q", r.PostForm.Get("grant_type"))
+		if r.PostForm.Get("grant_type") != tokenExchange || r.PostForm.Get("subject_token_type") != typeAccessToken ||
+			r.PostForm.Get("requested_token_type") != typeIDToken {
+			t.Errorf("not an access token -> ID token exchange: %v", r.PostForm)
 		}
 		if seen != nil {
-			*seen = append(*seen, r.PostForm.Get("refresh_token"))
+			*seen = append(*seen, r.PostForm.Get("subject_token"))
 		}
 		w.WriteHeader(status)
 		switch status {
 		case 200:
-			json.NewEncoder(w).Encode(map[string]string{"id_token": jwtFor(gluuIss, "bob-gluu", time.Now().Add(5*time.Minute))})
+			json.NewEncoder(w).Encode(map[string]string{"access_token": jwtFor(gluuIss, "bob-gluu", time.Now().Add(5*time.Minute)),
+				"issued_token_type": typeIDToken, "token_type": "N_A"})
 		case 400:
 			fmt.Fprint(w, `{"error":"invalid_grant"}`)
 		}
@@ -247,7 +250,9 @@ func withUpstream(keycloakURL, brokerURL, gluuURL string) *exchanger {
 	return x
 }
 
-var stored = map[string]string{"id_token": jwtFor(gluuIss, "bob-gluu", time.Now().Add(time.Hour)), "refresh_token": "rt-0"}
+// what the broker's Identity Brokering API v2 returns: the upstream access
+// token it keeps fresh, never the refresh token
+var stored = map[string]string{"access_token": "at-gluu-0", "issued_token_type": typeAccessToken}
 
 func TestUpstreamVouchesForItsSession(t *testing.T) {
 	var kc, b, g int32
@@ -376,10 +381,10 @@ func TestUpstreamRefusalIsFinal(t *testing.T) {
 	if w.Code != 403 || w.Header().Get("x-id-token") != "" || kc != 0 {
 		t.Fatalf("got %d, keycloak calls %d; want 403 and no fallback", w.Code, kc)
 	}
-	// no refresh token stored: the upstream can't be asked, so refused too
-	x = withUpstream(keycloakOK(t, &kc).URL, broker(t, &b, 200, map[string]string{"id_token": stored["id_token"]}).URL, gluu(t, &g, 200, nil, nil).URL)
+	// no upstream token for the session: the upstream can't be asked, so refused too
+	x = withUpstream(keycloakOK(t, &kc).URL, broker(t, &b, 200, map[string]string{}).URL, gluu(t, &g, 200, nil, nil).URL)
 	if w := check(x, session("gluu", time.Now().Add(5*time.Minute))); w.Code != 403 || kc != 0 {
-		t.Fatalf("no refresh token: got %d, keycloak calls %d; want 403", w.Code, kc)
+		t.Fatalf("no upstream token: got %d, keycloak calls %d; want 403", w.Code, kc)
 	}
 }
 
@@ -392,7 +397,7 @@ func TestBrokerErrorFailsClosed(t *testing.T) {
 	}
 }
 
-func TestStoredRefreshTokenAndUpstreamAskedAgainAfterTTL(t *testing.T) {
+func TestUpstreamAskedAgainAfterTTL(t *testing.T) {
 	var kc, b, g int32
 	var seen []string
 	x := withUpstream(keycloakOK(t, &kc).URL, broker(t, &b, 200, stored).URL, gluu(t, &g, 200, nil, &seen).URL)
@@ -406,8 +411,8 @@ func TestStoredRefreshTokenAndUpstreamAskedAgainAfterTTL(t *testing.T) {
 	if w := check(x, at); w.Code != 200 {
 		t.Fatalf("after the TTL: %d", w.Code)
 	}
-	if len(seen) != 2 || seen[0] != "rt-0" || seen[1] != "rt-0" {
-		t.Fatalf("refresh tokens used %v, want the stored one each time", seen)
+	if len(seen) != 2 || seen[0] != "at-gluu-0" || seen[1] != "at-gluu-0" {
+		t.Fatalf("subject tokens %v, want the broker's upstream access token each time", seen)
 	}
 }
 

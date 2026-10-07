@@ -170,32 +170,9 @@
           "userSetupAllowed": false
         },
         {
-          "authenticatorFlow": true,
-          "requirement": "ALTERNATIVE",
-          "priority": 20,
-          "flowAlias": "enterprise first sign-in - link",
-          "userSetupAllowed": false
-        }
-      ]
-    },
-    {
-      "alias": "enterprise first sign-in - link",
-      "description": "Link the existing account with the same email",
-      "providerId": "basic-flow",
-      "topLevel": false,
-      "builtIn": false,
-      "authenticationExecutions": [
-        {
-          "authenticator": "idp-detect-existing-broker-user",
-          "authenticatorFlow": false,
-          "requirement": "REQUIRED",
-          "priority": 10,
-          "userSetupAllowed": false
-        },
-        {
           "authenticator": "idp-auto-link",
           "authenticatorFlow": false,
-          "requirement": "REQUIRED",
+          "requirement": "ALTERNATIVE",
           "priority": 20,
           "userSetupAllowed": false
         }

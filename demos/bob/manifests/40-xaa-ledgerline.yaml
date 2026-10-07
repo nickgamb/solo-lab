@@ -165,10 +165,11 @@ spec:
 # ---- idtoken-exchange: ai-gateway's external processor (apps/idtoken-exchange)
 # The enterprise IdPs that may vouch for Bob (OPS, scripts/idp.sh xaa_env) and
 # S&V's client at each (the egress's key). The IdP of Bob's session vouches
-# while S&V's identity continuity has it active; S&V's Keycloak vouches for
-# its own sessions and for upstreams that don't issue ID-JAGs. It reads Bob's
-# stored upstream tokens from S&V's Keycloak as xaa-egress, which Keycloak
-# allows for those upstreams only (Identity Brokering API v2).
+# while S&V's identity continuity has it active; S&V's broker vouches for a
+# sign-in through an IdP that doesn't issue ID-JAGs, and for its break-glass
+# accounts. It reads Bob's stored upstream tokens from the broker as
+# xaa-egress, which the broker allows for those IdPs only (Identity Brokering
+# API v2).
 apiVersion: v1
 kind: ServiceAccount
 metadata: {name: idtoken-exchange, namespace: agentgateway-system}
@@ -214,6 +215,7 @@ spec:
         - {name: OPS, value: '${XAA_OPS}'}
         - {name: CONTINUITY, value: sv-identity/sterling-vance}
         - {name: BROKER_CLIENT_ID, value: xaa-egress}         # reads stored upstream tokens, with the egress's key
+        - {name: CA_FILE, value: /etc/lab-ca/ca.crt}            # S&V's own IdP, through the edge
         ports:
         - {name: grpc, containerPort: 8080}
         - {name: health, containerPort: 8081}
@@ -222,14 +224,20 @@ spec:
           requests: {cpu: 10m, memory: 16Mi}
           limits: {memory: 64Mi}
         securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
-        volumeMounts: [{name: op, mountPath: /var/run/secrets/op, readOnly: true}]
+        volumeMounts:
+        - {name: op, mountPath: /var/run/secrets/op, readOnly: true}
+        - {name: lab-ca, mountPath: /etc/lab-ca, readOnly: true}
       volumes:
+      - name: lab-ca
+        configMap: {name: lab-ca-bundle}
       - name: op
         projected:
           sources:
-          - secret: {name: kagent-client, items: [{key: clientSecret, path: keycloak}]}
-          - secret: {name: egress-client-key, items: [{key: signingKey, path: broker.key}, {key: signingKey, path: gluu.key}]}
+          - secret: {name: kagent-client, items: [{key: clientSecret, path: sterling-vance}]}
+          - secret: {name: egress-client-key, items: [{key: signingKey, path: broker.key}, {key: signingKey, path: gluu.key},
+              {key: signingKey, path: keycloak.key}]}
           - secret: {name: op-gluu, optional: true, items: [{key: clientSecret, path: gluu}]}
+          - secret: {name: op-keycloak, optional: true, items: [{key: clientSecret, path: keycloak}]}
 ---
 apiVersion: v1
 kind: Service
@@ -299,9 +307,11 @@ spec:
       - name: op
         projected:
           sources:
-          - secret: {name: kagent-client, items: [{key: clientSecret, path: keycloak}]}
-          - secret: {name: egress-client-key, items: [{key: signingKey, path: broker.key}, {key: signingKey, path: gluu.key}]}
+          - secret: {name: kagent-client, items: [{key: clientSecret, path: sterling-vance}]}
+          - secret: {name: egress-client-key, items: [{key: signingKey, path: broker.key}, {key: signingKey, path: gluu.key},
+              {key: signingKey, path: keycloak.key}]}
           - secret: {name: op-gluu, optional: true, items: [{key: clientSecret, path: gluu}]}
+          - secret: {name: op-keycloak, optional: true, items: [{key: clientSecret, path: keycloak}]}
       - name: lab-ca
         configMap: {name: lab-ca-bundle}
 ---

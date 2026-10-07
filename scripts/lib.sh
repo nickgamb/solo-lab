@@ -222,7 +222,8 @@ pem_body() { grep -v -- '-----' "$1" | tr -d '\n'; }
 
 # deploy_keycloak <ns> <domain> <listener> <realm.json> [features]
 # One Keycloak per party; see platform/45-identity/keycloak.yaml. The realm
-# signing key comes from kc-realm-key (stable across restarts).
+# signing key comes from kc-realm-key (stable across restarts). Published at
+# https://idp.<domain>, or KC_HOST.<domain>.
 deploy_keycloak() {
   local ns=$1 domain=$2 listener=$3 realm=$4 features=${5:-token-exchange-standard}
   export KC_IMAGE="${KC_IMAGE:-quay.io/keycloak/keycloak:$KEYCLOAK_VERSION}"
@@ -232,7 +233,7 @@ deploy_keycloak() {
     --from-literal=KC_REALM_RSA_KEY="$(pem_body "$LAB_STATE/keys/$rname.key")" \
     --from-literal=KC_REALM_RSA_CERT="$(pem_body "$LAB_STATE/keys/$rname.crt")" \
     --dry-run=client -o yaml | K apply -f - >/dev/null
-  export PARTY_NS=$ns PARTY_DOMAIN=$domain PARTY_LISTENER=$listener KC_FEATURES=$features
+  export PARTY_NS=$ns PARTY_DOMAIN=$domain PARTY_LISTENER=$listener KC_FEATURES=$features PARTY_HOST=${KC_HOST:-idp}
   export KC_REALM_CM="realm-$(basename "$realm" .json | sed 's/^realm-//')"
   export KC_REALM; KC_REALM=$(jq -r .realm "$realm")
   export KC_REALM_SHA; KC_REALM_SHA=$(sha256 "$realm" | cut -c1-16)
@@ -266,7 +267,9 @@ free_port() { python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1
 # port_forward <ns> <svc> <localport> <remoteport>: background port-forward on
 # 127.0.0.1, torn down when the calling script exits.
 port_forward() {
-  K port-forward -n "$1" "svc/$2" "$3:$4" >/dev/null 2>&1 &
+  # kubectl itself, not through K: a backgrounded shell function would be a
+  # subshell holding the caller's stdout open (a $(...) or pipe never ends)
+  kubectl --context "$KCTX" port-forward -n "$1" "svc/$2" "$3:$4" >/dev/null 2>&1 &
   local pid=$!; on_exit "kill $pid 2>/dev/null"
   wait_for "port-forward $1/$2" 20 0.5 curl -s -o /dev/null "http://127.0.0.1:$3/"
 }
@@ -292,6 +295,58 @@ kc_token() {
 }
 # user_token: kc_token's access token alone
 user_token() { kc_token "$@" | jq -r .access_token; }
+
+# browser_signin <start url> <callback prefix> <user> <pass>: a browser
+# sign-in from a script. Follows redirects from <start url> across the lab's
+# IdPs, fills the login form of S&V's workforce IdP (login.<sv domain>) once,
+# and prints the URL it lands on under <callback prefix> (the app's callback,
+# with its code). A sign-in page anywhere else (an IdP on the internet, an
+# unexpected step) stops it with an error naming the page.
+browser_signin() {
+  local url=$1 cb=$2 jar body hdr loc posted="" i action
+  jar=$(mktemp) body=$(mktemp); on_exit "rm -f $jar $body"
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
+    case "$url" in "$cb"*) echo "$url"; return 0 ;; esac
+    case "$url" in
+      https://idp."$SV_DOMAIN"/*|https://login."$SV_DOMAIN"/*|https://idp."$LEDGERLINE_DOMAIN"/*) ;;
+      *) echo "browser_signin: sign-in continues at ${url%%\?*}, outside S&V's own IdP" >&2; return 1 ;;
+    esac
+    hdr=$(curl -s --cacert "$LAB_CA_DIR/ca.crt" -b "$jar" -c "$jar" -D - -o "$body" "$url")
+    loc=$(echo "$hdr" | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r')
+    if [ -z "$loc" ] && [ -z "$posted" ] && grep -q 'id="kc-form-login"' "$body" && case "$url" in https://login."$SV_DOMAIN"/*) true ;; *) false ;; esac; then
+      action=$(grep -o 'id="kc-form-login"[^>]*action="[^"]*"' "$body" | sed 's/.*action="//; s/"$//; s/&amp;/\&/g')
+      [ -n "$action" ] || action=$(grep -o 'action="[^"]*"' "$body" | head -1 | sed 's/action="//; s/"$//; s/&amp;/\&/g')
+      hdr=$(_U=$3 _P=$4 jq -rn '{username: $ENV._U, password: $ENV._P, credentialId: ""} | to_entries | map("\(.key)=\(.value | @uri)") | join("&")' \
+        | curl -s --cacert "$LAB_CA_DIR/ca.crt" -b "$jar" -c "$jar" -D - -o "$body" "$action" --data @-)
+      loc=$(echo "$hdr" | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r'); posted=1
+    fi
+    if [ -z "$loc" ]; then
+      echo "browser_signin: stopped at ${url%%\?*}: $(echo "$hdr" | head -1 | tr -d '\r'), page: $(grep -o '<title>[^<]*' "$body" | head -1 | sed 's/<title>//') $(grep -o 'kc-feedback-text">[^<]*' "$body" | head -1 | sed 's/.*">//')" >&2
+      return 1
+    fi
+    case "$loc" in /*) loc="$(echo "$url" | sed -E 's#^(https://[^/]+).*#\1#')$loc" ;; esac
+    url=$loc
+  done
+  echo "browser_signin: too many redirects" >&2; return 1
+}
+
+# sso_token <user> <pass>: an S&V employee signs in to kagent as in the
+# browser (the edge's SSO client, authorization code with PKCE) through the
+# broker's active IdP, which must be S&V's own (keycloak). Prints the tokens.
+sso_token() {
+  local verifier challenge state cb code
+  verifier=$(openssl rand -hex 32) state=$(openssl rand -hex 8)
+  challenge=$(printf '%s' "$verifier" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+  cb="https://kagent.$SV_DOMAIN/oauth2/redirect"
+  cb=$(browser_signin "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/auth?client_id=kagent&response_type=code&scope=openid&redirect_uri=$(jq -rn --arg u "$cb" '$u|@uri')&state=$state&code_challenge=$challenge&code_challenge_method=S256" \
+    "$cb" "$1" "$2") || return 1
+  code=$(echo "$cb" | sed -nE 's/.*[?&]code=([^&]+).*/\1/p')
+  [ -n "$code" ] || { echo "sso_token: no code in $cb" >&2; return 1; }
+  _C=$code _V=$verifier _S=$(lab_secret SV_KAGENT_CLIENT_SECRET) _R="https://kagent.$SV_DOMAIN/oauth2/redirect" jq -rn \
+    '{grant_type: "authorization_code", client_id: "kagent", client_secret: $ENV._S, code: $ENV._C, code_verifier: $ENV._V, redirect_uri: $ENV._R}
+     | to_entries | map("\(.key)=\(.value | @uri)") | join("&")' \
+    | curl -s --cacert "$LAB_CA_DIR/ca.crt" "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/token" --data @-
+}
 
 # a2a_send <access token> <json-rpc body>: one A2A turn with Bob's agent, sent
 # as kagent's UI would (from probe-kagent-ui, with the access token the edge
