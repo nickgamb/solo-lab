@@ -228,11 +228,11 @@ Known gaps, kept on purpose or pending upstream work:
   proxies (`ai-gateway`, `mcp-waypoint`) run outside the mesh and terminate
   HBONE themselves, so they can't reach it over mesh mTLS. The controller's
   other ports stay STRICT.
-- **Platform admins are cluster-admin.** Group `observatory-admins` in the
-  ops realm is bound to `cluster-admin`, because the Observatory's editor can
-  apply any resource; the server impersonates a fixed user in that group
-  and refuses Secrets. A production deployment scopes the binding to the
-  kinds the editor should touch.
+- **Platform admins can redirect traffic.** The Observatory's admins may
+  change gateway policies and backends, which can name Secrets in their own
+  namespace (an LLM provider's key, an OAuth client's secret): pointing a
+  backend elsewhere sends that credential with it. They can't read Secrets,
+  change workloads, RBAC or admission (OBSERVATORY.md).
 - **Platform UIs authorize at the edge only.** Grafana and Kiali accept
   anyone the edge's OAuth2 filter signs in from the ops realm; they don't
   check a group themselves (Kiali is view-only).

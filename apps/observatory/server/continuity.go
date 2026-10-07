@@ -83,6 +83,9 @@ const (
 	instanceLabel        = "continuity.lab.solo.io/instance"          // "<namespace>.<name>", on what the controller keeps
 	secretsRoleLabel     = "continuity.lab.solo.io/secrets-role"      // the controller's
 	syncSecretsRoleLabel = "continuity.lab.solo.io/sync-secrets-role" // the profile sync's
+	// credentialsLabel marks the IdP and directory credentials the Observatory
+	// may write; admission refuses it any other Secret
+	credentialsLabel = "continuity.lab.solo.io/credentials"
 )
 
 var (
@@ -268,14 +271,19 @@ func (c *Continuity) PutSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	patch, _ := json.Marshal(map[string]any{"apiVersion": "v1", "kind": "Secret", "type": "Opaque",
-		"metadata":   map[string]any{"name": in.Name, "namespace": ns, "labels": map[string]string{"app.kubernetes.io/part-of": "identity-continuity"}},
+		"metadata": map[string]any{"name": in.Name, "namespace": ns, "labels": map[string]string{
+			"app.kubernetes.io/part-of": "identity-continuity",
+			credentialsLabel:            "true", // the only Secrets admission lets the Observatory write
+		}},
 		"stringData": data})
 	if _, err := cl.Resource(gvrSec).Namespace(ns).Patch(r.Context(), in.Name, types.ApplyPatchType, patch,
 		metav1.PatchOptions{FieldManager: fieldManager, Force: ptr(true)}); err != nil {
 		httpErr(w, err)
 		return
 	}
-	if err := grantSecret(r.Context(), cl, ns, in.Name, label); err != nil {
+	// as the Observatory's own ServiceAccount: adding a Secret to the sync's
+	// Role is an RBAC write the signed-in admin's role doesn't carry
+	if err := grantSecret(r.Context(), c.k.dyn, ns, in.Name, label); err != nil {
 		http.Error(w, "stored the secret, but could not grant read access to it: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

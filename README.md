@@ -210,10 +210,11 @@ count, host ports, party domains, registry port; `config/oss.env` and
 | `cluster` | kind cluster, registry caches, cloud-provider-kind, lab DNS |
 | `platform` | every layer under `platform/` in order |
 | `layer-NN` | one layer, e.g. `make layer-90` (Observatory) |
-| `verify` | `reset`, then `bob-verify`, `alice-verify`, `continuity-verify` |
+| `verify` | `reset`, then `bob-verify`, `alice-verify`, `continuity-verify`, `observatory-verify` |
 | `bob-verify` | story 1 checks only (delegation, per-tool policy, Cross App Access) |
 | `alice-verify` | story 2 checks only (Bob to Alice, UMA for agents), after a `reset` |
 | `continuity-verify` | identity continuity checks only (failover, kill switch, live rules, directory sync) |
+| `observatory-verify` | what the Observatory's admins may and may not change (RBAC, admission) |
 | `tour` | drive every story end to end, paced, to watch in the Observatory |
 | `reset` | rewind the demos (grants, terms, agent key, follow-ups) |
 | `llm` | switch the model: `make llm LLM_PROVIDER=anthropic` |

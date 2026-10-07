@@ -41,7 +41,12 @@ ok "https://grafana.$OPS_DOMAIN  https://kiali.$OPS_DOMAIN  (ops / ops-demo)"
 
 step "Observatory"
 deny_internet observatory ops-identity
+# a binding's role can't change in place: one from before the scoped role goes
+if [ "$(K get clusterrolebinding observatory-admins -o jsonpath='{.roleRef.name}' 2>/dev/null)" = cluster-admin ]; then
+  K delete clusterrolebinding observatory-admins >/dev/null
+fi
 K apply -f "$D/rbac.yaml" >/dev/null
+apply_tmpl "$D/admission.yaml"
 apply_tmpl "$D/observatory.yaml"
 apply_tmpl "$D/telemetry.yaml"
 rollout observatory deploy/observatory

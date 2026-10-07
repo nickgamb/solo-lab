@@ -168,6 +168,16 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return (ct.includes('json') ? JSON.parse(text) : text) as T
 }
 
+// Reads one live object for the editor, and whether the signed-in admin may
+// change it (the server asks the API server; workloads, RBAC and Secrets
+// are read-only here).
+export async function getResource(qs: URLSearchParams): Promise<{ yaml: string; writable: boolean }> {
+  const r = await fetch(`/api/resource?${qs}`)
+  const text = await r.text()
+  if (!r.ok) throw new ApiError(text.trim() || r.statusText, r.status)
+  return { yaml: text, writable: r.headers.get('X-Writable') === 'true' }
+}
+
 // Writes an IdentityContinuity's spec. The resourceVersion it was read at
 // makes the server refuse (409) if someone else changed it since; the
 // result is the stored object, with its new resourceVersion.

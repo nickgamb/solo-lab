@@ -59,6 +59,8 @@ Interactions:
   then applies it as you. If the object changed since you loaded it, or a
   field you changed is owned by another manager (a controller, Helm), Apply
   says so instead of overwriting; **Apply anyway** takes the fields over.
+  Policy, routing and identity continuity are editable; workloads, agents,
+  gateway parameters, ConfigMaps, RBAC and Secrets open read-only.
 
   ![Details for ai-gateway: its configuration objects and its traffic](images/observatory-details-ai-gateway.jpg)
 
@@ -177,9 +179,19 @@ The browser gets everything over one Server-Sent Events stream (`/api/stream`:
   user `observatory:admin` in group `observatory:observatory-admins`, with the
   signed-in person's name as the extra `observatory-user`. RBAC names all
   three (`platform/90-observatory/rbac.yaml`), so no request can make the
-  Observatory any other user or group. The group is bound to `cluster-admin`.
-  With API server audit logging on, each write records the person in
-  `impersonatedUser.extra`.
+  Observatory any other user or group. The group is bound to ClusterRole
+  `observatory-admin`: read what the Observatory shows (no Secrets) and
+  change Gateway API, kgateway and agentgateway policies and backends, Istio
+  security and networking, and IdentityContinuity specs. Not workloads,
+  agents, gateway parameters, ConfigMaps, RBAC, admission or `exec`.
+- In `sv-identity` the group may also write Secrets and create Jobs, and
+  admission (`platform/90-observatory/admission.yaml`) narrows both: Opaque
+  Secrets labelled `continuity.lab.solo.io/credentials` only (the IdPs' and
+  directories' credentials, never another Secret), and Jobs only from the
+  profile sync's template. Granting a directory's Secret to the sync's Role
+  is done as the Observatory's own account, which may update that one Role.
+- With API server audit logging on, each write records the person in
+  `impersonatedUser.extra`. `make observatory-verify` checks the scope.
 - Client secrets entered in the rule builder are write-only.
 - The namespace is STRICT mTLS; only the edge (8080) and the collector
   (4318) may call in.

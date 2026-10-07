@@ -33,6 +33,10 @@ docker push -q "$CONTINUITY_IMAGE" >/dev/null || die "pushing $CONTINUITY_IMAGE 
 ok "$CONTINUITY_IMAGE (unit tests ran in the build)"
 
 step "Credentials"
+# an IdP's or directory's credentials: the only Secrets the Observatory may
+# replace (platform/90-observatory/admission.yaml); the controller's and the
+# sync's own clients stay out of its reach
+credentials() { K label secret "$1" -n sv-identity continuity.lab.solo.io/credentials=true --overwrite >/dev/null; }
 # the controller's own realm client (defined in realm-sterling-vance.json)
 secret_apply sv-identity continuity-controller \
   client-id=continuity-controller client-secret="$(lab_secret SV_CONTINUITY_CLIENT_SECRET)"
@@ -43,10 +47,12 @@ secret_apply sv-identity continuity-sync \
 if [ -n "$AUTH0_DIRECTORY" ]; then
   secret_apply sv-identity directory-auth0 \
     client-id="$AUTH0_DIRECTORY_CLIENT_ID" client-secret="$AUTH0_DIRECTORY_CLIENT_SECRET"
+  credentials directory-auth0
 fi
 # the sync reads S&V's workforce IdP's users with its view-users client there
 secret_apply sv-identity directory-keycloak \
   client-id=continuity-directory client-secret="$(lab_secret SV_WORKFORCE_DIRECTORY_SECRET)"
+credentials directory-keycloak
 for n in $IDP_UPSTREAMS; do
   case " $CHAIN " in *" $n "*) ;; *) continue ;; esac
   N=$(echo "$n" | tr '[:lower:]' '[:upper:]')
@@ -58,6 +64,7 @@ for n in $IDP_UPSTREAMS; do
   else
     secret_apply sv-identity "upstream-$n" \
       client-id="$(_idp_var "$n" CLIENT_ID)" client-secret="$(_idp_var "$n" CLIENT_SECRET)"
+    credentials "upstream-$n"
     ok "$n: client_secret_post (sv-identity/upstream-$n)"
   fi
 done
