@@ -1,4 +1,4 @@
-# Gluu
+# Gluu (experimental)
 
 Story 1's Cross App Access with Gluu Flex / Janssen in both companies'
 slots: S&V's enterprise IdP (signs Bob in, issues his ID-JAG) and
