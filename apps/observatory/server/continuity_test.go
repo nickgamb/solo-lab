@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/rest"
 	k8stesting "k8s.io/client-go/testing"
@@ -168,6 +169,9 @@ type fakeAPI struct {
 	ic      map[string]any
 	rv      int
 	secrets []string
+	// who wrote what: the impersonated user (empty: the server's own account)
+	secretAs, roleAs []string
+	labelled         []bool // each Secret written carries the credentials label
 }
 
 func (f *fakeAPI) serve(t *testing.T) *Continuity {
@@ -196,12 +200,16 @@ func (f *fakeAPI) serve(t *testing.T) *Continuity {
 			json.NewEncoder(w).Encode(in)
 		case strings.HasPrefix(r.URL.Path, "/api/v1/namespaces/sv-identity/secrets/") && r.Method == http.MethodPatch:
 			f.secrets = append(f.secrets, strings.TrimPrefix(r.URL.Path, "/api/v1/namespaces/sv-identity/secrets/"))
-			io.Copy(w, r.Body)
+			f.secretAs = append(f.secretAs, r.Header.Get("Impersonate-User"))
+			b, _ := io.ReadAll(r.Body)
+			f.labelled = append(f.labelled, strings.Contains(string(b), `"`+credentialsLabel+`":"true"`))
+			w.Write(b)
 		case strings.HasSuffix(r.URL.Path, "/roles") && r.Method == http.MethodGet:
 			json.NewEncoder(w).Encode(map[string]any{"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleList", "items": []any{map[string]any{
 				"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role", "metadata": map[string]any{"name": "r", "namespace": "sv-identity"},
 				"rules": []any{map[string]any{"resources": []any{"secrets"}, "resourceNames": []any{"x"}, "verbs": []any{"get"}}}}}})
 		case strings.Contains(r.URL.Path, "/roles/") && r.Method == http.MethodPut:
+			f.roleAs = append(f.roleAs, r.Header.Get("Impersonate-User"))
 			io.Copy(w, r.Body)
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
@@ -209,7 +217,13 @@ func (f *fakeAPI) serve(t *testing.T) *Continuity {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	return &Continuity{res: &Resources{k: &Kube{cfg: &rest.Config{Host: srv.URL}}, admin: "admins"}}
+	cfg := &rest.Config{Host: srv.URL}
+	dyn, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := &Kube{cfg: cfg, dyn: dyn}
+	return &Continuity{k: k, res: &Resources{k: k, admin: "admins"}}
 }
 
 func call(h http.HandlerFunc, pattern, method, path, body string) *httptest.ResponseRecorder {
@@ -277,6 +291,12 @@ func TestPutSecretOnlyForReferencedNames(t *testing.T) {
 		if got := put(c.name, c.body); got != c.want {
 			t.Errorf("%s %s: %d, want %d", c.name, c.body, got, c.want)
 		}
+	}
+	if !slices.Equal(f.secretAs, []string{impersonatedUser, impersonatedUser, impersonatedUser}) || slices.Contains(f.labelled, false) {
+		t.Fatalf("secrets written as %v, labelled %v: as the signed-in admin, each with the credentials label", f.secretAs, f.labelled)
+	}
+	if len(f.roleAs) == 0 || slices.ContainsFunc(f.roleAs, func(u string) bool { return u != "" }) {
+		t.Fatalf("the sync's Role updated as %v: as the Observatory's own account, not the admin", f.roleAs)
 	}
 	if !slices.Equal(f.secrets, []string{"upstream-gluu", "directory-gluu", "continuity-sync"}) {
 		t.Fatalf("secrets written %v", f.secrets)

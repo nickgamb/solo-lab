@@ -38,6 +38,7 @@ values_for "$D" values "$ED"
 helm_up "$AGW_RELEASE" "$AGW_CHART" "$AGW_VERSION" agentgateway-system ${VALS[@]+"${VALS[@]}"}
 
 step "AI gateway (agentgateway-system/ai-gateway)"
+K apply -f "$D/llm/costs.yaml" >/dev/null
 apply_tmpl "$D/ai-gateway.yaml"
 wait_for "ai-gateway Programmed" 60 3 \
   K wait -n agentgateway-system gateway/ai-gateway --for=condition=Programmed --timeout=2s

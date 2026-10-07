@@ -487,6 +487,15 @@ func (b *builder) backendTargets(be *unstructured.Unstructured) ([]string, strin
 	if ai := obj(be.Object, "spec", "ai", "provider"); ai != nil {
 		return []string{b.llm(ai)}, "llm"
 	}
+	if groups := slice(be.Object, "spec", "ai", "groups"); len(groups) > 0 { // a failover chain: every provider in it
+		var out []string
+		for _, g := range groups {
+			for _, p := range slice(g.(map[string]any), "providers") {
+				out = appendUniq(out, b.llm(p.(map[string]any)))
+			}
+		}
+		return out, "llm"
+	}
 	var out []string
 	if mcp := obj(be.Object, "spec", "mcp"); mcp != nil {
 		for _, t := range slice(mcp, "targets") {
@@ -516,8 +525,14 @@ func (b *builder) llm(p map[string]any) string {
 			name, model = prov, str(m, "model")
 		}
 	}
+	if m := obj(p, "custom"); m != nil { // a stand-in for another API: named for what it stands in for
+		name, model = str(m, "providerOverride"), str(m, "model")
+		if name == "" {
+			name = "custom"
+		}
+	}
 	host := str(p, "host")
-	label := map[string]string{"openai": "OpenAI", "anthropic": "Anthropic", "gemini": "Gemini", "bedrock": "Bedrock"}[name]
+	label := map[string]string{"openai": "OpenAI", "anthropic": "Anthropic", "gemini": "Gemini", "bedrock": "Bedrock", "ollama": "Ollama"}[name]
 	if host == "host.docker.internal" || strings.HasSuffix(host, ":11434") || fmt.Sprint(p["port"]) == "11434" {
 		name, label = "ollama", "Ollama"
 	}

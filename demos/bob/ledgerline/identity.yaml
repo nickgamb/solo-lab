@@ -24,6 +24,6 @@ spec:
         principals:
         - cluster.local/ns/kgateway-system/sa/edge
         - cluster.local/ns/ledgerline/sa/ledgerline-research
-        - cluster.local/ns/ledgerline/sa/waypoint             # JWKS for its RequestAuthentication
+        - cluster.local/ns/agentgateway-system/sa/${AGW_RELEASE}   # agentgateway's control plane: the keys for Ledgerline's gateway
   - from: [{source: {principals: [cluster.local/ns/observability/sa/kps-prometheus]}}]
     to: [{operation: {ports: ["9000"]}}]

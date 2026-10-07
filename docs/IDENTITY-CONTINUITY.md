@@ -273,6 +273,18 @@ Secrets by name (Role `continuity-sync-secrets`). It reaches the broker and
 the directories under the same mesh policy as the controller; directory
 hosts get ServiceEntries on the IdP's egress path.
 
+### Keeping a lab's profile and mappings
+
+The install maps each IdP's name and email to S&V's profile (Auth0:
+`given_name`, `family_name`, `email`). Anything beyond that, such as a
+`department` attribute and where each IdP keeps it, is set in the
+Observatory's Directory sync window, and lives in the cluster. To keep it
+across `make down` / `make up`, put it in `config/continuity.local.yaml`
+(gitignored; `config/continuity.example.yaml` shows the format): profile
+attributes, each IdP's mappings, an optional sync schedule. A fresh install
+takes it as it is; `make layer-47` on an existing lab adds only what the
+instance doesn't have yet.
+
 ## Kill switch
 
 A real network partition. The controller never reads a flag; it only sees

@@ -75,6 +75,16 @@ with `--token <jwt>` and `--header name=value`.
 | `kubectl --context kind-solo-lab -n meridian logs deploy/meridian -f \| grep request` | Meridian's gateway |
 | `kubectl --context kind-solo-lab -n kgateway-system logs deploy/edge -f` | the edge (Envoy) |
 | `make llm LLM_PROVIDER=ollama` | point ai-gateway's model route at a provider |
+| `make llm LLM_FALLBACK=anthropic` | add a second provider the model route fails over to |
+
+**Use the firm's model from your laptop.** `https://llm.sterling.lab/v1` takes
+OpenAI chat completions and Anthropic messages with the key in
+`.lab/secrets.env`; prompt guards, failover and pricing apply as for agents.
+Claude Code, for one:
+
+```bash
+ANTHROPIC_BASE_URL=https://llm.sterling.lab ANTHROPIC_AUTH_TOKEN="$(grep '^LLM_API_KEY=' .lab/secrets.env | cut -d= -f2-)" NODE_EXTRA_CA_CERTS="$HOME/.solo-lab/ca/ca.crt" claude
+```
 
 ## Identity
 

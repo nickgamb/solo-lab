@@ -9,10 +9,12 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/yaml"
+	"strconv"
 )
 
 // Resources is the Advanced editor: read any object as YAML, dry-run an
@@ -84,7 +86,36 @@ func (s *Resources) Get(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, err)
 		return
 	}
+	// whether the signed-in admin may change it: the editor is read-only
+	// where RBAC says no (workloads, RBAC, admission), rather than failing
+	// on Apply
+	w.Header().Set("X-Writable", strconv.FormatBool(s.writable(r, q.Get("apiVersion"), q.Get("kind"), q.Get("namespace"), q.Get("name"))))
 	writeYAML(w, clean(o))
+}
+
+var gvrSSAR = schema.GroupVersionResource{Group: "authorization.k8s.io", Version: "v1", Resource: "selfsubjectaccessreviews"}
+
+// writable asks the API server, as the impersonated admin, whether a patch
+// of that object would be allowed. Any doubt is "no".
+func (s *Resources) writable(r *http.Request, apiVersion, kind, ns, name string) bool {
+	gvr, ok := s.k.GVR(apiVersion, kind)
+	if !ok {
+		return false
+	}
+	c, err := s.client(r)
+	if err != nil {
+		return false
+	}
+	review := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "authorization.k8s.io/v1", "kind": "SelfSubjectAccessReview",
+		"spec": map[string]any{"resourceAttributes": map[string]any{
+			"group": gvr.Group, "resource": gvr.Resource, "verb": "patch", "namespace": ns, "name": name}}}}
+	out, err := c.Resource(gvrSSAR).Create(r.Context(), review, metav1.CreateOptions{})
+	if err != nil {
+		return false
+	}
+	allowed, _, _ := unstructured.NestedBool(out.Object, "status", "allowed")
+	return allowed
 }
 
 // Apply takes the edited YAML. ?dryRun=true returns what the API server

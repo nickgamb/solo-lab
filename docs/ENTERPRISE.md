@@ -16,7 +16,48 @@ SOLO_AGW_LICENSE_KEY=...          # SOLO_<ISTIO|KGATEWAY|AGW|KAGENT|AGENTREGISTR
 
 `config/enterprise.env` holds the enterprise charts, versions and kinds;
 `scripts/lib.sh` promotes them over the OSS pins for each product set to
-`enterprise`. The stories, checks and tour are the same on both editions.
+`enterprise`. The stories, checks and tour are the same on both editions;
+where a check needs an enterprise feature, OSS counts it as skipped and
+names the feature.
+
+## What Solo Enterprise adds in this lab
+
+Running config on Solo Enterprise, each with the check that proves it, next
+to what the OSS edition of the lab does instead. "Per Solo" is Solo's own
+comparison of the editions.
+
+| Product | On Solo Enterprise, in this lab | OSS edition of the lab | Per Solo | Checked by |
+| --- | --- | --- | --- | --- |
+| agentgateway | Token rate limits per agent on the model route, counted by the Solo rate limiter, keyed on each agent pool's mesh identity (`advisor-desk` held to 2,000 tokens a minute) | none (agentgateway OSS has local limits per route, or a rate-limit server you run yourself) | [global request- and token-based rate limiting](https://docs.solo.io/agentgateway/latest/about/overview/) | `make bob-verify` |
+| agentgateway | Spend budgets in dollars or tokens per API key (`EnterpriseAgentgatewayBudget`): the developer key $5 a day, key `capped` blocked | none | [LLM spend budgets](https://docs.solo.io/agentgateway/latest/about/overview/) | `make bob-verify` |
+| kgateway | A web application firewall on the edge: SQL and script injection refused for every party's hostnames | none | [WAF](https://docs.solo.io/kgateway/latest/security/waf/overview/) | `make bob-verify` |
+| kagent | The controller verifies each user's token against S&V's broker, and maps the token's groups to roles | trusted-proxy mode: the controller trusts the forwarded token, so mesh policy fences who may reach it (ARCHITECTURE.md) | [OIDC authentication, RBAC mapped to IdP groups](https://docs.solo.io/kagent/latest/about/) | `make bob-verify` |
+| agentregistry | Signs users in itself, roles from the token's groups | behind the edge's SSO | [user access control](https://docs.solo.io/agentregistry/latest/about/oss-enterprise/) | sign in at https://registry.sterling.lab |
+
+Both editions run the rest of the lab the same way: MCP federation and
+per-tool authorization, token exchange and Cross App Access toward tools
+(the lab's `xaa-relay` and `idtoken-exchange` serve its brokered identity
+continuity, on either edition), prompt guards, provider failover, cost per
+call, API keys and format translation, and MCP guardrails.
+
+Solo Enterprise also offers, per Solo's pages, and this lab doesn't show yet:
+
+- agentgateway: the Cost Management UI (spend dashboards, budgets, virtual
+  keys), the advanced UI and playground, on-behalf-of identity and claim
+  propagation between agents and MCP tools, tool search and code mode for
+  MCP, composable MCP servers, Microsoft Purview DLP, SAML subject
+  assertions for Cross App Access
+  ([overview](https://docs.solo.io/agentgateway/latest/about/overview/)).
+- kgateway: the built-in rate-limit server, external auth with OPA, staged
+  transformations ([overview](https://docs.solo.io/kgateway/latest/about/overview/)).
+- kagent: multicluster agent management, controller-per-namespace
+  multitenancy, the execution-flow UI, STS token exchange and AccessPolicy
+  ([about](https://docs.solo.io/kagent/latest/about/)).
+- agentregistry: artifact approval, audit logging, runtime MCP
+  authorization, discovery across clouds
+  ([OSS and Enterprise](https://docs.solo.io/agentregistry/latest/about/oss-enterprise/)).
+- Istio: FIPS and long-term-support builds, multicluster peering, the Solo
+  UI ([enterprise features](https://docs.solo.io/istio/latest/about/images/enterprise/)).
 
 ## Licences
 

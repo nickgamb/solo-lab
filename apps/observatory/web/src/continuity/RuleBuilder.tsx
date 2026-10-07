@@ -196,7 +196,7 @@ export function RuleBuilder({ ic, broker }: { ic: IdentityContinuity; broker: st
 
 // NumField: a whole number, at least 1. While it's being typed in, an empty
 // or invalid entry keeps the last valid value, which comes back on blur.
-function NumField({ label, value, onChange }: { label: string; value: number; onChange: (n: number) => void }) {
+export function NumField({ label, value, onChange }: { label: string; value: number; onChange: (n: number) => void }) {
   const [text, setText] = useState<string>()
   return (
     <label>{label}

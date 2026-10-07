@@ -3,7 +3,7 @@ import type { Lab } from '../api'
 import { TrafficRow } from './TrafficRow'
 import './traffic.css'
 
-const KINDS = ['http', 'mcp', 'a2a', 'llm', 'oidc', 'substrate', 'lifecycle', 'continuity']
+const KINDS = ['http', 'mcp', 'a2a', 'llm', 'oidc', 'substrate', 'lifecycle', 'continuity', 'model']
 const OUTCOMES = ['ok', 'denied', 'error', 'info']
 
 // TrafficTab: every request and runtime event in the lab, newest first.

@@ -1,0 +1,21 @@
+# This lab's own S&V profile and attribute mappings, kept across rebuilds.
+# Copy to config/continuity.local.yaml (gitignored) and make up / make
+# layer-47 applies it: a fresh install takes it as it is, an existing one
+# gains what it doesn't have yet (what operators changed since stays). The
+# Observatory's Directory sync window edits the same fields live.
+#
+# S&V profile attributes, beyond the built-in ones (email, first and last
+# name): type string | integer | number | boolean | date | email | uri.
+profile:
+  attributes:
+  - {name: department, displayName: Department, type: string}
+# Per IdP (by its name in ENTERPRISE_IDP): S&V attribute <- the IdP's path.
+tiers:
+  auth0:
+    attributes:
+    - {attribute: department, path: user_metadata.department}
+  keycloak:
+    attributes:
+    - {attribute: department, path: department}
+# The scheduled directory sync (optional; without it, run it on demand).
+# sync: {schedule: "0 * * * *", suspend: false}

@@ -77,6 +77,7 @@ func main() {
 		return
 	}
 	cont := &Continuity{k: k, res: &Resources{k: k, admin: env("ADMIN_GROUP", "observatory-admins")}, traffic: traffic}
+	models := &Models{k: k, res: cont.res, traffic: traffic, index: func() *Index { return index.Load() }}
 	sub := &Substrate{url: env("KAGENT_URL", ""), hc: &http.Client{Timeout: 5 * time.Second}, hub: hub, traffic: traffic,
 		index: func() *Index { return index.Load() }}
 	if u := os.Getenv("KAGENT_TOKEN_URL"); u != "" {
@@ -164,6 +165,10 @@ func main() {
 	api.HandleFunc("POST /api/continuity/{ns}/{name}/sync", cont.RunSync)
 	api.HandleFunc("POST /api/continuity/{ns}/{name}/directory-test", cont.TestDirectory)
 	api.HandleFunc("GET /api/continuity/{ns}/jobs/{job}", cont.SyncJob)
+	api.HandleFunc("GET /api/models", models.Get)
+	api.HandleFunc("PUT /api/models/{ns}/{name}", models.Put)
+	api.HandleFunc("PUT /api/models/{ns}/secrets/{name}", models.PutSecret)
+	api.HandleFunc("POST /api/models/{ns}/{name}/outage", models.Outage)
 
 	web, _ := fs.Sub(webFS, "web")
 	mux := http.NewServeMux()

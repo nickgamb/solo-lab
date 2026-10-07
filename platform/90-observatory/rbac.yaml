@@ -36,9 +36,113 @@ metadata: {name: observatory-read}
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: observatory-read}
 subjects: [{kind: ServiceAccount, name: observatory, namespace: observatory}]
 ---
-# Platform admins (group observatory-admins in the ops realm) run the lab.
+# Platform admins (group observatory-admins in the ops realm) govern traffic
+# and identity from the Observatory: they read what it shows and change
+# policy, routing and identity continuity. What runs (workloads, agents,
+# gateway parameters, ConfigMaps), RBAC, admission, Secrets and exec are not
+# theirs to change here; the lab's installers own those.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: observatory-admin}
+rules:
+- apiGroups: [""]
+  resources: [namespaces, nodes, pods, services, endpoints, configmaps, serviceaccounts, events]
+  verbs: [get, list, watch]
+- apiGroups: [apps, batch, events.k8s.io, gateway.networking.k8s.io, gateway.kgateway.dev, agentgateway.dev,
+    enterpriseagentgateway.solo.io, enterprisekgateway.solo.io, kagent.dev, ate.dev, security.istio.io,
+    networking.istio.io, telemetry.istio.io, postgresql.cnpg.io, continuity.lab.solo.io, ratelimit.solo.io]
+  resources: ["*"]
+  verbs: [get, list, watch]
+- apiGroups: [gateway.networking.k8s.io]
+  resources: [gateways, httproutes, grpcroutes, tcproutes, tlsroutes, referencegrants, backendtlspolicies, listenersets]
+  verbs: [create, update, patch, delete]
+- apiGroups: [gateway.kgateway.dev]
+  resources: [trafficpolicies, httplistenerpolicies, listenerpolicies, backends, backendconfigpolicies, directresponses, gatewayextensions]
+  verbs: [create, update, patch, delete]
+- apiGroups: [agentgateway.dev]
+  resources: [agentgatewaypolicies, agentgatewaybackends, agentgatewaymodels]
+  verbs: [create, update, patch, delete]
+- apiGroups: [enterpriseagentgateway.solo.io]
+  resources: [enterpriseagentgatewaypolicies, enterpriseagentgatewaybackends, enterpriseagentgatewaybudgets]
+  verbs: [create, update, patch, delete]
+- apiGroups: [enterprisekgateway.solo.io]
+  resources: [enterprisekgatewaytrafficpolicies]
+  verbs: [create, update, patch, delete]
+- apiGroups: [security.istio.io]
+  resources: [authorizationpolicies, requestauthentications, peerauthentications]
+  verbs: [create, update, patch, delete]
+- apiGroups: [networking.istio.io]
+  resources: [serviceentries, destinationrules, virtualservices]
+  verbs: [create, update, patch, delete]
+- apiGroups: [continuity.lab.solo.io]
+  resources: [identitycontinuities]
+  verbs: [update, patch]
+- apiGroups: [authorization.k8s.io]   # "may I?", for the editor's read-only mode
+  resources: [selfsubjectaccessreviews]
+  verbs: [create]
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata: {name: observatory-admins}
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-admin}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: observatory-admin}
 subjects: [{apiGroup: rbac.authorization.k8s.io, kind: Group, name: "observatory:observatory-admins"}]
+---
+# Identity continuity, in its namespace: an IdP's or directory's credentials
+# are written, never read (admission narrows the writes to Secrets labelled
+# continuity.lab.solo.io/credentials), and the profile sync runs on demand
+# from its CronJob (admission pins what such a Job may be).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: observatory-continuity, namespace: sv-identity}
+rules:
+- apiGroups: [""]
+  resources: [secrets]
+  verbs: [create, update, patch]
+- apiGroups: [batch]
+  resources: [jobs]
+  verbs: [create, get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: observatory-continuity, namespace: sv-identity}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: observatory-continuity}
+subjects: [{apiGroup: rbac.authorization.k8s.io, kind: Group, name: "observatory:observatory-admins"}]
+---
+# Model continuity, next to the AI gateway: a model provider's API key is
+# written, never read (admission narrows the writes to Secrets labelled
+# lab.solo.io/model-credentials).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: observatory-models, namespace: agentgateway-system}
+rules:
+- apiGroups: [""]
+  resources: [secrets]
+  verbs: [create, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: observatory-models, namespace: agentgateway-system}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: observatory-models}
+subjects: [{apiGroup: rbac.authorization.k8s.io, kind: Group, name: "observatory:observatory-admins"}]
+---
+# A directory's credentials written from the Observatory are also granted to
+# the profile sync, by name in its Role. That is an RBAC write, made as the
+# Observatory's own account and only to that Role: escalate lets it add a
+# Secret it can't read itself.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: observatory-sync-grant, namespace: sv-identity}
+rules:
+- apiGroups: [rbac.authorization.k8s.io]
+  resources: [roles]
+  verbs: [list]
+- apiGroups: [rbac.authorization.k8s.io]
+  resources: [roles]
+  resourceNames: [continuity-sync-secrets]
+  verbs: [get, update, escalate]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: observatory-sync-grant, namespace: sv-identity}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: observatory-sync-grant}
+subjects: [{kind: ServiceAccount, name: observatory, namespace: observatory}]

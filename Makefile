@@ -22,14 +22,16 @@ nuke: ## delete the cluster AND every lab container and volume (caches, registry
 	@./scripts/cluster-down.sh --all
 
 ## ---- demos (all installed by `make up`; cards in docs/cards) ---------------
-verify: ## rewind the demos (make reset), every story's checks, then identity continuity
-	@./scripts/reset.sh && ./demos/bob/verify.sh && ./demos/bob-to-alice/verify.sh && ./platform/47-continuity/verify.sh
+verify: ## rewind the demos (make reset), every story's checks, identity continuity, the Observatory's reach
+	@./scripts/reset.sh && ./demos/bob/verify.sh && ./demos/bob-to-alice/verify.sh && ./platform/47-continuity/verify.sh && ./platform/90-observatory/verify.sh
 bob-verify: ## story 1 checks only (delegation, per-tool policy, Cross App Access)
 	@./demos/bob/verify.sh
 alice-verify: ## story 2 checks only, from a first run (make reset first)
 	@./scripts/reset.sh && ./demos/bob-to-alice/verify.sh
 continuity-verify: ## identity continuity checks only (failover, kill switch, live rules)
 	@./platform/47-continuity/verify.sh
+observatory-verify: ## what the Observatory's admins may and may not change (RBAC, admission)
+	@./platform/90-observatory/verify.sh
 tour: ## drive every story end to end, paced, to watch live in the Observatory
 	@./scripts/tour.sh
 reset: ## rewind every demo to a first run (grants, terms, agent key, follow-ups)
@@ -50,4 +52,4 @@ preflight: ## check tools and Docker resources
 help:
 	@awk 'BEGIN{FS=":.*## "} /^## ----/{printf "\n\033[1m%s\033[0m\n", substr($$0,9)} /^[a-zA-Z%_-]+:.*## /{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-.PHONY: machine-setup up cluster platform down nuke verify bob-verify alice-verify continuity-verify tour reset llm xaa-logs xaa-keys status preflight help
+.PHONY: machine-setup up cluster platform down nuke verify bob-verify alice-verify continuity-verify observatory-verify tour reset llm xaa-logs xaa-keys status preflight help

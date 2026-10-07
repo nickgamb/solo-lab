@@ -41,6 +41,9 @@ spec:
       type: ClusterIP
   resources:
     requests: {cpu: 100m, memory: 128Mi}
+  # prices every model call (llm/costs.yaml)
+  modelCatalog:
+    sources: [{configMap: {name: model-costs, key: catalog.json}}]
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway

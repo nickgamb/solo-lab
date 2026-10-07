@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [apps/continuity, apps/idtoken-exchange, apps/observatory/server, apps/xaa-relay]
+        module: [apps/continuity, apps/idtoken-exchange, apps/mcp-guard, apps/observatory/server, apps/xaa-relay]
     defaults:
       run: {working-directory: ${{ matrix.module }}}
     steps:

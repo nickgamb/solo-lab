@@ -101,6 +101,7 @@ workers in zones a, b and c). The full lab uses about 17 GB of memory.
 | https://kiali.ops.lab | Kiali mesh graph (view-only) | `ops` / `ops-demo` |
 | https://idp.sterling.lab/realms/sterling-vance/account | S&V broker account: sign-in through S&V's active IdP | S&V sign-in, as for kagent |
 | https://login.sterling.lab/realms/workforce/account | S&V's own Keycloak (an IdP in `ENTERPRISE_IDP`): a user's own account | `bob` / `bob-demo` |
+| https://llm.sterling.lab/v1 | the firm's model route for developers: OpenAI chat completions or Anthropic messages | API key `LLM_API_KEY` in `.lab/secrets.env` (docs/COMMANDS.md) |
 
 APIs on the edge, for agents and the checks rather than browsers:
 `https://as.alice.lab` (Alice's authorization server), `https://gateway.meridian.lab/mcp`
@@ -181,12 +182,14 @@ See [docs/OBSERVATORY.md](docs/OBSERVATORY.md).
 | Key | Used for |
 | --- | --- |
 | `LLM_PROVIDER` | `ollama` (default), `anthropic` or `openai`; apply with `make llm` |
+| `LLM_FALLBACK`, `LLM_FALLBACK_MODEL` | a second provider (and model) the gateway fails over to; apply with `make llm` |
 | `OLLAMA_MODEL`, `OLLAMA_URL` | the local model and where the cluster reaches it |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL` | hosted models (held by agentgateway only) |
 | `ENTERPRISE_IDP` | S&V's IdPs in failover order (`okta`, `auth0`, `gluu`, `keycloak`; default `auth0,keycloak`): who signs Bob in and, for an IdP that issues ID-JAGs, who vouches for him to Ledgerline; the broker vouches otherwise |
 | `RESOURCE_AS`, `RESOURCE_AS_ISSUER` | Ledgerline's authorization server: `keycloak` (default) or `gluu` |
 | `AUTH0_ISSUER`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | the auth0 IdP (your Auth0 tenant); left out without an issuer |
 | `AUTH0_DIRECTORY_CLIENT_ID`, `AUTH0_DIRECTORY_CLIENT_SECRET` | Auth0's Management API, for the directory sync |
+| `config/continuity.local.yaml` | this lab's own S&V profile attributes and IdP mappings, kept across rebuilds (format: `config/continuity.example.yaml`) |
 | `OKTA_ISSUER`, `OKTA_CLIENT_ID` | the okta IdP; the broker vouches for its users |
 | `GLUU_ISSUER`, `GLUU_CLIENT_ID` | the gluu IdP, authenticated with S&V's keys ([GLUU.md](docs/GLUU.md)) |
 | `KEYCLOAK_ISSUER`, `KEYCLOAK_CLIENT_ID` | the keycloak IdP; default S&V's own at `login.sterling.lab` |
@@ -210,10 +213,11 @@ count, host ports, party domains, registry port; `config/oss.env` and
 | `cluster` | kind cluster, registry caches, cloud-provider-kind, lab DNS |
 | `platform` | every layer under `platform/` in order |
 | `layer-NN` | one layer, e.g. `make layer-90` (Observatory) |
-| `verify` | `reset`, then `bob-verify`, `alice-verify`, `continuity-verify` |
+| `verify` | `reset`, then `bob-verify`, `alice-verify`, `continuity-verify`, `observatory-verify` |
 | `bob-verify` | story 1 checks only (delegation, per-tool policy, Cross App Access) |
 | `alice-verify` | story 2 checks only (Bob to Alice, UMA for agents), after a `reset` |
 | `continuity-verify` | identity continuity checks only (failover, kill switch, live rules, directory sync) |
+| `observatory-verify` | what the Observatory's admins may and may not change (RBAC, admission) |
 | `tour` | drive every story end to end, paced, to watch in the Observatory |
 | `reset` | rewind the demos (grants, terms, agent key, follow-ups) |
 | `llm` | switch the model: `make llm LLM_PROVIDER=anthropic` |

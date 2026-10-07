@@ -1,6 +1,6 @@
 import { DiffEditor, Editor } from '@monaco-editor/react'
 import { useEffect, useState } from 'react'
-import { api, ApiError, type Ref } from '../api'
+import { api, ApiError, getResource, type Ref } from '../api'
 import { monacoTheme as theme } from '../monaco'
 
 const q = (r: Ref) => new URLSearchParams({ apiVersion: r.apiVersion, kind: r.kind, namespace: r.namespace ?? '', name: r.name })
@@ -62,8 +62,10 @@ export function ConfigEditor({ target }: { target: Ref }) {
   // an apply refused because the object changed since it was loaded, or
   // because another manager owns a field: shown, and applied only if asked
   const [conflict, setConflict] = useState(false)
+  // RBAC lets the Observatory change policy and routing, not what runs
+  const [writable, setWritable] = useState(false)
 
-  const load = () => api<string>(`/api/resource?${q(target)}`).then(y => { setOriginal(y); setText(y); setPreview(undefined); setChecked(undefined); setConflict(false) })
+  const load = () => getResource(q(target)).then(({ yaml: y, writable: wr }) => { setOriginal(y); setText(y); setWritable(wr); setPreview(undefined); setChecked(undefined); setConflict(false) })
     .catch(e => setMsg({ kind: 'bad', text: String(e.message ?? e) }))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load() }, [])
@@ -99,19 +101,22 @@ export function ConfigEditor({ target }: { target: Ref }) {
             options={{ readOnly: true, renderSideBySide: false, automaticLayout: true, minimap: { enabled: false }, fontFamily: 'DM Mono', fontSize: 12, scrollBeyondLastLine: false }} />
         ) : (
           <Editor height="100%" value={text} onChange={v => setText(v ?? '')} language="yaml" theme={theme()}
-            options={{ minimap: { enabled: false }, fontFamily: 'DM Mono', fontSize: 12, tabSize: 2, scrollBeyondLastLine: false, automaticLayout: true }} />
+            options={{ readOnly: !writable, minimap: { enabled: false }, fontFamily: 'DM Mono', fontSize: 12, tabSize: 2, scrollBeyondLastLine: false, automaticLayout: true }} />
         )}
       </div>
+      {!writable && <div className="note">Read-only: the Observatory changes policy and routing, not workloads, RBAC or Secrets. Change this through the lab's installers.</div>}
       {blocked && <div className="note bad">{blocked}</div>}
       {msg && <div className={`note ${msg.kind}`}>{msg.text}</div>}
       <div className="row">
         <button className="btn small ghost" onClick={load} disabled={busy}>Reload</button>
         <span className="grow" />
         {preview !== undefined && <button className="btn small" onClick={() => setPreview(undefined)}>Back to edit</button>}
-        <button className="btn small" disabled={busy || !dirty || !!blocked} onClick={() => send(true)}>Dry run</button>
-        {conflict && <button className="btn small danger" disabled={busy || !!blocked} onClick={() => send(false, true)}>Apply anyway</button>}
-        <button className="btn small primary" disabled={busy || !dirty || !!blocked} onClick={() => send(false)}
-          title={checked === text ? `Apply ${label(target)}` : `Apply ${label(target)}; a dry run first shows what would be stored`}>Apply</button>
+        {writable && <>
+          <button className="btn small" disabled={busy || !dirty || !!blocked} onClick={() => send(true)}>Dry run</button>
+          {conflict && <button className="btn small danger" disabled={busy || !!blocked} onClick={() => send(false, true)}>Apply anyway</button>}
+          <button className="btn small primary" disabled={busy || !dirty || !!blocked} onClick={() => send(false)}
+            title={checked === text ? `Apply ${label(target)}` : `Apply ${label(target)}; a dry run first shows what would be stored`}>Apply</button>
+        </>}
       </div>
     </div>
   )

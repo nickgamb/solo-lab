@@ -1,0 +1,82 @@
+# What the Observatory's admins may write where RBAC alone can't say it.
+#
+# Secrets: only the IdP and directory credentials (label
+# continuity.lab.solo.io/credentials) and, in agentgateway-system, the model
+# providers' keys (label lab.solo.io/model-credentials), both on create and
+# on the object being replaced, and only plain Opaque ones: never a
+# service-account token, a realm's signing key, the controller's own client
+# or the gateway's license.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: {name: observatory-secrets}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - {apiGroups: [""], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [secrets]}
+  matchConditions:
+  - name: by-the-observatory
+    expression: "request.userInfo.username == 'observatory:admin'"
+  variables:
+  - name: label
+    expression: "'continuity.lab.solo.io/credentials'"
+  - name: modelLabel
+    expression: "'lab.solo.io/model-credentials'"
+  - name: models
+    expression: "request.namespace == 'agentgateway-system'"
+  validations:
+  - expression: >-
+      has(object.metadata.labels) && (
+      (variables.label in object.metadata.labels && object.metadata.labels[variables.label] == 'true')
+      || (variables.models && variables.modelLabel in object.metadata.labels && object.metadata.labels[variables.modelLabel] == 'true'))
+    message: "the Observatory writes only IdP and directory credentials (label continuity.lab.solo.io/credentials) and, in agentgateway-system, model provider keys (label lab.solo.io/model-credentials)"
+  - expression: >-
+      request.operation != 'UPDATE' || (has(oldObject.metadata.labels) && (
+      (variables.label in oldObject.metadata.labels && oldObject.metadata.labels[variables.label] == 'true')
+      || (variables.models && variables.modelLabel in oldObject.metadata.labels && oldObject.metadata.labels[variables.modelLabel] == 'true')))
+    message: "the Observatory can't take over a Secret it doesn't own"
+  - expression: "!has(object.type) || object.type == 'Opaque'"
+    message: "the Observatory writes Opaque Secrets only"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: {name: observatory-secrets}
+spec:
+  policyName: observatory-secrets
+  validationActions: [Deny]
+---
+# Jobs: only a run of the profile sync (or a directory test), from its
+# CronJob's template: the sync's account and image, its own command, and no
+# Secret reaching the pod except through the API.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: {name: observatory-jobs}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - {apiGroups: [batch], apiVersions: [v1], operations: [CREATE, UPDATE], resources: [jobs]}
+  matchConditions:
+  - name: by-the-observatory
+    expression: "request.userInfo.username == 'observatory:admin'"
+  variables:
+  - name: pod
+    expression: "object.spec.template.spec"
+  validations:
+  - expression: "variables.pod.?serviceAccountName.orValue('') == 'continuity-sync' && object.spec.template.metadata.?labels.orValue({}).exists(k, k == 'app' && object.spec.template.metadata.labels[k] == 'continuity-sync')"
+    message: "the Observatory runs only the profile sync, as continuity-sync"
+  - expression: "variables.pod.containers.all(c, c.image.startsWith('localhost:${LAB_REGISTRY_PORT}/lab/continuity-controller:') && !has(c.command) && c.?args.orValue([]).size() > 0 && c.args[0] == 'sync')"
+    message: "the profile sync runs its own image and command"
+  - expression: "!has(variables.pod.volumes) || variables.pod.volumes.all(v, !has(v.secret) && !has(v.projected) && !has(v.hostPath))"
+    message: "the profile sync mounts no Secret, projected or host volume"
+  - expression: "variables.pod.containers.all(c, !has(c.envFrom) && (!has(c.env) || c.env.all(e, !has(e.valueFrom) || !has(e.valueFrom.secretKeyRef)))) && !has(variables.pod.initContainers)"
+    message: "the profile sync takes no Secret through its environment"
+  - expression: "!variables.pod.?hostNetwork.orValue(false) && !variables.pod.?hostPID.orValue(false) && variables.pod.containers.all(c, !c.?securityContext.?privileged.orValue(false))"
+    message: "the profile sync is not privileged"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: {name: observatory-jobs}
+spec:
+  policyName: observatory-jobs
+  validationActions: [Deny]

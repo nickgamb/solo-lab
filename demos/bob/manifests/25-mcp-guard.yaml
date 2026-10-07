@@ -1,0 +1,87 @@
+# mcp-guard: the sv-mcp waypoint's MCP guardrail (apps/mcp-guard). Every
+# tools/call result from Bob's workspace passes through it before the agent,
+# and so the model, sees it: account numbers and SSNs are masked, last four
+# kept. The waypoint calls it (bob-workspace-tools in 20-waypoint.yaml,
+# FailClosed: no answer, no result); nothing else can.
+#
+# Mesh: pods-only-from-waypoint (10-workspace.yaml) already admits only the
+# mcp-waypoint identity to every pod in sv-mcp, this one included. The
+# Service opts out of the namespace's waypoint: the waypoint is its only
+# caller, and anything else that dials it is refused at L4 by ztunnel.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: mcp-guard, namespace: sv-mcp}
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: mcp-guard, namespace: sv-mcp}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: mcp-guard}}
+  template:
+    metadata:
+      labels: {app: mcp-guard}
+    spec:
+      serviceAccountName: mcp-guard
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector: {matchLabels: {app: mcp-guard}}
+      containers:
+      - name: mcp-guard
+        image: ${MCP_GUARD_IMAGE}
+        ports: [{name: grpc, containerPort: 4445}]
+        readinessProbe: {grpc: {port: 4445}}
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {memory: 128Mi}
+        securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-guard
+  namespace: sv-mcp
+  labels: {istio.io/use-waypoint: none}
+spec:
+  selector: {app: mcp-guard}
+  ports: [{name: grpc, port: 4445, targetPort: grpc, appProtocol: kubernetes.io/h2c}]
+---
+# A deadline for the guardrail callout, after which the processor's
+# failureMode applies, as in "MCP requests hang when the policy server is slow
+# or cold" (docs.solo.io/agentgateway/latest/mcp/guardrails/setup/): a backend
+# policy on the policy server's Service, which attaches once a route
+# references the Service. The route exists only for that: its hostname is a
+# placeholder, and anything sent to it is refused.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: mcp-guard, namespace: sv-mcp}
+spec:
+  parentRefs: [{name: mcp-waypoint, sectionName: mcp}]
+  hostnames: [mcp-guard.internal]
+  rules:
+  - backendRefs: [{name: mcp-guard, port: 4445}]
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: mcp-guard-timeout, namespace: sv-mcp}
+spec:
+  targetRefs: [{group: "", kind: Service, name: mcp-guard}]
+  backend:
+    http:
+      requestTimeout: 5s
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: mcp-guard-route, namespace: sv-mcp}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: mcp-guard}]
+  traffic:
+    authorization:
+      action: Deny
+      policy:
+        matchExpressions: ['true']

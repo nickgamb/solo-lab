@@ -52,7 +52,7 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | `sv-mcp` | `mcp-waypoint` (agentgateway as the namespace's waypoint) | `mcp-waypoint` | S&V | every caller of S&V tools, via ztunnel |
 | `sv-u4a` | `u4a-adapter` (UMA client: holds Bob's agent's key) | `u4a-adapter` | S&V / Bob | Bob's agent and the kagent controller only |
 | `ledgerline-identity` | Keycloak `ledgerline` (ID-JAG receiver) | `keycloak` | Ledgerline | edge (the realm only); `ledgerline-research` (JWKS) |
-| `ledgerline` | `ledgerline-research` (kmcp) behind an Istio waypoint | `ledgerline-research` | Ledgerline | edge (Ledgerline token for calls, verified again by the server) |
+| `ledgerline` | `ledgerline-research` (kmcp) behind `mcp-gateway`, Ledgerline's agentgateway | `ledgerline-research` | Ledgerline | edge (Ledgerline token for calls, verified again by the server) |
 | `ledgerline-egress` | `egress-waypoint` (Istio waypoint for the internet hosts Ledgerline reaches: its IdPs' keys) | `egress-waypoint` | Ledgerline | `ledgerline-research` and Ledgerline's Keycloak only |
 | `alice-identity` | Keycloak `alice` | `keycloak` | Alice | edge; `alice/uma-as` (JWKS) |
 | `alice` | uma-as (Alice's AS) | `uma-as` | Alice | its waypoint only: the edge (grant surface, and Meridian's uma-pep calling the protection API through it) and the portal (owner API) |
@@ -83,8 +83,11 @@ as kagent controller → atenet-router → worker, each hop mTLS.
      `waypoint-for: service`), for the whole namespace.
    - `alice` and `meridian`: Istio waypoints (`waypoint-for: all`), used only
      by the Services that opt in (`uma-as`, `uma-pep`).
-   - `ledgerline`: an Istio waypoint for the whole namespace (`all`: the edge
-     sends to pod addresses).
+   - `ledgerline`: none. Ledgerline fronts its MCP server with its own
+     agentgateway (`mcp-gateway`), reached from the edge: per-tool
+     authorization on Ledgerline's token, read from each MCP request. A
+     gateway rather than a waypoint, because the edge sends to pod
+     addresses.
    - `sv-egress`: `egress-waypoint` for the upstream IdPs' ServiceEntries.
    - The identity namespaces have none; their fences are L4.
 
@@ -100,7 +103,11 @@ as kagent controller → atenet-router → worker, each hop mTLS.
    - ai-gateway ([agentgateway](https://docs.solo.io/agentgateway/), S&V): JWT validation against S&V's broker,
      per-tool MCP authorization in CEL, RFC 8693 token exchange / ID-JAG
      toward tools, provider credentials for LLMs. The model route admits only
-     the agents' worker pools, by ServiceAccount. Its listeners take routes
+     the agents' worker pools, by ServiceAccount. Every model call meets
+     prompt guards (an attempt to override the agent's instructions is
+     refused; card and social security numbers are masked before the prompt
+     leaves and in the answer), and with `LLM_FALLBACK` a provider that
+     fails is taken out of rotation while a second one serves. Its listeners take routes
      only from `agentgateway-system`, so no other namespace can publish a
      path on it.
    - meridian gateway (agentgateway, Meridian): ext-auth to uma-pep, which
@@ -228,11 +235,11 @@ Known gaps, kept on purpose or pending upstream work:
   proxies (`ai-gateway`, `mcp-waypoint`) run outside the mesh and terminate
   HBONE themselves, so they can't reach it over mesh mTLS. The controller's
   other ports stay STRICT.
-- **Platform admins are cluster-admin.** Group `observatory-admins` in the
-  ops realm is bound to `cluster-admin`, because the Observatory's editor can
-  apply any resource; the server impersonates a fixed user in that group
-  and refuses Secrets. A production deployment scopes the binding to the
-  kinds the editor should touch.
+- **Platform admins can redirect traffic.** The Observatory's admins may
+  change gateway policies and backends, which can name Secrets in their own
+  namespace (an LLM provider's key, an OAuth client's secret): pointing a
+  backend elsewhere sends that credential with it. They can't read Secrets,
+  change workloads, RBAC or admission (OBSERVATORY.md).
 - **Platform UIs authorize at the edge only.** Grafana and Kiali accept
   anyone the edge's OAuth2 filter signs in from the ops realm; they don't
   check a group themselves (Kiali is view-only).

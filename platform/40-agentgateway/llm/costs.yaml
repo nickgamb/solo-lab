@@ -1,0 +1,17 @@
+# What a model call costs, in USD per million tokens: the gateway prices
+# each call (access log agw.ai.usage.cost.total, metric
+# agentgateway_gen_ai_client_cost_usd_total). Self-hosted models carry the
+# firm's internal chargeback rate, so a local model still has a cost per
+# agent; cloud models are priced by the provider (Solo Enterprise for
+# agentgateway ships a catalog of them; on OSS add them here).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-costs
+  namespace: agentgateway-system
+data:
+  catalog.json: |
+    {"providers": {"ollama": {"models": {
+      "qwen3.8:27b": {"rates": {"input": "0.30", "output": "1.20"}},
+      "muse-glimmer:30b": {"rates": {"input": "0.30", "output": "1.20"}}
+    }}}}

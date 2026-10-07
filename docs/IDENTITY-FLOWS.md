@@ -92,6 +92,14 @@ sequenceDiagram
   - The workspace verifies that token itself (signature against the broker's JWKS,
     issuer, audience `bob-workspace`, expiry) before any tool runs, so a
     forged or replayed token is refused even if something reached the pod.
+  - Tool output: every `tools/call` result goes through `mcp-guard`
+    (`apps/mcp-guard`, an agentgateway MCP guardrail, ExtMCP over gRPC)
+    before the agent sees it. Account numbers (runs of 8 to 17 digits) and
+    SSNs in the result's text and `structuredContent` are masked to their
+    last four (`••••8265`). The guard logs the tool and how many values it
+    masked, never the values. `failureMode: FailClosed` with a 5 s deadline:
+    no answer from the guard, no result. Only the waypoint can reach it
+    (`demos/bob/manifests/25-mcp-guard.yaml`).
 - **Discovery lane** (no token): only the kagent controller's SPIFFE ID, so
   the UI can list tools. Same tool filter, no exchange, and the route strips
   `Authorization` and `X-Id-Token`, so nothing that looks like a credential
@@ -107,6 +115,7 @@ Checks (`make bob-verify`, from real pods with their own identities):
 | Case | Expected |
 | --- | --- |
 | an S&V agent workload with Bob's token lists tools, calls `whoami`, `list_clients` | allowed; `acting_for: bob`, `audience: bob-workspace` |
+| `get_client` for a client with an account number | the record, account number masked to its last four by the waypoint's guardrail |
 | `export_book` as an advisor | not in the list; refused |
 | an S&V agent workload with no user token | refused (discovery lane is controller-only) |
 | Bob's token from another namespace (`observability`) | refused |
@@ -157,7 +166,7 @@ sequenceDiagram
   participant R as xaa-relay
   participant E as Bob's IdP (S&V's own Keycloak, Gluu)
   participant L as Ledgerline AS (Keycloak or Gluu)
-  participant M as ledgerline-research (behind Ledgerline's waypoint)
+  participant M as ledgerline-research (behind Ledgerline's MCP gateway)
   A->>G: tools/call /xaa/ledgerline/mcp, Authorization: Bob's access token
   G->>G: verify JWT (aud ai-gateway), caller is an agent's pool, Bob in advisors
   G->>X: request headers, verified token as metadata
@@ -270,13 +279,15 @@ RFC 8693 instead (`subject_token` = the access token, `requested_token_type`
   S&V's IdPs and registers S&V's client key (`make xaa-keys`). It must be a
   separate deployment from any Gluu in `ENTERPRISE_IDP`: an IdP can't vouch
   for Bob to itself, and the install refuses it.
-- **Resource server** (`demos/bob/ledgerline/research.yaml`): a standard Istio
-  waypoint, not an AI gateway. It accepts tokens from Ledgerline's AS only,
-  with audience `ledgerline-research`, and only from the edge. The tool
-  catalog is public; every tool call needs a Ledgerline token, which the
-  server verifies again (signature, issuer, audience, scope `research:read`,
-  a registered client) before any tool runs. It records any ID token that
-  reaches it.
+- **Resource server** (`demos/bob/ledgerline/research.yaml`): Ledgerline's own
+  agentgateway (`mcp-gateway`) in front of its MCP server, reached only from
+  the edge. It reads each MCP request and decides per tool on a token from
+  Ledgerline's AS (audience `ledgerline-research`): anyone may list the
+  catalog, `sector_outlook` and `research_note` need scope `research:read`,
+  `account_info` a signed-in subject. A method header that disagrees with
+  the request is refused. The server verifies the token again (signature, issuer,
+  audience, scope, a registered client) before any tool runs, and records
+  any ID token that reaches it.
 - **Discovery lane:** the kagent controller's SPIFFE ID may list Ledgerline's
   public catalog through `/xaa/ledgerline` without a user. The route strips
   `Authorization` and `X-Id-Token`, and it can never get a Ledgerline token.
@@ -295,6 +306,9 @@ transitions); the chain is restored on exit.
 | right token, wrong workload (`observability`) | refused |
 | an agent workload calling `idtoken-exchange` directly | refused by the mesh |
 | Bob's S&V token sent straight to `mcp.ledgerline.lab` | refused by Ledgerline |
+| Ledgerline's tool list, no token | listed (the catalog is public) |
+| a research call claiming to be `tools/list` in the `mcp-method` header | refused at Ledgerline's MCP gateway (header and body disagree) |
+| a research call with no Ledgerline token | refused at Ledgerline's MCP gateway |
 | Bob asks his agent, in chat, which Ledgerline account he's using | Ledgerline's own account for Bob |
 
 ## 3. UMA for agents (Bob to Alice)

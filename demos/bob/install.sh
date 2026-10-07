@@ -16,8 +16,10 @@ BOB_WORKSPACE_IMAGE=$(lab_build sv/bob-workspace "$D/mcp/bob-workspace"); export
 LEDGERLINE_RESEARCH_IMAGE=$(lab_build ledgerline/research-mcp "$D/ledgerline/mcp"); export LEDGERLINE_RESEARCH_IMAGE
 IDTOKEN_EXCHANGE_IMAGE=$(lab_build lab/idtoken-exchange "$LAB_ROOT/apps/idtoken-exchange"); export IDTOKEN_EXCHANGE_IMAGE
 XAA_RELAY_IMAGE=$(lab_build lab/xaa-relay "$LAB_ROOT/apps/xaa-relay"); export XAA_RELAY_IMAGE
+MCP_GUARD_IMAGE=$(lab_build lab/mcp-guard "$LAB_ROOT/apps/mcp-guard"); export MCP_GUARD_IMAGE
 ok "$BOB_WORKSPACE_IMAGE  $LEDGERLINE_RESEARCH_IMAGE"
 ok "$IDTOKEN_EXCHANGE_IMAGE  $XAA_RELAY_IMAGE"
+ok "$MCP_GUARD_IMAGE"
 TOOLBOX_IMAGE=$(lab_build lab/toolbox "$LAB_ROOT/tools/toolbox")
 ok "$TOOLBOX_IMAGE   (probe pods for the checks)"
 
@@ -39,6 +41,10 @@ apply_tmpl "$D/ledgerline/identity.yaml" "$D/ledgerline/egress.yaml"
 deny_internet ledgerline ledgerline-identity
 ledgerline_egress
 K delete networkpolicy research-to-as -n ledgerline --ignore-not-found >/dev/null   # earlier labs
+# earlier labs: an Istio waypoint in front of Ledgerline's MCP server
+K delete gateway waypoint -n ledgerline --ignore-not-found >/dev/null
+K delete requestauthentication ledgerline-tokens -n ledgerline --ignore-not-found >/dev/null
+K delete authorizationpolicy research-access pods-only-from-waypoint -n ledgerline --ignore-not-found >/dev/null
 ok "https://mcp.$LEDGERLINE_DOMAIN  authorization server: ${RESOURCE_AS} ($LEDGERLINE_AS_ISSUER)"
 
 step "Sterling & Vance: workspace, waypoint, agent, Cross App Access"
@@ -50,7 +56,7 @@ apply_tmpl "$D"/manifests/*.yaml
 # Bob's agent is a SandboxAgent; an Agent of the same name (older labs) must go first.
 K delete agent bob-assistant -n sv-agents --ignore-not-found --wait >/dev/null
 apply_kustomize "$D/agent"
-rollout sv-mcp deploy/bob-workspace deploy/mcp-waypoint
+rollout sv-mcp deploy/mcp-guard deploy/bob-workspace deploy/mcp-waypoint
 rollout agentgateway-system deploy/idtoken-exchange deploy/xaa-relay
 wait_for "bob-assistant Ready" 60 5 K wait sandboxagent/bob-assistant -n sv-agents --for=condition=Ready --timeout=2s
 apply_kustomize "$D/desk"
