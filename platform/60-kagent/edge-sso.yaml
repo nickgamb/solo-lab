@@ -19,7 +19,8 @@ spec:
     tokenEndpoint: https://idp.${SV_DOMAIN}/realms/sterling-vance/protocol/openid-connect/token
     endSessionEndpoint: https://idp.${SV_DOMAIN}/realms/sterling-vance/protocol/openid-connect/logout
     redirectURI: https://kagent.${SV_DOMAIN}/oauth2/redirect
-    logoutPath: /logout
+    # where kagent's Sign out goes (its UI's default, the oauth2-proxy path)
+    logoutPath: /oauth2/sign_out
     credentials:
       clientID: kagent
       clientSecretRef: {name: kagent-oidc}
