@@ -16,7 +16,11 @@
 IDP_UPSTREAMS="okta auth0 gluu keycloak contingency"  # brokered by S&V's Keycloak
 IDP_ISSUES_IDJAG="gluu keycloak"          # upstreams that issue ID-JAGs
 SV_ISSUER="https://idp.$SV_DOMAIN/realms/sterling-vance"
-SV_CLIENT_AT_LEDGERLINE=sterling-vance-kagent
+# S&V's client ID at Ledgerline's AS: the ID-JAG's client_id names it, so
+# every IdP that vouches must put the same value there. Janssen (Gluu) puts
+# the requesting client's own ID: with Gluu vouching, register S&V at
+# Ledgerline under GLUU_CLIENT_ID and set this to it (.env).
+export SV_CLIENT_AT_LEDGERLINE=${SV_CLIENT_AT_LEDGERLINE:-sterling-vance-kagent}
 
 _idp_var() { local v; v="$(echo "$1" | tr '[:lower:]' '[:upper:]')_$2"; echo "${!v:-}"; }
 
@@ -204,7 +208,8 @@ ledgerline_realm() {
     | (.identityProviders[] | select(.alias | startswith("sterling-vance")) | .config.claimFilterValue)
         = (".*@" + ($domain | gsub("\\."; "\\.")))
     | (.clients[] | select(.clientId == "sterling-vance-kagent") | .attributes["oauth2.jwt.authorization.grant.idp"])
-        |= ([.] + ($idps | map(.alias)) | join("##"))' "$1"
+        |= ([.] + ($idps | map(.alias)) | join("##"))
+    | (.clients[] | select(.clientId == "sterling-vance-kagent") | .clientId) = $cid' --arg cid "$SV_CLIENT_AT_LEDGERLINE" "$1"
 }
 
 # ledgerline_research: filters ledgerline/research.yaml for RESOURCE_AS=gluu:

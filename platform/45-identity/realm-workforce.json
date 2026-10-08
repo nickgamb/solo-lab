@@ -932,7 +932,7 @@
           "protocolMapper": "oidc-hardcoded-claim-mapper",
           "config": {
             "claim.name": "client_id",
-            "claim.value": "sterling-vance-kagent",
+            "claim.value": "${SV_CLIENT_AT_LEDGERLINE}",
             "jsonType.label": "String",
             "access.token.claim": "true",
             "id.token.claim": "false",
