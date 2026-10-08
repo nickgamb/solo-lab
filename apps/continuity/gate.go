@@ -20,6 +20,7 @@ import (
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	authv3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
 	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+	"github.com/go-logr/logr"
 	rpcstatus "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -64,6 +65,7 @@ func runGate(args []string) int {
 	stale := fs.Duration("stale", 30*time.Second, "after this long without a word from the chain, profiles with sessions ActiveIdPOnly answer 503")
 	_ = fs.Parse(args)
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	ctrl.SetLogger(logr.FromSlogHandler(slog.Default().Handler())) // the watch cache's logs, as JSON too
 
 	scheme := runtime.NewScheme()
 	_ = v1.AddToScheme(scheme)
