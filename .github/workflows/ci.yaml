@@ -15,7 +15,8 @@ jobs:
       matrix:
         module: [apps/continuity, apps/idtoken-exchange, apps/mcp-guard, apps/observatory/server, apps/xaa-relay]
     defaults:
-      run: {working-directory: ${{ matrix.module }}}
+      run:
+        working-directory: ${{ matrix.module }}
     steps:
     - uses: actions/checkout@v4
     - uses: actions/setup-go@v5
