@@ -114,6 +114,14 @@ if [ -n "$gate" ]; then
     "$(as_admin PUT "/apis/$AGW_POLICY_API/namespaces/sv-mcp/$plural/bob-workspace-caller" "$gate")"
   expect '^(403|422) .*fails closed' "may not make it fail open" \
     "$(as_admin PUT "/apis/$AGW_POLICY_API/namespaces/sv-mcp/$plural/bob-workspace-caller" "$(jq -c '.spec.traffic.extAuth.failureMode = "FailOpen"' <<<"$gate")")"
+  # a gate is whatever Service carries the label, not a name: one more, briefly
+  K create service clusterip assurance-gate-verify -n sv-identity --tcp=9001 --dry-run=client -o json \
+    | jq '.metadata.labels["continuity.lab.solo.io/assurance-gate"] = "true"' | K apply -f - >/dev/null
+  on_exit "K delete service assurance-gate-verify -n sv-identity --ignore-not-found >/dev/null 2>&1"
+  other=$(jq -c '.spec.traffic.extAuth.backendRef.name = "assurance-gate-verify" | .spec.traffic.extAuth.failureMode = "FailOpen"' <<<"$gate")
+  t=0; until r=$(as_admin PUT "/apis/$AGW_POLICY_API/namespaces/sv-mcp/$plural/bob-workspace-caller" "$other"); echo "$r" | grep -q 'assurance-gate-verify fails closed' || [ $t -ge 10 ]; do sleep 1; t=$((t+1)); done
+  expect '^(403|422) .*sv-identity/assurance-gate-verify fails closed' "nor a policy asking another gate, found by its label" "$r"
+  K delete service assurance-gate-verify -n sv-identity --ignore-not-found >/dev/null
 else
   warn "no sv-mcp/bob-workspace-caller policy (make layer-95): gate admission not checked"; fail=$((fail+1))
 fi

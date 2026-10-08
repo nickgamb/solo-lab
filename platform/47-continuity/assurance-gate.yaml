@@ -131,13 +131,16 @@ spec:
   - {group: ${AGW_POLICY_GROUP}, kind: ${AGW_POLICY_KIND}, namespace: agentgateway-system}
   to: [{group: "", kind: Service, name: assurance-gate}]
 ---
-# A policy that sends requests to the gate fails closed: if the gate can't be
-# asked, the request is refused, never let through.
+# A policy that sends requests to an assurance gate fails closed: if the gate
+# can't be asked, the request is refused, never let through. A gate is any
+# Service labelled continuity.lab.solo.io/assurance-gate, whatever it's called
+# (each one is a parameter of this policy, through the binding's selector).
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata: {name: assurance-gate-fail-closed}
 spec:
   failurePolicy: Fail
+  paramKind: {apiVersion: v1, kind: Service}
   matchConstraints:
     resourceRules:
     - {apiGroups: [agentgateway.dev, enterpriseagentgateway.solo.io], apiVersions: ["*"], operations: [CREATE, UPDATE],
@@ -151,9 +154,14 @@ spec:
         ? variables.ext.value().conditional.map(c, c.policy) : [variables.ext.value()]) : []
   validations:
   - expression: >-
-      variables.policies.all(p, p.?backendRef.?name.orValue('') != 'assurance-gate'
+      variables.policies.all(p,
+        p.?backendRef.?kind.orValue('Service') != 'Service'
+        || p.?backendRef.?name.orValue('') != params.metadata.name
+        || p.?backendRef.?namespace.orValue(object.metadata.namespace) != params.metadata.namespace
         || p.?failureMode.orValue('FailClosed') == 'FailClosed')
-    message: "a policy that asks the assurance gate fails closed (extAuth.failureMode FailClosed)"
+    messageExpression: >-
+      'a policy that asks the assurance gate ' + params.metadata.namespace + '/' + params.metadata.name
+        + ' fails closed (extAuth.failureMode FailClosed)'
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
@@ -161,3 +169,7 @@ metadata: {name: assurance-gate-fail-closed}
 spec:
   policyName: assurance-gate-fail-closed
   validationActions: [Deny]
+  paramRef:
+    namespace: sv-identity
+    selector: {matchLabels: {continuity.lab.solo.io/assurance-gate: "true"}}
+    parameterNotFoundAction: Allow
