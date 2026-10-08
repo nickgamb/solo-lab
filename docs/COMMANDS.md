@@ -127,6 +127,24 @@ jq -r .access_token /tmp/bob.json | jq -R 'split(".")[1] | gsub("-";"+") | gsub(
 | `kubectl --context kind-solo-lab -n sv-identity create job --from=cronjob/sterling-vance-profile-sync sync-now` | run the directory sync now |
 | `kubectl --context kind-solo-lab -n sv-identity logs job/sync-now` | what it did (users by id only) |
 | `kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o jsonpath='{.status.sync}' \| jq` | the sync's last run, counts and detected attributes |
+| `kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o json \| jq '.status.tiers[] \| {name, trust: .trust.checks}'` | each IdP's trust checks (callback, client authentication, PKCE, scopes, claims, assurance) |
+| `kubectl --context kind-solo-lab annotate idc sterling-vance -n sv-identity --overwrite continuity.lab.solo.io/check-trust=$(date +%s)` | run the trust checks now |
+| `kubectl --context kind-solo-lab -n sv-contingency get authorizationpolicy -L continuity.lab.solo.io/tier` | a cut of S&V's contingency IdP |
+| `make totp` | Bob's current one-time code at S&V's own Keycloak (`make totp EMPLOYEE=carol`) |
+
+## Assurance rules and the gate
+
+| Command | Shows |
+| --- | --- |
+| `kubectl --context kind-solo-lab get wlp -n sv-identity` | each rule: criticality, mode, minimum (empty: the default rule's), phase, the IdP serving it |
+| `kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o jsonpath='{.spec.assurancePolicy}'` | the default rule: what every rule starts from |
+| `kubectl --context kind-solo-lab get wlp advisor-workspace -n sv-identity -o jsonpath='{.status}' \| jq` | a rule's eligible IdPs, clients as the broker has them, and conditions |
+| `kubectl --context kind-solo-lab get events -n sv-identity --field-selector involvedObject.kind=WorkloadProfile` | rules failing closed and recovering |
+| `kubectl --context kind-solo-lab -n sv-identity logs -l app=assurance-gate -f` | the gate's decisions: rule, allow, deny or would-deny, why, the session's IdP and acr |
+| `kubectl --context kind-solo-lab -n sv-mcp logs deploy/mcp-waypoint \| grep -o 'continuity.decision="[^"]*"'` | the decisions as the waypoint logged them |
+| `kubectl --context kind-solo-lab patch wlp advisor-workspace -n sv-identity --type merge -p '{"spec":{"assurance":{"minimum":"AAL1"}}}'` | change what a rule requires (the gate applies it to the next request) |
+| `kubectl --context kind-solo-lab patch wlp advisor-workspace -n sv-identity --type merge -p '{"spec":{"mode":"ReportOnly"}}'` | let its refusals through, logged as `would-deny`, to see a change's effect first (`Enforce` to enforce again) |
+| `kubectl --context kind-solo-lab -n sv-identity port-forward svc/assurance-gate 19002:evaluate` then `curl -s localhost:19002/v1/evaluate -d '{"continuity": "sterling-vance", "session": {"idp": "contingency", "acr": "aal1"}}' \| jq` | what every rule decides for one sign-in, from the gate (port-forward: its mesh policy lets only the Observatory call it in-cluster) |
 | `make continuity-verify` | the failover, kill switch and live-rule checks |
 
 The kill switch itself is in [IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#kill-switch).

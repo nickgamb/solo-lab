@@ -62,6 +62,15 @@ metadata:
   name: sv-workforce
   labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient, continuity.lab.solo.io/tier: keycloak, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
 ---
+# S&V's contingency IdP (the contingency in ENTERPRISE_IDP): a second,
+# password-only IdP S&V keeps for when its own is down, in its own namespace
+# so a cut of one never takes the other.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sv-contingency
+  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient, continuity.lab.solo.io/tier: contingency, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
+---
 apiVersion: v1
 kind: Namespace
 metadata:

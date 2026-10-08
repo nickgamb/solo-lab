@@ -9,11 +9,16 @@
 profile:
   attributes:
   - {name: department, displayName: Department, type: string}
-# Per IdP (by its name in ENTERPRISE_IDP): S&V attribute <- the IdP's path.
+# Per IdP (by its name in ENTERPRISE_IDP): S&V attribute <- the IdP's path,
+# and what its sign-ins prove (assurance, replacing the default): here, an
+# Auth0 tenant whose policy for S&V's client always takes a second factor.
 tiers:
   auth0:
     attributes:
     - {attribute: department, path: user_metadata.department}
+    assurance:
+      levels: [{amr: mfa, level: AAL2}]
+      default: AAL2
   keycloak:
     attributes:
     - {attribute: department, path: department}

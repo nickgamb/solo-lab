@@ -69,7 +69,8 @@
       "clientRoles": {
         "realm-management": [
           "manage-identity-providers",
-          "manage-realm"
+          "manage-realm",
+          "view-clients"
         ]
       },
       "id": "5b0b0000-0000-4000-8000-0000000000c0"
@@ -173,7 +174,8 @@
         "roles",
         "web-origins",
         "acr",
-        "basic"
+        "basic",
+        "continuity-assurance"
       ],
       "optionalClientScopes": [
         "offline_access",
@@ -307,7 +309,8 @@
       "defaultClientScopes": [
         "basic",
         "profile",
-        "email"
+        "email",
+        "continuity-assurance"
       ],
       "optionalClientScopes": [],
       "fullScopeAllowed": false
@@ -336,7 +339,8 @@
         "email",
         "roles",
         "web-origins",
-        "acr"
+        "acr",
+        "continuity-assurance"
       ],
       "fullScopeAllowed": false,
       "protocolMappers": [
@@ -399,7 +403,8 @@
         "email",
         "roles",
         "web-origins",
-        "acr"
+        "acr",
+        "continuity-assurance"
       ]
     },
     {
@@ -1293,6 +1298,59 @@
         "include.in.token.scope": "true",
         "display.on.consent.screen": "false"
       }
+    },
+    {
+      "name": "continuity-assurance",
+      "description": "How the upstream IdP authenticated this session (its acr, amr and auth_time, from the continuity controller's IdP mapper): what workload profiles' required assurance is checked against",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "idp_acr",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "config": {
+            "user.session.note": "continuity.acr",
+            "claim.name": "idp_acr",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "idp_amr",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "config": {
+            "user.session.note": "continuity.amr",
+            "claim.name": "idp_amr",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "idp_auth_time",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "config": {
+            "user.session.note": "continuity.auth_time",
+            "claim.name": "idp_auth_time",
+            "jsonType.label": "long",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
     }
   ],
   "defaultDefaultClientScopes": [
@@ -1327,7 +1385,8 @@
         "client": "continuity-controller",
         "roles": [
           "manage-identity-providers",
-          "manage-realm"
+          "manage-realm",
+          "view-clients"
         ]
       },
       {

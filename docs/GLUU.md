@@ -55,7 +55,7 @@ Registration at S&V's Gluu:
 | Token exchange | for that client: its access token for the user's ID token (`requested_token_type` `urn:ietf:params:oauth:token-type:id_token`), and that ID token for an ID-JAG |
 | ID-JAG for that client | subject: ID token; `aud` Ledgerline's AS issuer (`https://idp.ledgerline.lab/realms/ledgerline` with `RESOURCE_AS=keycloak`); `client_id` `sterling-vance-kagent`; `typ` `oauth-id-jag+jwt`; `iat`; at most 300 s |
 | Ledgerline's SSO client | client ID `ledgerline`, `private_key_jwt`, JWKS `ledgerline-sso-client.jwks.json`; redirect `https://idp.ledgerline.lab/realms/ledgerline/broker/sterling-vance-gluu/endpoint`; PKCE S256; scopes `openid email profile` |
-| User | `bob`, email `bob@sterling.lab`, `email_verified: true`; passkey (default ACR `fido2`) |
+| User | `bob`, email `bob@sterling.lab`, `email_verified: true`; passkey (default ACR `fido2`, which the gluu IdP maps to AAL2, phishing-resistant: [assurance](IDENTITY-CONTINUITY.md#assurance)) |
 
 In the lab:
 

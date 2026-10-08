@@ -91,8 +91,11 @@ ORIG=$(idc | jq -c '{tiers: .spec.tiers, failback: .spec.failback, profile: .spe
 BASE=$(active)
 KI=$(echo "$ORIG" | jq '[.tiers[].name] | index("keycloak") // empty')   # its place in the chain
 [ -n "$KI" ] || die "S&V's own Keycloak (keycloak) isn't in ENTERPRISE_IDP: these checks run on it"
+# the IdP after it in the chain: S&V's contingency IdP, when it's there
+NEXT=$(echo "$ORIG" | jq -r --argjson k "$KI" '.tiers[$k + 1].name')
+NNS=""; [ "$NEXT" = contingency ] && NNS=sv-contingency
 cleanup() {
-  heal "$T" "$TNS"; [ -n "$UP" ] && heal "$UP" sv-egress
+  heal "$T" "$TNS"; [ -n "$NNS" ] && heal "$NEXT" "$NNS"; [ -n "$UP" ] && heal "$UP" sv-egress
   K patch idc "$IC" -n "$NS" --type merge -p "{\"spec\": $ORIG}" >/dev/null 2>&1
   K delete job -n "$NS" -l continuity.lab.solo.io/verify=true --ignore-not-found >/dev/null
   # shellcheck disable=SC2046  # one pid per word
@@ -119,7 +122,8 @@ fi
 
 # The loop runs on S&V's own Keycloak with the IdPs ahead of it drained (out
 # of rotation, their broker IdPs and user links kept), so cutting it falls
-# back to break-glass.
+# back to the next IdP (S&V's contingency IdP), and cutting that too to
+# break-glass.
 step "S&V's own Keycloak signing people in"
 K patch idc "$IC" -n "$NS" --type merge -p "$(echo "$ORIG" | jq -c --argjson k "$KI" '{spec: {failback: "Automatic",
   tiers: (.tiers | to_entries | map(if .key < $k then .value.drain = true else . end | .value))}}')" >/dev/null
@@ -133,31 +137,47 @@ expect "^$BOB_ID $T\$" "Bob signs in there: his S&V user, session from $T" \
 unset tok
 
 step "Kill switch: S&V's own Keycloak off the network (DENY policy in $TNS)"
-cut_at=$(date -u +%s)
+cut_at=$(date -u +%s) cuts=1
 partition "$T" "$TNS"
-expect '^[0-9]+s$' "probes see it: fails over to $LOCAL" "$(within 25 is_active "$LOCAL")"
-expect '^false' "IdP unhealthy" "$(tier "$T" healthy) $(tier "$T" reason)"
+if [ -n "$NNS" ]; then
+  expect '^[0-9]+s$' "probes see it: fails over to $NEXT, the next IdP in the chain" "$(within 25 is_active "$NEXT")"
+  expect '^false' "IdP unhealthy" "$(tier "$T" healthy) $(tier "$T" reason)"
+  expect "^$NEXT\$" "broker redirector -> $NEXT" "$(redirector)"
+  expect "^https://login-dr\.$SV_DOMAIN/realms/contingency/protocol/openid-connect/auth\?.*broker%2F$NEXT%2Fendpoint" \
+    "browser sign-in goes to S&V's contingency IdP, back to /broker/$NEXT/endpoint" "$(login_lands)"
+  tok=$(sso_token bob bob-demo | jq -r '.access_token // empty') || tok=""
+  expect "^$BOB_ID $NEXT\$" "Bob signs in there with his password: the same S&V user, session from $NEXT" \
+    "$(echo "$tok" | jq -rR 'split(".")[1] | gsub("-";"+") | gsub("_";"/") | @base64d | fromjson | "\(.sub) \(.idp)"' 2>/dev/null)"
+  unset tok
+  partition "$NEXT" "$NNS"; cuts=2
+fi
+expect '^[0-9]+s$' "every IdP down: fails over to $LOCAL" "$(within 25 is_active "$LOCAL")"
 expect '^none$' "redirector cleared" "$(redirector)"
 expect '^S&V login form$' "browser sign-in shows the broker's own form (break-glass)" "$(login_lands)"
-expect "^1\$" "Event FailoverActivated" "$(events FailoverActivated "$cut_at")"
+expect "^$cuts\$" "Event FailoverActivated, once per cut" "$(events FailoverActivated "$cut_at")"
 healed_at=$(date -u +%s)
 heal "$T" "$TNS"
 expect '^[0-9]+s$' "healed: fails back to $T (Automatic)" "$(within 35 is_active "$T")"
 expect "^1\$" "Event Failback" "$(events Failback "$healed_at")"
+if [ -n "$NNS" ]; then
+  heal "$NEXT" "$NNS"
+  # the rules below fail over to it: healthy again first (healthyThreshold)
+  expect '^[0-9]+s$' "healed: $NEXT healthy again" "$(within 35 sh -c "[ \"\$(kubectl --context $KCTX get idc $IC -n $NS -o json | jq -r '.status.tiers[]|select(.name==\"$NEXT\").healthy')\" = true ]")"
+fi
 
 step "Rules take effect live"
 K patch idc "$IC" -n "$NS" --type merge -p '{"spec":{"failback":"Manual"}}' >/dev/null
-partition "$T" "$TNS"; within 25 is_active "$LOCAL" >/dev/null; heal "$T" "$TNS"
+partition "$T" "$TNS"; within 25 is_active "$NEXT" >/dev/null; heal "$T" "$TNS"
 within 35 sh -c "[ \"\$(kubectl --context $KCTX get idc $IC -n $NS -o json | jq -r '.status.tiers[]|select(.name==\"$T\").healthy')\" = true ]" >/dev/null; sleep 6
-expect "^$LOCAL\$" "failback Manual: healthy again, but stays on $LOCAL" "$(active)"
+expect "^$NEXT\$" "failback Manual: healthy again, but stays on $NEXT" "$(active)"
 K patch idc "$IC" -n "$NS" --type merge -p '{"spec":{"failback":"Automatic"}}' >/dev/null
 expect '^[0-9]+s$' "failback Automatic: moves back up" "$(within 10 is_active "$T")"
 K patch idc "$IC" -n "$NS" --type json -p "[{\"op\":\"add\",\"path\":\"/spec/tiers/$KI/drain\",\"value\":true}]" >/dev/null
-expect '^[0-9]+s$' "drain: out of rotation" "$(within 10 is_active "$LOCAL")"
+expect '^[0-9]+s$' "drain: out of rotation" "$(within 10 is_active "$NEXT")"
 K patch idc "$IC" -n "$NS" --type json -p "[{\"op\":\"replace\",\"path\":\"/spec/tiers/$KI/drain\",\"value\":false}]" >/dev/null
 within 10 is_active "$T" >/dev/null
 K patch idc "$IC" -n "$NS" --type json -p "[{\"op\":\"add\",\"path\":\"/spec/tiers/$KI/failoverWhen/latencyAboveMs\",\"value\":1}]" >/dev/null
-expect '^[0-9]+s SlowResponse$' "failoverWhen latencyAboveMs=1: slow counts, fails over" "$(within 25 is_active "$LOCAL") $(tier "$T" reason)"
+expect '^[0-9]+s SlowResponse$' "failoverWhen latencyAboveMs=1: slow counts, fails over" "$(within 25 is_active "$NEXT") $(tier "$T" reason)"
 K patch idc "$IC" -n "$NS" --type json -p "[{\"op\":\"remove\",\"path\":\"/spec/tiers/$KI/failoverWhen/latencyAboveMs\"}]" >/dev/null
 expect '^[0-9]+s$' "rule removed: back to $T" "$(within 35 is_active "$T")"
 
@@ -252,6 +272,42 @@ if [ "$(echo "$ORIG" | jq -r '.profile')" = null ]; then
   profile_gone() { ! profile_has; }
   expect '^[0-9]+s$' "profile attribute $A removed" "$(within 20 profile_gone)"
 fi
+
+step "Trust: S&V's registration at each IdP"
+check_trust() { K annotate idc "$IC" -n "$NS" --overwrite continuity.lab.solo.io/check-trust="verify-$(date +%s)-$RANDOM" >/dev/null; }
+trust_of() { idc | jq -r --arg t "$1" '.status.tiers[] | select(.name==$t) | .trust.checks // [] | map("\(.name)=\(.result)") | join(" ")'; }
+consistent() { [ "$(K get idc "$IC" -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="TrustConsistent")].status}')" = "$1" ]; }
+check_trust
+expect '^[0-9]+s$' "TrustConsistent: every IdP accepts S&V's registration" "$(within 30 consistent True)"
+expect 'Callback=Pass ClientAuth=Pass PKCE=Pass Scopes=Pass Claims=Pass Assurance=Pass' \
+  "$T: callback registered, private_key_jwt and PS256, PKCE S256, scopes, identity claims, its acr values" "$(trust_of "$T")"
+[ -n "$NNS" ] && expect 'Callback=Pass .*Assurance=Pass' "$NEXT: the same" "$(trust_of "$NEXT")"
+# Drift at the IdP: S&V's client at S&V's own Keycloak loses the broker's
+# callback (as an admin there would), and the next check says so
+wfa() {  # wfa <path> [curl args]: S&V's own Keycloak's admin API, as its admin
+  local t; t=$(printf 'grant_type=password&client_id=admin-cli&username=admin&password=%s' "$(lab_secret_get SV_WORKFORCE_KC_ADMIN_PASSWORD)" \
+    | curl -s "http://127.0.0.1:$wlp/realms/master/protocol/openid-connect/token" --data @- | jq -r .access_token)
+  with_bearer "$t" curl -s "http://127.0.0.1:$wlp/admin/realms/workforce$1" "${@:2}"
+}
+BC=$(wfa "/clients?clientId=sterling-vance-broker" | jq -r '.[0].id // empty')
+REDIRECTS=$(wfa "/clients/$BC" | jq -c '.redirectUris')
+set_redirects() {
+  local f="$TMPD/client.json"
+  wfa "/clients/$BC" | jq -c --argjson r "$1" '.redirectUris = $r' >"$f"
+  wfa "/clients/$BC" -X PUT -H 'content-type: application/json' --data "@$f" -o /dev/null -w '%{http_code}'; rm -f "$f"
+}
+on_exit "set_redirects '$REDIRECTS' >/dev/null 2>&1"
+drift_at=$(date -u +%s)
+expect '^204$' "the broker's callback removed from S&V's client at $T" "$(set_redirects '["https://idp.'"$SV_DOMAIN"'/elsewhere"]')"
+check_trust
+expect '^[0-9]+s$' "TrustConsistent False: $T doesn't accept the broker's callback" "$(within 30 consistent False)"
+expect "$T Callback: the IdP refused" "the condition names the IdP and the check" \
+  "$(K get idc "$IC" -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="TrustConsistent")].message}')"
+expect '^[1-9]' "Warning event TrustMismatch" "$(events TrustMismatch "$drift_at")"
+expect "^$BASE\$" "informational: sign-ins stay where they were ($BASE)" "$(active)"
+expect '^204$' "callback restored" "$(set_redirects "$REDIRECTS")"
+check_trust
+expect '^[0-9]+s$' "TrustConsistent True again" "$(within 30 consistent True)"
 
 step "External upstream: ${UP:-none} through S&V's egress waypoint"
 # a NotConfigured tier (no credentials) is still probed: its outcome is in the

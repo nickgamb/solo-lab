@@ -1,0 +1,46 @@
+# The assurance rules of Bob's workloads: what a sign-in must prove to reach
+# them, whichever IdP it came through (docs/IDENTITY-CONTINUITY.md#assurance-rules).
+# Each says only what differs from the chain's assurancePolicy (AAL1, any IdP,
+# no break-glass). Owned with the firm's identity chain, in sv-identity. The
+# assurance gate enforces them at the workloads' policy points
+# (20-waypoint.yaml, 40-xaa-ledgerline.yaml); the Observatory's Identity
+# Continuity tab edits them (Assurance rules).
+apiVersion: continuity.lab.solo.io/v1alpha1
+kind: WorkloadProfile
+metadata: {name: advisor-workspace, namespace: sv-identity}
+spec:
+  continuity: sterling-vance
+  description: Bob's workspace tools (client book, calendar, notes) behind the sv-mcp waypoint, used by his agents on his behalf
+  criticality: Critical
+  obligations: [client-data, books-and-records]
+  owner: Wealth platform
+  workloads: [{namespace: sv-mcp, serviceAccount: bob-workspace}]
+  clients: [kagent]
+  assurance: {minimum: AAL2}
+---
+apiVersion: continuity.lab.solo.io/v1alpha1
+kind: WorkloadProfile
+metadata: {name: ledgerline-research, namespace: sv-identity}
+spec:
+  continuity: sterling-vance
+  description: Ledgerline Research, a third party S&V's agents reach as Bob (Cross App Access) through the firm's egress
+  criticality: High
+  obligations: [third-party-data]
+  owner: Research desk
+  workloads: [{namespace: agentgateway-system, serviceAccount: ai-gateway}]
+  clients: [kagent]
+  # the IdP that vouches for Bob to Ledgerline is the one signing him in
+  sessions: ActiveIdPOnly
+  assurance: {minimum: AAL2}
+---
+apiVersion: continuity.lab.solo.io/v1alpha1
+kind: WorkloadProfile
+metadata: {name: agent-console, namespace: sv-identity}
+spec:
+  continuity: sterling-vance
+  description: The kagent console, where advisors talk to their agents
+  criticality: Standard
+  owner: Wealth platform
+  workloads: [{namespace: kagent, serviceAccount: kagent-ui}, {namespace: kagent, serviceAccount: kagent-controller}]
+  clients: [kagent]
+  allowBreakGlass: true

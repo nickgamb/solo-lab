@@ -2,8 +2,8 @@
 
 Sterling & Vance's broker (Keycloak at `https://idp.sterling.lab`, realm
 `sterling-vance`) routes workforce sign-in to an ordered chain of the firm's
-IdPs (`ENTERPRISE_IDP`: Okta, Auth0, Gluu, or the Keycloak S&V runs itself)
-and maps each into one profile. The broker is not an IdP for the workforce:
+IdPs (`ENTERPRISE_IDP`: Okta, Auth0, Gluu, the Keycloak S&V runs itself, or
+its password-only contingency IdP) and maps each into one profile. The broker is not an IdP for the workforce:
 it holds no employee passwords, only break-glass accounts for platform admins.
 S&V's own services trust only the broker. When an IdP goes down, new sign-ins
 move to the next healthy one and nothing downstream changes: same issuer,
@@ -12,24 +12,37 @@ also vouches for its users to other companies (Cross App Access),
 with the same failover
 ([IDENTITY-FLOWS.md](IDENTITY-FLOWS.md#2-cross-app-access-id-jag-to-a-saas)).
 
+Failover keeps people signed in; it must not lower what a sign-in proves.
+The broker carries how the upstream authenticated each sign-in (its `acr`,
+`amr` and `auth_time`), each IdP declares what its assertions are worth
+([assurance](#assurance)), and each group of workloads says what it requires
+when identity fails over ([assurance rules](#assurance-rules)): how
+critical it is, which IdPs may vouch for its users, and the assurance level a
+sign-in must prove. The assurance gate enforces that at the workloads'
+gateways and refuses what can't meet it. The broker never steps anyone up
+itself: a stronger sign-in happens at the user's IdP, or the request fails
+closed. The controller also checks that every IdP in the chain still accepts
+S&V's registration the way the broker uses it
+([trust across IdPs](#trust-across-idps)).
+
 [![Identity continuity at 4x speed: the upstream IdP signing people in, a simulated outage at the firm's egress, failover to the next IdP, and failback](videos/identity-continuity.gif)](videos/identity-continuity.mp4)
 
-- API and controller: `apps/continuity` (`IdentityContinuity`, `continuity.lab.solo.io/v1alpha1`)
+- API and controller: `apps/continuity` (`IdentityContinuity` and `WorkloadProfile`, `continuity.lab.solo.io/v1alpha1`; the assurance gate is its `gate` command)
 - Install: `platform/47-continuity` (`make layer-47`, after `45-identity`)
-- Demo card: [cards/identity-continuity.html](cards/identity-continuity.html)
+- Demo cards: [cards/identity-continuity.html](cards/identity-continuity.html) (failover), [cards/assurance.html](cards/assurance.html) (assurance rules)
 - Checks: `make continuity-verify`
 
 ```bash
-kubectl --context kind-solo-lab get idc -n sv-identity
+kubectl --context kind-solo-lab get idc,wlp -n sv-identity
 ```
 
 ## The resource
 
 The chain comes from `ENTERPRISE_IDP` in `config/lab.env` (default
-`auth0,keycloak`), in any order, then `break-glass`, the broker's own
-accounts for platform admins. An IdP without `<NAME>_ISSUER` in `.env` is
+`auth0,keycloak,contingency`), in any order, then `break-glass`, the broker's
+own accounts for platform admins. An IdP without `<NAME>_ISSUER` in `.env` is
 left out, so with no Auth0 tenant the lab signs people in through S&V's own
-Keycloak. Failback is automatic
+Keycloak, then its contingency IdP. Failback is automatic
 (`platform/47-continuity/identitycontinuity.yaml`).
 
 | IdP | Where | Vouches for its users (ID-JAG) |
@@ -37,7 +50,8 @@ Keycloak. Failback is automatic
 | `okta` | `OKTA_ISSUER`, `OKTA_CLIENT_ID` | no: the broker vouches for those sign-ins |
 | `auth0` | `AUTH0_ISSUER`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | no: the broker vouches for those sign-ins |
 | `gluu` (experimental) | `GLUU_ISSUER`, `GLUU_CLIENT_ID` ([GLUU.md](GLUU.md)) | yes |
-| `keycloak` | S&V's own Keycloak: `https://login.sterling.lab`, realm `workforce`, namespace `sv-workforce` (layer 45), or `KEYCLOAK_ISSUER` | yes |
+| `keycloak` | S&V's own Keycloak: `https://login.sterling.lab`, realm `workforce`, namespace `sv-workforce` (layer 45), or `KEYCLOAK_ISSUER`; password and a one-time code | yes |
+| `contingency` | S&V's contingency IdP: `https://login-dr.sterling.lab`, realm `contingency`, namespace `sv-contingency` (layer 45), or `CONTINGENCY_ISSUER`; password only | no: the broker vouches for those sign-ins |
 
 Every IdP in the chain is trusted for S&V's workforce: a user who signs in
 through it is linked to the S&V account with the same verified email. The
@@ -70,14 +84,17 @@ set (display name, enabled, drain, failover rules, attributes, directory);
 | `ENTERPRISE_IDP` | Sign-in |
 | --- | --- |
 | `keycloak` | S&V's own Keycloak |
-| `auth0,keycloak` (default) | Auth0, else S&V's own Keycloak |
+| `auth0,keycloak,contingency` (default) | Auth0, else S&V's own Keycloak, else its contingency IdP |
+| `keycloak,contingency` | S&V's own Keycloak, else its contingency IdP (the default without an Auth0 tenant) |
 | `okta,auth0,keycloak` | Okta, else Auth0, else S&V's own Keycloak |
 | `keycloak,auth0` | S&V's own Keycloak, else Auth0 |
 | `gluu,keycloak` | Gluu, else S&V's own Keycloak ([GLUU.md](GLUU.md)) |
 
-`make verify` and `make tour` sign Bob in through S&V's own Keycloak, so
-`keycloak` must be in `ENTERPRISE_IDP`; for their run they drain the IdPs
-ahead of it and restore the chain on exit.
+`make verify` and `make tour` sign Bob in through S&V's own Keycloak
+(password, then a one-time code they compute from his seed), so `keycloak`
+must be in `ENTERPRISE_IDP`; for their run they drain the IdPs ahead of it
+and restore the chain on exit. The failover checks for assurance rules
+need `contingency` after it.
 
 ### What the broker realm must already have
 
@@ -96,7 +113,14 @@ doesn't create flows or roles, so the realm needs them first
   the Secret `broker.keycloak.credentialsRef` names;
 - for `sync`: a second service-account client with realm-management
   `view-users` and `manage-users` only (`continuity-sync`), its credentials
-  in the Secret `sync.credentialsRef` names.
+  in the Secret `sync.credentialsRef` names;
+- for assurance rules: client scope `continuity-assurance`, which puts the
+  session notes `continuity.acr`, `continuity.amr` and `continuity.auth_time`
+  in tokens as `idp_acr`, `idp_amr` and `idp_auth_time`, on the clients users
+  sign in through; and `view-clients` on the controller's client, to read
+  those clients' registrations;
+- the identity provider mapper `continuity-session-claims-idp-mapper`
+  (a provider in the broker's image, `tools/keycloak-idjag/session-claims`).
 
 ### spec
 
@@ -126,6 +150,8 @@ doesn't create flows or roles, so the realm needs them first
 | `tiers[].attributes[]` | the IdP's attributes paired with S&V's profile for the directory sync: `attribute` (built-in or `profile.attributes`) and `path` (the attribute in the IdP's user record) |
 | `tiers[].directory` | where the sync reads and writes this IdP's users: `type` (`scim`, `auth0`, `keycloak`), `url`, `credentialsRef` (`client-secret`, and `client-id` unless `clientID` is set), `scopes`, `audience` (Auth0) |
 | `tiers[].directory.clientID` | the directory client's ID; falls back to the Secret's `client-id` key |
+| `tiers[].assurance.levels[]` | what the IdP's sign-ins prove: an `acr` value, or one `amr` value, mapped to a NIST SP 800-63B `level` (`AAL1`, `AAL2`, `AAL3`), and whether that authenticator is `phishingResistant` |
+| `tiers[].assurance.default` | the level of a sign-in that asserts none of them (default `AAL1`); for a local tier, its only level |
 | `tiers[].failoverWhen` | which probe results count against the tier: `unreachable`, `serverError`, `invalidDiscovery` (each default true), `latencyAboveMs` (must be below `health.timeoutSeconds`: a slower answer times out first) |
 | `health` | `intervalSeconds`, `timeoutSeconds`, `unhealthyThreshold` (failures in a row to go down), `healthyThreshold` (successes in a row to come back) |
 | `failback` | `Automatic` (move back up as soon as a higher tier is healthy) or `Manual` |
@@ -138,15 +164,17 @@ doesn't create flows or roles, so the realm needs them first
 `active` (where logins go now: the tier Keycloak's redirector points at, or
 the local tier), `activeSince`, `broker.issuer`, `egressNamespace`, per tier (`configured`, `healthy`,
 `partitioned`, `latencyMs`, `reason`, `message`, consecutive failures and
-successes, and `redirectURI`: the callback the upstream app must allow),
+successes, `redirectURI`: the callback the upstream app must allow, and
+`trust`: its [trust checks](#trust-across-idps)),
 the last 20 `transitions`, `sync` (CronJob, last run and last success,
 users, S&V profiles updated, failover accounts written and created,
 failures, and each IdP's attribute paths as its directory last showed
 them), and
 conditions `Ready`, `Degraded` (not on the first IdP), `RulesEffective`
-(False while a latency rule is at or above the probe timeout) and
-`ProfileApplied`. Events: `TierHealthy`, `TierUnhealthy`,
-`FailoverActivated`, `Failback`, `CleanupAbandoned`.
+(False while a latency rule is at or above the probe timeout),
+`ProfileApplied` and `TrustConsistent` (False while an IdP fails a trust
+check). Events: `TierHealthy`, `TierUnhealthy`, `FailoverActivated`,
+`Failback`, `TrustMismatch`, `CleanupAbandoned`.
 
 ## What the controller does
 
@@ -177,13 +205,18 @@ Every `health.intervalSeconds`, two replicas, one leader (Lease
      removing the tier from the spec deletes it;
    - the `continuity-browser` flow's IdP redirector set to the active tier,
      or cleared when the active tier is `local`, so the broker's own form
-     shows (platform admins only).
+     shows (platform admins only);
+   - on each IdP, the mapper `continuity-assurance`
+     ([assurance](#assurance)). Without it a session proves nothing beyond
+     its IdP's default, so it never holds up sign-ins; `Ready` says why.
 4. **Keep the egress path:** a ServiceEntry `sv-egress/continuity-<idp>` for
    each external upstream, bound to `sv-egress/egress-waypoint`, so the
    back-channel (probes, token, JWKS, userinfo) leaves the lab under S&V
    policy. A ServiceEntry of that name owned by another instance is left
    alone (and reported); when `spec.egress` changes or goes away, the old
    ones are removed.
+5. **Check trust** every 10 minutes and on every change
+   ([trust across IdPs](#trust-across-idps)).
 
 Deleting an IdentityContinuity removes its IdPs and ServiceEntries and
 clears the redirector. If Keycloak stays unreachable for 5 minutes, the
@@ -310,6 +343,231 @@ without `targetRefs`. Delete the policy to heal. Status marks the IdP
 With the default health settings (5 s interval, 2 failures, 3 successes),
 failover takes about 10 s after the cut and failback about 15 s after the heal.
 
+## Assurance
+
+How strongly someone signed in is decided at their IdP, and the broker keeps
+the IdP's word for it. On every sign-in through an upstream, the controller's
+mapper on that IdP (`continuity-assurance`) copies the upstream's `acr`, `amr`
+(its values joined with spaces) and `auth_time` onto that sign-in's broker
+session, and the broker's client scope `continuity-assurance` puts them in
+its tokens:
+
+| Claim | From the upstream's | Example |
+| --- | --- | --- |
+| `idp` | (the IdP that authenticated the session) | `keycloak` |
+| `idp_acr` | `acr` | `aal2` |
+| `idp_amr` | `amr` | `pwd otp` |
+| `idp_auth_time` | `auth_time` | `1791401688` |
+
+They are session notes, not user attributes: what one sign-in proved never
+carries over to another session, or to a refresh after the user signed in
+somewhere weaker. A claim the IdP didn't send is absent, and whatever relies
+on it treats it as unproven.
+
+Each IdP declares what its values mean (`tiers[].assurance`), as NIST SP
+800-63B authenticator assurance levels. A session is the highest level any of
+its values maps to, else the IdP's `default`. The install sets these, and
+keeps what operators change:
+
+| IdP | Maps | Default |
+| --- | --- | --- |
+| `keycloak` (S&V's own) | `acr aal1` → AAL1, `acr aal2` → AAL2 | AAL1 |
+| `contingency` | `acr aal1` → AAL1 | AAL1 |
+| `auth0` | `amr mfa` → AAL2, `acr …/pape/policies/2007/06/multi-factor` → AAL2 | AAL1 |
+| `okta` | `acr urn:okta:loa:2fa:any` → AAL2, `phr` → AAL2 phishing-resistant, `phrh` → AAL3 phishing-resistant | AAL1 |
+| `gluu` | `acr fido2` → AAL2 phishing-resistant | AAL1 |
+| `break-glass` | | AAL1 |
+
+An IdP whose policy for S&V's client always takes a second factor says so
+with `default: AAL2` (in `config/continuity.local.yaml`, or the Observatory).
+
+S&V's own Keycloak signs the broker's users in at `aal2`: a password, then a
+one-time code from an authenticator app (TOTP), by level of authentication
+(the realm's `acr.loa.map`; `minimum.acr.value` on S&V's client there). Its
+contingency IdP asks for a password only (`aal1`). An app that needs more can
+ask for it with `acr_values`: the broker passes them on to the active IdP,
+which steps the user up itself. The broker has no authenticators of its own
+for the workforce, and never raises a session's level.
+
+## Trust across IdPs
+
+Failing over to an IdP only helps if it still accepts S&V's client the way
+the broker uses it: an IdP admin removing the callback, or a change to its
+client authentication, shows up at the worst moment otherwise. The
+controller checks each upstream in the chain every 10 minutes, on every spec
+change, and when the instance's `continuity.lab.solo.io/check-trust`
+annotation changes (the Observatory's **Check now**):
+
+| Check | Passes when |
+| --- | --- |
+| `Callback` | the IdP accepts S&V's client with the broker's callback: an authorization request with `prompt=none` and PKCE, redirects not followed, is answered at `status.tiers[].redirectURI`. It creates no session or user; the IdP may log it as a failed silent sign-in. |
+| `ClientAuth` | the IdP takes the broker's client authentication (and, for `private_key_jwt`, PS256) |
+| `PKCE` | the IdP takes PKCE S256 |
+| `Scopes` | the IdP offers every scope the broker asks for |
+| `Claims` | the IdP issues `sub` and `email` (the broker also requires `email_verified` at sign-in) |
+| `Assurance` | the acr values the tier maps are ones the IdP asserts, or the IdP issues the `amr` it maps |
+
+Each is `Pass`, `Fail` or `Unknown`: an IdP that doesn't publish what a check
+needs (many omit some discovery fields) is unknown, not failing. A failure
+sets `TrustConsistent` False, naming the IdP and the check, with a Warning
+event `TrustMismatch`. The checks are informational: which IdP signs people
+in only ever follows the health probes.
+
+What the workloads see doesn't change across IdPs by construction: they
+trust only the broker, so the issuer, the audiences and their own client
+registrations at the broker are the same whichever IdP is active. A workload
+profile's status lists those registrations.
+
+## Assurance rules
+
+Assurance rules say what a sign-in must prove to reach a resource, whichever
+IdP it came through, and which IdPs may vouch for its users:
+
+- **The default rule** (`spec.assurancePolicy` on the IdentityContinuity):
+  what every rule starts from, and what a gateway policy that asks the gate
+  without naming a rule gets. As installed: AAL1, from any IdP in the chain,
+  no break-glass, sessions from any allowed IdP.
+- **A rule** (a `WorkloadProfile`, `wlp`, beside its IdentityContinuity in
+  `sv-identity`): one group of workloads, and only what differs from the
+  default rule.
+
+```yaml
+apiVersion: continuity.lab.solo.io/v1alpha1
+kind: WorkloadProfile
+metadata: {name: advisor-workspace, namespace: sv-identity}
+spec:
+  continuity: sterling-vance
+  description: Bob's workspace tools behind the sv-mcp waypoint, used by his agents on his behalf
+  criticality: Critical
+  mode: Enforce
+  workloads: [{namespace: sv-mcp, serviceAccount: bob-workspace}]
+  clients: [kagent]
+  assurance: {minimum: AAL2}            # the rest is the default rule's
+```
+
+| Requirement | Default rule (`assurancePolicy`) | A rule (`WorkloadProfile`), unset: the default's |
+| --- | --- | --- |
+| Minimum assurance | `minimum` (`AAL1` default, `AAL2`, `AAL3`) | `assurance.minimum` |
+| Phishing-resistant authenticator | `phishingResistant` | `assurance.phishingResistant` |
+| Signed in within (`idp_auth_time`), e.g. `12h` | `maxAge` | `assurance.maxAge` |
+| IdPs that may vouch (empty: every upstream) | `allowedIdPs` | `allowedIdPs` |
+| Break-glass accounts | `allowBreakGlass` | `allowBreakGlass` |
+| Sessions: `Any`, or `ActiveIdPOnly` (only from the IdP signing people in now; one from an IdP the chain has moved off is refused until the user signs in again) | `sessions` | `sessions` |
+
+A rule also has a `mode`, what the gate does with it:
+
+| Mode | A request the rule refuses |
+| --- | --- |
+| `Enforce` (default) | is refused |
+| `ReportOnly` | goes through; the gate logs and returns `would-deny` with its reason, to see a rule's effect before enforcing it |
+| `Off` | goes through; the gate doesn't evaluate it |
+
+And its `criticality` (`Critical`, `High`, `Standard`), its `workloads` (mesh
+identities), the broker `clients` users sign in through, and optionally
+`obligations`, `owner` and `description`, for reporting.
+
+Status, from the controller (and only the controller: a
+ValidatingAdmissionPolicy refuses anyone else's status write):
+
+| Field | Meaning |
+| --- | --- |
+| `phase` | `Available`: sign-ins through the IdP serving now can meet the rule. `Degraded`: they can, on a later IdP than the first that can. `FailedClosed`: they can't, and requests are refused (in `Enforce` mode) |
+| `serving`, `servingLevel` | the active IdP, and the most a sign-in through it proves |
+| `eligibleIdPs` | the chain's IdPs, in order, whose sign-ins can meet the rule |
+| `clients[]` | each client as the broker has it: found, redirect URIs, audiences, and whether its tokens carry the upstream's assurance (`continuity-assurance`) |
+| conditions | `Ready` (False: the IdentityContinuity or a client is missing, `allowedIdPs` names an IdP not in the chain, or a client's tokens can't carry assurance while the rule requires more than AAL1) |
+
+Events: `Available`, `Degraded`, `FailedClosed` (Warning, in `Enforce` mode)
+as the chain moves.
+
+Bob's demo has three (`demos/bob/manifests/05-workload-profiles.yaml`):
+
+| Rule | Criticality | Requirements | Enforced at |
+| --- | --- | --- | --- |
+| `advisor-workspace` | Critical | AAL2 | `sv-mcp/bob-workspace-caller` (the waypoint in front of Bob's workspace) |
+| `ledgerline-research` | High | AAL2, active IdP only | `agentgateway-system/xaa-ledgerline-caller` (S&V's egress to Ledgerline, before any ID-JAG) |
+| `agent-console` | Standard | break-glass allowed | the kagent console's sign-in is at the edge, which doesn't ask the gate |
+
+With S&V's own Keycloak cut, the chain fails over to the contingency IdP:
+`advisor-workspace` and `ledgerline-research` go `FailedClosed`, and
+`agent-console` keeps serving (`Degraded`).
+
+### The assurance gate
+
+The gate enforces the rules: an Envoy external authorization service
+(gRPC), the continuity image's `gate` command, three replicas in
+`sv-identity` (`platform/47-continuity/assurance-gate.yaml`). A gateway
+policy asks it in the same agentgateway policy as its JWT check:
+
+```yaml
+traffic:
+  jwtAuthentication: {mode: Strict, providers: [...]}   # the broker's tokens
+  extAuth:
+    backendRef: {kind: Service, name: assurance-gate, namespace: sv-identity, port: 9001}
+    failureMode: FailClosed
+    grpc:
+      contextExtensions: {profile: advisor-workspace}   # none: the default rule
+      requestMetadata:
+        continuity: >-
+          {"iss": jwt.iss, "sub": jwt.sub, "idp": has(jwt.idp) ? jwt.idp : "",
+           "acr": has(jwt.idp_acr) ? jwt.idp_acr : "", "amr": has(jwt.idp_amr) ? jwt.idp_amr : "",
+           "auth_time": has(jwt.idp_auth_time) ? jwt.idp_auth_time : 0}
+```
+
+`contextExtensions` names the rule (`profile`) and, where the namespace has
+more than one chain, the chain (`continuity`). The gate publishes this
+stanza itself (`GET /v1/policy-point?rule=&continuity=` on its evaluate
+port), so whatever writes a policy point writes what the gate reads.
+
+It reads the verified token's claims as metadata, never a header the caller
+could set, and admits the session if the rule takes sessions from that IdP
+(`allowedIdPs`, break-glass, `sessions`) and what the IdP asserted meets its
+requirements:
+
+| Answer | When |
+| --- | --- |
+| allowed | the session meets the rule, or the rule is `ReportOnly` (`would-deny` when it wouldn't) or `Off` |
+| `401`, `WWW-Authenticate: Bearer error="insufficient_user_authentication"` (RFC 9470) | the user could pass by authenticating more strongly at their IdP: below the minimum, not phishing-resistant, or too long ago. `acr_values` names what to ask the active IdP for, when one of its mapped values meets the rule; `max_age`, when age was the reason |
+| `403` | the rule doesn't take this session at all: an IdP not allowed, break-glass, a session from an IdP the chain has moved off (`ActiveIdPOnly`), no verified token, or a rule the gate doesn't know |
+| `503` | the gate can't decide: it hasn't read the rules yet, or, for an `ActiveIdPOnly` rule, it has had no word from the chain for 30 s |
+
+Each answer carries `x-continuity-decision: <allow|deny|would-deny|off|unavailable>
+<rule>: <reason>`, which S&V's gateways log (`continuity.decision`), and a
+refusal's body names the rule and the reason.
+
+**What the rules decide, asked of the gate.** On a second port (`evaluate`,
+9002), the gate answers from the same code that enforces the rules:
+`POST /v1/evaluate` with a chain, optionally a draft of its rules (the
+default rule, IdPs' assurance, rules added, changed or removed), and
+optionally one session (`idp`, `acr`, `amr`, `authTime`). For every rule
+and the default rule it returns the phase, the IdPs that can meet it, each
+IdP's outcome (`Admit`; `Conditional`, when the IdP asserts the value named;
+`Refuse`) with the reason, and the session's decision. It is read only, and
+only the Observatory may call it.
+
+It is built not to become what it protects against:
+
+- no secrets, and no call to the broker or an IdP per request;
+- it watches the rules and the chain, so a failover reaches it as it
+  happens, and decides from what it last saw, so an API server outage
+  changes nothing but `ActiveIdPOnly` rules (the controller's status writes
+  are its heartbeat);
+- three replicas spread across zones and nodes, a PodDisruptionBudget of 2;
+- only the gateways whose policies ask it may call its gRPC port
+  (AuthorizationPolicy `assurance-gate-callers`, and one per gateway the
+  Observatory turns enforcement on at), and a ValidatingAdmissionPolicy
+  (`assurance-gate-fail-closed`) refuses any policy that asks it without
+  failing closed: with no gate, requests are refused, never let through.
+
+The gate's Service carries the label `continuity.lab.solo.io/assurance-gate`,
+with ports named `grpc` and `evaluate`: that, not its name, is how the
+Observatory finds it, and how the admission policy knows which policies must
+fail closed (each labelled Service is one of its parameters).
+
+Changing the default rule or a rule changes the gate's next decision; no
+gateway policy is touched. A rule no gateway policy asks for isn't enforced,
+whatever it says: the Observatory says so.
+
 ## In the Observatory
 
 **Identity Continuity** tab, one `IdentityContinuity` at a time:
@@ -366,6 +624,15 @@ failover takes about 10 s after the cut and failback about 15 s after the heal.
 - **Transitions** and **Identity traffic** (bottom): failovers, cuts and
   restores, and OIDC calls.
 
+**Assurance rules** (a button in the rule builder, beside Directory sync):
+the rules, what relies on the broker without one, and the default rule, each
+in the same form; the IdPs and what their sign-ins prove; a what-if for one
+sign-in; and the same as HCL
+([OBSERVATORY.md](OBSERVATORY.md#identity-continuity)). What each rule
+decides comes from the assurance gate. Each IdP in the rule builder shows its
+trust checks as a badge, and the banner names the enforced rules failing
+closed.
+
 ## Auth0 setup
 
 Tenant: `AUTH0_ISSUER` in `.env`, your tenant's issuer with its trailing
@@ -414,6 +681,14 @@ slash (`https://<tenant>.us.auth0.com/`). Unset, auth0 is left out of the chain.
 
 Bob's groups come from his S&V account, not from Auth0.
 
+**Assurance:** Auth0 puts `amr: ["mfa"]` in the ID token when the sign-in
+took a second factor, which maps to AAL2. Without multi-factor
+authentication (Security → Multi-factor Auth), Auth0 sign-ins prove AAL1 and
+workloads that require more refuse them. If your tenant's policy always
+takes a second factor for S&V's application, say so in
+`config/continuity.local.yaml` (`tiers.auth0.assurance.default: AAL2`; the
+example file shows it).
+
 **Auth0 as a directory** (the directory sync): **Applications → Create
 Application → Machine to Machine Applications**, authorized for the **Auth0
 Management API** with `read:users` and `update:users`. Its credentials in
@@ -437,7 +712,11 @@ Gluu as S&V's enterprise IdP: [GLUU.md](GLUU.md#sv-enterprise-idp-gluu).
 `keycloak` in `ENTERPRISE_IDP` is a Keycloak S&V runs itself, apart from the
 broker: layer 45 installs one in `sv-workforce` at
 `https://login.sterling.lab`, realm `workforce`, with the employees
-(`bob` / `bob-demo`, `carol` / `carol-demo`). It is an upstream like the
+(`bob` / `bob-demo`, `carol` / `carol-demo`). The broker's sign-ins there
+take a password and then a one-time code from an authenticator app (`acr
+aal2`). The employees' seeds are lab secrets (`SV_WORKFORCE_TOTP_<USER>` in
+`.lab/secrets.env`); `make totp` prints Bob's current code
+(`make totp EMPLOYEE=carol` for Carol's). It is an upstream like the
 others: S&V's client there (`sterling-vance-broker`) authenticates with the
 broker's key and the egress's key (`private_key_jwt`), it issues ID-JAGs for
 the broker's sign-ins, and the directory sync reads and writes its users
@@ -445,6 +724,18 @@ with `continuity-directory` (`view-users`, `manage-users`) over its admin
 API, which only the sync reaches. To use another Keycloak, set `KEYCLOAK_ISSUER` and
 `KEYCLOAK_CLIENT_ID` in `.env` and register the callback and keys as for any
 upstream.
+
+## S&V's contingency IdP
+
+`contingency` in `ENTERPRISE_IDP` is the IdP S&V keeps for when its own is
+down: layer 45 installs a Keycloak in `sv-contingency` at
+`https://login-dr.sterling.lab`, realm `contingency`, with its own accounts
+for the employees (`bob` / `bob-demo`, `carol` / `carol-demo`) and a password
+only (`acr aal1`). S&V's client there (`sterling-vance-broker`) takes the
+broker's key. It is in its own namespace, so cutting S&V's own Keycloak
+leaves it up, and it is cut on its own (a DENY in `sv-contingency`). It
+doesn't issue ID-JAGs: the broker vouches for its sign-ins. Workloads that
+require more than a password fail closed while it signs people in.
 
 ## Okta setup
 
@@ -474,13 +765,26 @@ here is removed when the layer is re-run.
 
 `make continuity-verify` runs on S&V's own Keycloak with the IdPs ahead of
 it drained, then restores the spec: controller health and leadership; Bob's
-browser sign-in through it; a partition in `sv-workforce` failing over to
-`break-glass` (the broker's form) and back; Manual and Automatic failback;
-the directory sync written out to a failover and read in from the primary,
-with `status.sync` and Test connection; an IdP removed and re-added at
-runtime; and, with an external IdP configured, its partition at `sv-egress`
-and the browser landing on it. `keycloak` must be in `ENTERPRISE_IDP`. Bob's
-sign-in at an external IdP is interactive and is skipped.
+browser sign-in through it (password and one-time code); a partition in
+`sv-workforce` failing over to the contingency IdP, Bob signing in there,
+then that cut too, failing over to `break-glass` (the broker's form), and
+back; Manual and Automatic failback; the directory sync written out to a
+failover and read in from the primary, with `status.sync` and Test
+connection; an IdP removed and re-added at runtime; the trust checks, and the
+broker's callback removed at S&V's own Keycloak and caught; and, with an
+external IdP configured, its partition at `sv-egress` and the browser landing
+on it. `keycloak` must be in `ENTERPRISE_IDP`. Bob's sign-in at an external
+IdP is interactive and is skipped.
+
+`make bob-verify` checks assurance rules end to end: Bob's AAL2 session
+admitted to his workspace and to Ledgerline; S&V's own Keycloak cut, the
+rules `FailedClosed` on the contingency IdP and his new AAL1 session refused
+at both (401 with the challenge); his session from before the outage still
+working where any allowed IdP's sessions count, and refused where only the
+active IdP's do; a rule change taking effect with no gateway change;
+`allowedIdPs`; `ReportOnly` letting the refused session through as
+`would-deny`; and the gate losing a replica, then all of them (refused,
+never let through).
 
 ## Troubleshooting
 
@@ -497,6 +801,13 @@ sign-in at an external IdP is interactive and is skipped.
 | sync: `directory token: HTTP 401` | the directory client's credentials, or it lacks `client_credentials` |
 | sync: `directory: HTTP 403` | the directory client lacks the read scope (`scopes`) or Auth0 `read:users` |
 | sync failed, attribute unchanged | that IdP's directory was unreachable; its attributes are kept until the next run |
+| `TrustConsistent` False: `<idp> Callback` | the IdP doesn't accept S&V's client with `status.tiers[].redirectURI`: register the callback there again |
+| `TrustConsistent` False: `<idp> Assurance` | none of the acr values the tier maps are ones the IdP asserts: fix `tiers[].assurance` |
+| `401 insufficient_user_authentication` from a workload | the session's IdP didn't assert enough for its profile (the body says what it had): sign in again with a second factor there, or, failed over to a weaker IdP, wait for failback |
+| `403` naming a resource's rules | they don't take sessions from that IdP (`allowedIdPs`, break-glass, or `ActiveIdPOnly` after a failover: sign in again) |
+| `503` naming a resource's rules | the gate hasn't read them yet, or rules with `ActiveIdPOnly` haven't heard from the chain in 30 s (the continuity controller, or the API server) |
+| profile `Ready` False: `ClientWithoutAssurance` | the client's tokens don't carry `idp_acr`: add client scope `continuity-assurance` to it at the broker |
+| every session counts as AAL1 | the IdP sends neither an acr nor an amr the tier maps; or its mapper `continuity-assurance` is missing (`Ready` says so): the broker's image lacks the session-claims provider |
 
 Keycloak's log names the claim or step that failed:
 

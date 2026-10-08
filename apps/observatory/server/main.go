@@ -78,6 +78,10 @@ func main() {
 	}
 	cont := &Continuity{k: k, res: &Resources{k: k, admin: env("ADMIN_GROUP", "observatory-admins")}, traffic: traffic}
 	models := &Models{k: k, res: cont.res, traffic: traffic, index: func() *Index { return index.Load() }}
+	assurance := &Assurance{k: k, res: cont.res, index: func() *Index { return index.Load() }, http: &http.Client{Timeout: 10 * time.Second}}
+	if local {
+		assurance.gateURL = os.Getenv("ASSURANCE_GATE_URL") // a port-forward to the gate's evaluate port
+	}
 	sub := &Substrate{url: env("KAGENT_URL", ""), hc: &http.Client{Timeout: 5 * time.Second}, hub: hub, traffic: traffic,
 		index: func() *Index { return index.Load() }}
 	if u := os.Getenv("KAGENT_TOKEN_URL"); u != "" {
@@ -165,6 +169,12 @@ func main() {
 	api.HandleFunc("POST /api/continuity/{ns}/{name}/sync", cont.RunSync)
 	api.HandleFunc("POST /api/continuity/{ns}/{name}/directory-test", cont.TestDirectory)
 	api.HandleFunc("GET /api/continuity/{ns}/jobs/{job}", cont.SyncJob)
+	api.HandleFunc("POST /api/continuity/{ns}/{name}/check-trust", assurance.CheckTrust)
+	api.HandleFunc("GET /api/assurance/{ns}/{name}", assurance.Get)
+	api.HandleFunc("POST /api/assurance/{ns}/{name}/evaluate", assurance.Evaluate)
+	api.HandleFunc("PUT /api/assurance/{ns}/{name}/policy-points/{pns}/{pname}", assurance.PutPolicyPoint)
+	api.HandleFunc("PUT /api/assurance/{ns}/profiles/{profile}", assurance.PutProfile)
+	api.HandleFunc("DELETE /api/assurance/{ns}/profiles/{profile}", assurance.DeleteProfile)
 	api.HandleFunc("GET /api/models", models.Get)
 	api.HandleFunc("PUT /api/models/{ns}/{name}", models.Put)
 	api.HandleFunc("PUT /api/models/{ns}/secrets/{name}", models.PutSecret)

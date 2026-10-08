@@ -1,0 +1,216 @@
+{
+  "realm": "contingency",
+  "displayName": "Sterling & Vance (contingency)",
+  "enabled": true,
+  "sslRequired": "external",
+  "bruteForceProtected": true,
+  "failureFactor": 10,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "permanentLockout": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "attributes": {
+    "acr.loa.map": "{\"aal1\":1}"
+  },
+  "browserFlow": "aal-browser",
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 3600,
+  "components": {
+    "org.keycloak.keys.KeyProvider": [
+      {
+        "name": "lab-rs256",
+        "providerId": "rsa",
+        "subComponents": {},
+        "config": {
+          "priority": [
+            "200"
+          ],
+          "enabled": [
+            "true"
+          ],
+          "active": [
+            "true"
+          ],
+          "algorithm": [
+            "RS256"
+          ],
+          "privateKey": [
+            "${KC_REALM_RSA_KEY}"
+          ],
+          "certificate": [
+            "${KC_REALM_RSA_CERT}"
+          ]
+        }
+      }
+    ]
+  },
+  "authenticationFlows": [
+    {
+      "alias": "aal-browser",
+      "description": "SSO cookie, else sign-in by level of authentication (acr.loa.map): aal1 = Level 1 (aal1): password",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-cookie",
+          "requirement": "ALTERNATIVE",
+          "priority": 10,
+          "authenticatorFlow": false
+        },
+        {
+          "flowAlias": "aal-browser levels",
+          "requirement": "ALTERNATIVE",
+          "priority": 20,
+          "authenticatorFlow": true
+        }
+      ]
+    },
+    {
+      "alias": "aal-browser levels",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "flowAlias": "aal-browser aal1",
+          "requirement": "CONDITIONAL",
+          "priority": 10,
+          "authenticatorFlow": true
+        }
+      ]
+    },
+    {
+      "alias": "aal-browser aal1",
+      "description": "Level 1 (aal1): password",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "conditional-level-of-authentication",
+          "authenticatorConfig": "aal1",
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "authenticatorFlow": false
+        },
+        {
+          "authenticator": "auth-username-password-form",
+          "authenticatorConfig": "aal1-amr",
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "authenticatorFlow": false
+        }
+      ]
+    }
+  ],
+  "authenticatorConfig": [
+    {
+      "alias": "aal1",
+      "config": {
+        "loa-condition-level": "1",
+        "loa-max-age": "43200"
+      }
+    },
+    {
+      "alias": "aal1-amr",
+      "config": {
+        "default.reference.value": "pwd",
+        "default.reference.maxAge": "43200"
+      }
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "sterling-vance-broker",
+      "name": "Sterling & Vance broker",
+      "description": "S&V's broker (Keycloak at idp.sterling.lab) signs workforce users in here when S&V's own Keycloak is down. It authenticates with its key (private_key_jwt; JWKS set by layer 45).",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-jwt",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "redirectUris": [
+        "https://idp.${SV_DOMAIN}/realms/sterling-vance/broker/contingency/endpoint"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "use.jwks.string": "true",
+        "jwks.string": "",
+        "use.refresh.tokens": "true",
+        "default.acr.values": "aal1"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "profile",
+        "email",
+        "acr",
+        "web-origins"
+      ],
+      "fullScopeAllowed": false,
+      "protocolMappers": [
+        {
+          "name": "aud-self",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "sterling-vance-broker",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "amr",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-amr-mapper",
+          "config": {
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "bob",
+      "id": "5b0b0000-0000-4000-8000-00000000d0b0",
+      "email": "bob@${SV_DOMAIN}",
+      "firstName": "Bob",
+      "lastName": "Reyes",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "bob-demo",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "carol",
+      "id": "5b0b0000-0000-4000-8000-00000000d0ca",
+      "email": "carol@${SV_DOMAIN}",
+      "firstName": "Carol",
+      "lastName": "Diaz",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "carol-demo",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

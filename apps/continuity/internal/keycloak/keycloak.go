@@ -172,28 +172,59 @@ func (c *Client) UpdateIdP(ctx context.Context, alias string, p IdP) error {
 	return c.do(ctx, http.MethodPut, "/identity-provider/instances/"+url.PathEscape(alias), p, nil)
 }
 
-// UsernameMapper is the mapper EnsureUsernameFromEmail keeps on an IdP.
-const UsernameMapper = "username-from-email"
+// Mapper is an identity provider mapper the controller keeps on an IdP, by
+// name: its type and config.
+type Mapper struct {
+	Name, Type string
+	Config     map[string]string
+}
 
-// EnsureUsernameFromEmail makes a brokered user's username their email. The
+// UsernameMapper makes a brokered user's username their email. The
 // first-broker-login flow finds an existing user by email OR username, so
 // without it an upstream account whose username is "bob" would be linked to
 // the local bob whatever its email. With it, both lookups use the email the
 // upstream verified.
-func (c *Client) EnsureUsernameFromEmail(ctx context.Context, alias string) error {
+var UsernameMapper = Mapper{Name: "username-from-email", Type: "oidc-username-idp-mapper",
+	Config: map[string]string{"template": "${CLAIM.email}", "target": "LOCAL", "syncMode": "INHERIT"}}
+
+// AssuranceMapper puts how the upstream authenticated each sign-in (its acr,
+// amr and auth_time) on that sign-in's broker session, as notes
+// continuity.<claim>, on every sign-in (FORCE), for the broker's
+// continuity-assurance client scope. Its type is the broker image's provider
+// (tools/keycloak-idjag/session-claims).
+var AssuranceMapper = Mapper{Name: "continuity-assurance", Type: "continuity-session-claims-idp-mapper",
+	Config: map[string]string{"claims": "acr,amr,auth_time", "note.prefix": "continuity.", "syncMode": "FORCE"}}
+
+// EnsureMapper creates the mapper on the IdP, or puts its type and config
+// back if they were changed in Keycloak. Config keys it doesn't set stay.
+func (c *Client) EnsureMapper(ctx context.Context, alias string, m Mapper) error {
 	var have []map[string]any
 	base := "/identity-provider/instances/" + url.PathEscape(alias) + "/mappers"
 	if err := c.do(ctx, http.MethodGet, base, nil, &have); err != nil {
 		return err
 	}
-	for _, m := range have {
-		if m["name"] == UsernameMapper {
+	for _, cur := range have {
+		if cur["name"] != m.Name {
+			continue
+		}
+		cfg, _ := cur["config"].(map[string]any)
+		if cfg == nil {
+			cfg = map[string]any{}
+		}
+		same := cur["identityProviderMapper"] == m.Type
+		for k, v := range m.Config {
+			same = same && cfg[k] == v
+			cfg[k] = v
+		}
+		if same {
 			return nil
 		}
+		id, _ := cur["id"].(string)
+		cur["identityProviderMapper"], cur["config"] = m.Type, cfg
+		return c.do(ctx, http.MethodPut, base+"/"+url.PathEscape(id), cur, nil)
 	}
 	return c.do(ctx, http.MethodPost, base, map[string]any{
-		"name": UsernameMapper, "identityProviderAlias": alias, "identityProviderMapper": "oidc-username-idp-mapper",
-		"config": map[string]any{"template": "${CLAIM.email}", "target": "LOCAL", "syncMode": "INHERIT"},
+		"name": m.Name, "identityProviderAlias": alias, "identityProviderMapper": m.Type, "config": m.Config,
 	}, nil)
 }
 
@@ -257,4 +288,43 @@ func (c *Client) SetRedirector(ctx context.Context, flow, alias string) (bool, e
 		return true, c.do(ctx, http.MethodPut, "/authentication/config/"+cfg.ID, cfg, nil)
 	}
 	return false, fmt.Errorf("flow %s has no %s execution", flow, redirectorID)
+}
+
+// Registration is a client as the broker has it registered: where it sends
+// users back to, the audiences its own mappers add, and its default scopes.
+type Registration struct {
+	Found         bool
+	RedirectURIs  []string
+	Audiences     []string
+	DefaultScopes []string
+}
+
+// ClientRegistration reads one client by its client ID (realm-management
+// view-clients).
+func (c *Client) ClientRegistration(ctx context.Context, clientID string) (Registration, error) {
+	var list []struct {
+		ClientID            string   `json:"clientId"`
+		RedirectURIs        []string `json:"redirectUris"`
+		DefaultClientScopes []string `json:"defaultClientScopes"`
+		ProtocolMappers     []struct {
+			ProtocolMapper string            `json:"protocolMapper"`
+			Config         map[string]string `json:"config"`
+		} `json:"protocolMappers"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/clients?clientId="+url.QueryEscape(clientID), nil, &list); err != nil {
+		return Registration{}, err
+	}
+	for _, cl := range list {
+		if cl.ClientID != clientID {
+			continue
+		}
+		r := Registration{Found: true, RedirectURIs: cl.RedirectURIs, DefaultScopes: cl.DefaultClientScopes}
+		for _, m := range cl.ProtocolMappers {
+			if a := m.Config["included.client.audience"]; m.ProtocolMapper == "oidc-audience-mapper" && a != "" {
+				r.Audiences = append(r.Audiences, a)
+			}
+		}
+		return r, nil
+	}
+	return Registration{}, nil
 }

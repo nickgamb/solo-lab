@@ -84,7 +84,7 @@ func runSync(args []string) int {
 	case res.Failed > 0 || len(res.Errors) > 0:
 		st.Message = summarize(res.Errors)
 	default:
-		st.LastSuccess, st.Message = &started, fmt.Sprintf("%d users. S&V profiles updated: %d. Failover accounts written: %d, created: %d", res.Users, res.Updated, res.Written, res.Created)
+		st.LastSuccess, st.Message = &started, fmt.Sprintf("%d users. broker profiles updated: %d. Failover accounts written: %d, created: %d", res.Users, res.Updated, res.Written, res.Created)
 		if len(res.Notes) > 0 {
 			st.Message += "; " + summarize(res.Notes)
 		}

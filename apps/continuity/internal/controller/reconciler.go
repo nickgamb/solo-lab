@@ -37,6 +37,7 @@ import (
 	"github.com/nickgamb/solo-lab/apps/continuity/internal/keycloak"
 	"github.com/nickgamb/solo-lab/apps/continuity/internal/probe"
 	"github.com/nickgamb/solo-lab/apps/continuity/internal/tiers"
+	"github.com/nickgamb/solo-lab/apps/continuity/internal/trust"
 )
 
 const (
@@ -45,7 +46,13 @@ const (
 	LabelInstance = "continuity.lab.solo.io/instance"
 	cfgInstance   = "continuity.lab.solo.io/instance" // IdP config key: who owns it
 	cfgHash       = "continuity.lab.solo.io/hash"
-	maxHistory    = 20
+	// AnnotationCheckTrust: a new value runs the trust checks now (the
+	// Observatory's "Check now").
+	AnnotationCheckTrust = "continuity.lab.solo.io/check-trust"
+	// trustEvery: how often the trust checks run without a change. Slow on
+	// purpose: the callback check is a sign-in attempt the IdP may log.
+	trustEvery = 10 * time.Minute
+	maxHistory = 20
 	// cleanupGrace: how long deletion waits for Keycloak before giving up on
 	// cleaning it (so a gone broker never wedges namespace deletion).
 	cleanupGrace = 5 * time.Minute
@@ -115,6 +122,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// discovery names
 	egressErr := r.reconcileEgress(ctx, &ic, ic.Spec.Tiers)
 	r.markPartitions(ctx, &ic)
+	r.checkTrust(ctx, &ic, creds)
 
 	byName := map[string]*v1.TierStatus{}
 	for i := range ic.Status.Tiers {
@@ -146,6 +154,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	r.setConditions(&ic, byName, active, kcErr, egressErr)
 	r.setProfileCondition(&ic, profileErr)
+	r.setTrustCondition(&ic)
 	ic.Status.ObservedGeneration = ic.Generation
 	if err := r.Status().Patch(ctx, &ic, client.MergeFrom(orig)); err != nil {
 		return ctrl.Result{}, err
@@ -307,6 +316,9 @@ func (r *Reconciler) probeAll(ctx context.Context, ic *v1.IdentityContinuity, cr
 		if t.Type == "oidc" && ic.Status.Broker != nil {
 			st.RedirectURI = ic.Status.Broker.Issuer + "/broker/" + t.Name + "/endpoint"
 		}
+		if p != nil && t.Type == "oidc" {
+			st.Trust = p.Trust // kept until checkTrust runs again
+		}
 		switch {
 		case res.Kind == tiers.Healthy && failed:
 			st.Reason, st.Message = tiers.SlowResponse, fmt.Sprintf("%dms is above latencyAboveMs %d", st.LatencyMs, *t.FailoverWhen.LatencyAboveMs)
@@ -328,6 +340,82 @@ func (r *Reconciler) probeAll(ctx context.Context, ic *v1.IdentityContinuity, cr
 	}
 	ic.Status.Tiers = out
 	return broker
+}
+
+// checkTrust runs each oidc tier's trust checks when due: never checked, the
+// spec changed, the check-trust annotation changed, or trustEvery passed.
+// Only with the IdP's discovery in hand and its client known; otherwise the
+// last result stays.
+func (r *Reconciler) checkTrust(ctx context.Context, ic *v1.IdentityContinuity, creds map[string]credential) {
+	timeout := time.Duration(max(ic.Spec.Health.TimeoutSeconds, 1)) * time.Second
+	req := ic.Annotations[AnnotationCheckTrust]
+	now := metav1.Now()
+	spec := map[string]v1.Tier{}
+	for _, t := range ic.Spec.Tiers {
+		spec[t.Name] = t
+	}
+	var wg sync.WaitGroup
+	for i := range ic.Status.Tiers {
+		st := &ic.Status.Tiers[i]
+		t, ok := spec[st.Name]
+		if !ok || t.Type != "oidc" || t.OIDC == nil {
+			continue
+		}
+		d, id := r.cachedDiscovery(ic, t), creds[t.Name].id
+		if d == nil || id == "" || st.RedirectURI == "" {
+			continue
+		}
+		if tr := st.Trust; tr != nil && tr.Generation == ic.Generation && tr.Requested == req && now.Sub(tr.CheckedAt.Time) < trustEvery {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			was := map[string]bool{}
+			if st.Trust != nil {
+				for _, f := range trust.Failed(st.Trust.Checks) {
+					was[f] = true
+				}
+			}
+			cb, msg := r.Prober.Callback(ctx, d.AuthorizationEndpoint, id, st.RedirectURI, timeout)
+			checks := trust.Checks(t, d, cb, msg)
+			st.Trust = &v1.TrustStatus{CheckedAt: now, Generation: ic.Generation, Requested: req, Checks: checks}
+			for _, c := range checks {
+				if c.Result == trust.Fail && !was[c.Name] {
+					r.Recorder.Eventf(ic, nil, corev1.EventTypeWarning, "TrustMismatch", "CheckTrust", "IdP %s: %s: %s", t.Name, c.Name, truncate(c.Message, 512))
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// setTrustCondition: TrustConsistent is False while any IdP fails a trust
+// check; Unknown results (not published) don't count against it.
+func (r *Reconciler) setTrustCondition(ic *v1.IdentityContinuity) {
+	c := metav1.Condition{Type: "TrustConsistent", Status: metav1.ConditionTrue, Reason: "Consistent", ObservedGeneration: ic.Generation,
+		Message: "every IdP checked accepts the broker's registration"}
+	var bad []string
+	checked := 0
+	for _, st := range ic.Status.Tiers {
+		if st.Trust == nil {
+			continue
+		}
+		checked++
+		for _, ch := range st.Trust.Checks {
+			if ch.Result == trust.Fail {
+				bad = append(bad, fmt.Sprintf("%s %s: %s", st.Name, ch.Name, ch.Message))
+			}
+		}
+	}
+	switch {
+	case len(bad) > 0:
+		c.Status, c.Reason, c.Message = metav1.ConditionFalse, "RegistrationMismatch", strings.Join(bad, "; ")
+	case checked == 0:
+		c.Status, c.Reason, c.Message = metav1.ConditionUnknown, "NotChecked", "no IdP checked yet"
+	}
+	c.Message = truncate(c.Message, maxMessage)
+	meta.SetStatusCondition(&ic.Status.Conditions, c)
 }
 
 func discoveryKey(ic *v1.IdentityContinuity, t v1.Tier) string {
@@ -569,12 +657,20 @@ func (r *Reconciler) reconcileKeycloak(ctx context.Context, ic *v1.IdentityConti
 		}
 		keep[t.Name] = true
 		if err == nil {
-			err = kc.EnsureUsernameFromEmail(ctx, t.Name)
+			err = kc.EnsureMapper(ctx, t.Name, keycloak.UsernameMapper)
 		}
 		if err != nil {
 			errs = append(errs, err)
-		} else if t.Name == active {
+			continue
+		}
+		if t.Name == active {
 			redirect = t.Name // only ever point logins at an IdP that exists
+		}
+		// Never holds up sign-ins: without it a session carries no upstream
+		// acr or amr, so workloads that require more than AAL1 refuse it
+		// (fail closed) while Ready says why.
+		if err := kc.EnsureMapper(ctx, t.Name, keycloak.AssuranceMapper); err != nil {
+			errs = append(errs, fmt.Errorf("identity provider %s: assurance mapper: %w", t.Name, err))
 		}
 	}
 	flow := ic.Spec.Broker.Keycloak.BrowserFlow

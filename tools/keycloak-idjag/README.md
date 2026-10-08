@@ -42,8 +42,26 @@ Configuration, as in the PR's `IDJAGTokenExchangeTest`:
 - The subject ID token must have a live user session and client session.
   Logout or revocation stops new ID-JAGs.
 
+## Identity continuity's IdP mapper (`session-claims/`)
+
+S&V's broker keeps how the upstream IdP authenticated each sign-in (its `acr`,
+`amr` and `auth_time`) on that sign-in's session, so workload profiles can
+require an assurance level (docs/IDENTITY-CONTINUITY.md). Keycloak's own
+claim-to-session-note mapper copies string claims only; `amr` is an array and
+`auth_time` a number. `session-claims/` is a small provider,
+`continuity-session-claims-idp-mapper`, that copies all three as strings (an
+array's values joined with spaces) to session notes `continuity.<claim>`. A
+claim the upstream didn't send leaves no note. The continuity controller puts
+it on every upstream IdP (`continuity-assurance`, sync mode FORCE, so every
+sign-in), and the broker's `continuity-assurance` client scope puts the notes
+in tokens as `idp_acr`, `idp_amr` and `idp_auth_time`.
+
+The image compiles it against the Keycloak jars it builds and loads it from
+`/opt/keycloak/providers`. It is independent of the ID-JAG patch and stays
+when that patch goes.
+
 ## Moving to upstream
 
-When #49998 merges and ships in a release, delete this directory and set the
-S&V Keycloak image back to stock (`platform/45-identity/install.sh`, `KC_IMAGE`).
+When #49998 merges and ships in a release, drop `patches/` and the two jars
+the Dockerfile replaces, and build the provider onto the stock release image.
 The realm configuration stays the same.

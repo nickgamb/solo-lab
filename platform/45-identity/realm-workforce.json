@@ -13,6 +13,16 @@
   "registrationAllowed": false,
   "resetPasswordAllowed": false,
   "editUsernameAllowed": false,
+  "attributes": {
+    "acr.loa.map": "{\"aal1\":1,\"aal2\":2}"
+  },
+  "browserFlow": "aal-browser",
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "otpPolicyDigits": 6,
+  "otpPolicyPeriod": 30,
+  "otpPolicyLookAheadWindow": 1,
+  "otpPolicyCodeReusable": false,
   "accessTokenLifespan": 300,
   "ssoSessionIdleTimeout": 3600,
   "defaultDefaultClientScopes": [
@@ -91,6 +101,12 @@
           "type": "password",
           "value": "bob-demo",
           "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "Authenticator app",
+          "secretData": "{\"value\":\"${SV_WORKFORCE_TOTP_BOB}\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
         }
       ],
       "groups": [
@@ -113,6 +129,12 @@
           "type": "password",
           "value": "carol-demo",
           "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "Authenticator app",
+          "secretData": "{\"value\":\"${SV_WORKFORCE_TOTP_CAROL}\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
         }
       ],
       "id": "5b0b0000-0000-4000-8000-00000000f0ca",
@@ -153,7 +175,9 @@
         "standard.token.exchange.enabled": "true",
         "use.jwks.string": "true",
         "jwks.string": "",
-        "use.refresh.tokens": "true"
+        "use.refresh.tokens": "true",
+        "default.acr.values": "aal2",
+        "minimum.acr.value": "aal2"
       },
       "defaultClientScopes": [
         "basic",
@@ -176,6 +200,16 @@
             "included.client.audience": "sterling-vance-broker",
             "access.token.claim": "true",
             "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "amr",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-amr-mapper",
+          "config": {
+            "id.token.claim": "true",
+            "access.token.claim": "true",
             "introspection.token.claim": "true"
           }
         }
@@ -939,5 +973,124 @@
         ]
       }
     ]
-  }
+  },
+  "authenticationFlows": [
+    {
+      "alias": "aal-browser",
+      "description": "SSO cookie, else sign-in by level of authentication (acr.loa.map): aal1 = Level 1 (aal1): password, aal2 = Level 2 (aal2): a one-time code from the user's authenticator app (TOTP), after level 1",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-cookie",
+          "requirement": "ALTERNATIVE",
+          "priority": 10,
+          "authenticatorFlow": false
+        },
+        {
+          "flowAlias": "aal-browser levels",
+          "requirement": "ALTERNATIVE",
+          "priority": 20,
+          "authenticatorFlow": true
+        }
+      ]
+    },
+    {
+      "alias": "aal-browser levels",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "flowAlias": "aal-browser aal1",
+          "requirement": "CONDITIONAL",
+          "priority": 10,
+          "authenticatorFlow": true
+        },
+        {
+          "flowAlias": "aal-browser aal2",
+          "requirement": "CONDITIONAL",
+          "priority": 20,
+          "authenticatorFlow": true
+        }
+      ]
+    },
+    {
+      "alias": "aal-browser aal1",
+      "description": "Level 1 (aal1): password",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "conditional-level-of-authentication",
+          "authenticatorConfig": "aal1",
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "authenticatorFlow": false
+        },
+        {
+          "authenticator": "auth-username-password-form",
+          "authenticatorConfig": "aal1-amr",
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "authenticatorFlow": false
+        }
+      ]
+    },
+    {
+      "alias": "aal-browser aal2",
+      "description": "Level 2 (aal2): a one-time code from the user's authenticator app (TOTP), after level 1",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "conditional-level-of-authentication",
+          "authenticatorConfig": "aal2",
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "authenticatorFlow": false
+        },
+        {
+          "authenticator": "auth-otp-form",
+          "authenticatorConfig": "aal2-amr",
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "authenticatorFlow": false
+        }
+      ]
+    }
+  ],
+  "authenticatorConfig": [
+    {
+      "alias": "aal1",
+      "config": {
+        "loa-condition-level": "1",
+        "loa-max-age": "43200"
+      }
+    },
+    {
+      "alias": "aal1-amr",
+      "config": {
+        "default.reference.value": "pwd",
+        "default.reference.maxAge": "43200"
+      }
+    },
+    {
+      "alias": "aal2",
+      "config": {
+        "loa-condition-level": "2",
+        "loa-max-age": "43200"
+      }
+    },
+    {
+      "alias": "aal2-amr",
+      "config": {
+        "default.reference.value": "otp",
+        "default.reference.maxAge": "43200"
+      }
+    }
+  ]
 }

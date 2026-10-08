@@ -44,6 +44,8 @@ xaa-logs: ## Cross App Access trail (both token requests, claims, checks), token
 	@./scripts/xaa-logs.sh --since $(or $(SINCE),1h)
 xaa-keys: ## public keys other parties register: S&V clients (private_key_jwt), S&V IdP, Ledgerline SSO client
 	@./scripts/xaa-keys.sh
+totp: ## one-time code for signing in at S&V's own Keycloak as bob (or: make totp EMPLOYEE=carol)
+	@bash -c '. scripts/lib.sh && totp_code $(or $(EMPLOYEE),bob)'
 status: ## what's running, where, and the URLs
 	@./scripts/status.sh
 preflight: ## check tools and Docker resources
@@ -52,4 +54,4 @@ preflight: ## check tools and Docker resources
 help:
 	@awk 'BEGIN{FS=":.*## "} /^## ----/{printf "\n\033[1m%s\033[0m\n", substr($$0,9)} /^[a-zA-Z%_-]+:.*## /{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-.PHONY: machine-setup up cluster platform down nuke verify bob-verify alice-verify continuity-verify observatory-verify tour reset llm xaa-logs xaa-keys status preflight help
+.PHONY: machine-setup up cluster platform down nuke verify bob-verify alice-verify continuity-verify observatory-verify tour reset llm xaa-logs xaa-keys totp status preflight help

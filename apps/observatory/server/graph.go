@@ -698,9 +698,10 @@ func (b *builder) waypoints() {
 	}
 }
 
-// identityEdges: which IdP each gateway and policy trusts or exchanges with.
+// identityEdges: which IdP each gateway and policy trusts or exchanges with
+// (agentgateway's policies on either edition).
 func (b *builder) identityEdges() {
-	for _, pol := range b.k.List("agentgatewaypolicies") {
+	for _, pol := range append(b.k.List("agentgatewaypolicies"), b.k.List("enterpriseagentgatewaypolicies")...) {
 		gws := b.policyTargets(pol)
 		for _, gw := range gws {
 			if n := b.nodes[gw]; n != nil {

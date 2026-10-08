@@ -53,6 +53,31 @@ type IdentityContinuitySpec struct {
 	// The scheduled directory sync: the primary IdP's profile into the
 	// broker, then the broker's out to every failover IdP. Optional.
 	Sync *Sync `json:"sync,omitempty"`
+	// The assurance rules every WorkloadProfile following this chain has,
+	// unless it sets its own.
+	// +kubebuilder:default={}
+	AssurancePolicy AssurancePolicy `json:"assurancePolicy,omitempty"`
+}
+
+// AssurancePolicy is the global assurance rules: what a sign-in must prove
+// to reach a workload, and which IdPs may vouch, where a workload's profile
+// doesn't say.
+type AssurancePolicy struct {
+	// +kubebuilder:validation:Enum=AAL1;AAL2;AAL3
+	// +kubebuilder:default=AAL1
+	Minimum           string `json:"minimum,omitempty"`
+	PhishingResistant bool   `json:"phishingResistant,omitempty"`
+	// +optional
+	MaxAge *metav1.Duration `json:"maxAge,omitempty"`
+	// The chain's IdPs that may vouch for a session. Empty: every upstream.
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=16
+	AllowedIdPs []string `json:"allowedIdPs,omitempty"`
+	// The broker's break-glass accounts may reach workloads.
+	AllowBreakGlass bool `json:"allowBreakGlass,omitempty"`
+	// +kubebuilder:validation:Enum=Any;ActiveIdPOnly
+	// +kubebuilder:default=Any
+	Sessions string `json:"sessions,omitempty"`
 }
 
 // Profile is the broker's standard user profile.
@@ -203,6 +228,42 @@ type Tier struct {
 	Directory *Directory `json:"directory,omitempty"`
 	// +kubebuilder:default={}
 	FailoverWhen FailoverRules `json:"failoverWhen,omitempty"`
+	// What a sign-in through this IdP proves, for workload profiles that
+	// require an assurance level. Unset: every sign-in counts as AAL1.
+	// +optional
+	Assurance *TierAssurance `json:"assurance,omitempty"`
+}
+
+// TierAssurance maps what an IdP asserts about a sign-in (its acr, or one of
+// its amr values, which the broker keeps on the session) to a NIST SP 800-63B
+// authenticator assurance level. A sign-in is the highest level any of its
+// values maps to; one that asserts none of them is default.
+type TierAssurance struct {
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=32
+	Levels []AssuranceLevel `json:"levels,omitempty"`
+	// The level of a sign-in whose acr and amr match no entry: what this
+	// IdP's sign-in policy for S&V's client guarantees on its own (a local
+	// tier's only level).
+	// +kubebuilder:validation:Enum=AAL1;AAL2;AAL3
+	// +kubebuilder:default=AAL1
+	Default string `json:"default,omitempty"`
+}
+
+// +kubebuilder:validation:XValidation:rule="has(self.acr) != has(self.amr)",message="exactly one of acr or amr"
+type AssuranceLevel struct {
+	// The IdP's acr value, exactly (e.g. "aal2", "phr",
+	// "http://schemas.openid.net/pape/policies/2007/06/multi-factor").
+	// +kubebuilder:validation:MaxLength=256
+	ACR string `json:"acr,omitempty"`
+	// One amr value (RFC 8176, e.g. "mfa", "otp", "hwk").
+	// +kubebuilder:validation:MaxLength=64
+	AMR string `json:"amr,omitempty"`
+	// +kubebuilder:validation:Enum=AAL1;AAL2;AAL3
+	Level string `json:"level"`
+	// The authenticator resists phishing (FIDO2/WebAuthn, smart card): what
+	// AAL3 requires, and what a profile can require at any level.
+	PhishingResistant bool `json:"phishingResistant,omitempty"`
 }
 
 // +kubebuilder:validation:XValidation:rule="self.clientAuth == 'private_key_jwt' || has(self.clientSecretRef)",message="clientSecretRef is required unless clientAuth is private_key_jwt"
@@ -326,6 +387,33 @@ type TierStatus struct {
 	Message              string       `json:"message,omitempty"`
 	ConsecutiveFailures  int32        `json:"consecutiveFailures,omitempty"`
 	ConsecutiveSuccesses int32        `json:"consecutiveSuccesses,omitempty"`
+	// oidc tiers: S&V's registration at this IdP checked against what the
+	// IdP publishes, and whether it accepts the broker's callback. Run every
+	// 10 minutes, on every spec change, and when the instance's
+	// continuity.lab.solo.io/check-trust annotation changes. Informational:
+	// selection only ever follows the probes.
+	// +optional
+	Trust *TrustStatus `json:"trust,omitempty"`
+}
+
+type TrustStatus struct {
+	CheckedAt metav1.Time `json:"checkedAt"`
+	// The spec generation and check-trust annotation the checks ran for.
+	Generation int64  `json:"generation,omitempty"`
+	Requested  string `json:"requested,omitempty"`
+	// +listType=map
+	// +listMapKey=name
+	Checks []TrustCheck `json:"checks,omitempty"`
+}
+
+// TrustCheck is one property of S&V's registration at an IdP. Unknown: the
+// IdP doesn't publish what the check needs (many omit some discovery
+// fields), which is not a failure.
+type TrustCheck struct {
+	Name string `json:"name"`
+	// +kubebuilder:validation:Enum=Pass;Fail;Unknown
+	Result  string `json:"result"`
+	Message string `json:"message,omitempty"`
 }
 
 type Transition struct {

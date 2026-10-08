@@ -160,6 +160,20 @@ spec:
         # one of the firm's agent workloads (its worker pool's ServiceAccount),
         # acting for an advisor
         - 'source.identity.namespace == "sv-agents" && source.identity.serviceAccount in ["bob-assistant", "advisor-desk"] && "advisors" in jwt.groups'
+    # Workload profile advisor-workspace (05-workload-profiles.yaml): the
+    # assurance gate decides whether the IdP and sign-in behind Bob's token
+    # meet it, from the verified claims alone (never a header the caller
+    # could set). No answer from the gate, no request.
+    extAuth:
+      backendRef: {kind: Service, name: assurance-gate, namespace: sv-identity, port: 9001}
+      failureMode: FailClosed
+      grpc:
+        contextExtensions: {profile: advisor-workspace}
+        requestMetadata:
+          continuity: >-
+            {"iss": jwt.iss, "sub": jwt.sub, "idp": has(jwt.idp) ? jwt.idp : "",
+             "acr": has(jwt.idp_acr) ? jwt.idp_acr : "", "amr": has(jwt.idp_amr) ? jwt.idp_amr : "",
+             "auth_time": has(jwt.idp_auth_time) ? jwt.idp_auth_time : 0}
 ---
 apiVersion: ${AGW_POLICY_API}
 kind: ${AGW_POLICY_KIND}

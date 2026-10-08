@@ -61,10 +61,12 @@ export type Tier = {
   failoverWhen?: { unreachable?: boolean; serverError?: boolean; invalidDiscovery?: boolean; latencyAboveMs?: number }
   attributes?: AttributeMapping[]
   directory?: Directory
+  assurance?: TierAssurance
 }
 export type TierStatus = {
   name: string; type?: string; healthy?: boolean; configured?: boolean; partitioned?: boolean; latencyMs?: number
   lastProbe?: string; reason?: string; message?: string; redirectURI?: string; consecutiveFailures?: number; consecutiveSuccesses?: number
+  trust?: { checkedAt?: string; checks?: TrustCheck[] }
 }
 export type ContinuitySpec = {
   broker?: { keycloak?: { url?: string; realm?: string; credentialsRef?: { name: string } } }
@@ -74,6 +76,7 @@ export type ContinuitySpec = {
   failback?: 'Automatic' | 'Manual'
   profile?: Profile
   sync?: Sync
+  assurancePolicy?: AssurancePolicy
 }
 export type IdentityContinuity = {
   metadata: { name: string; namespace: string; resourceVersion?: string }
@@ -81,7 +84,11 @@ export type IdentityContinuity = {
   status?: { active?: string; activeSince?: string; broker?: { issuer?: string }; tiers?: TierStatus[]; transitions?: { time: string; from: string; to: string; reason: string }[]; sync?: SyncStatus }
 }
 export type SignInPath = { instance: string; name: string; hosts: string[]; entry?: string; broker: string; app: string; after: string[][] }
-export type ContinuityView = { items: IdentityContinuity[]; partitions: { tier: string; namespace: string; name: string; since?: string; by?: string; path?: string }[]; paths: SignInPath[] }
+export type ContinuityView = {
+  items: IdentityContinuity[]; partitions: { tier: string; namespace: string; name: string; since?: string; by?: string; path?: string }[]; paths: SignInPath[]
+  // each resource's assurance rules on its chain: met, or failed closed
+  profiles?: { namespace: string; name: string; continuity: string; phase?: string; mode?: string }[]
+}
 export type Me = { name: string; email?: string; groups: string[] }
 // Mirrors server/models.go: the AI gateway's model chain.
 // ollama (or another custom provider's override), openai, anthropic; other: a kind the editor doesn't write
@@ -237,3 +244,68 @@ export const putModelSecret = (ns: string, name: string, value: string) =>
 // Cuts (a simulated outage) or restores one provider of the chain.
 export const cutModel = (ns: string, name: string, provider: string, cut: boolean) =>
   api(`/api/models/${ns}/${name}/outage`, { method: 'POST', body: JSON.stringify({ provider, cut }) })
+
+// Mirrors server/assurance.go: the Assurance rules window. The default rule
+// is the chain's assurancePolicy; each rule is a WorkloadProfile
+// (apps/continuity); each IdP's assurance is its tier's. Levels, criticality,
+// sessions and modes are whatever the installed CRDs allow (schema).
+export type AssuranceLevel = { acr?: string; amr?: string; level: string; phishingResistant?: boolean }
+export type TierAssurance = { levels?: AssuranceLevel[]; default?: string }
+export type AssurancePolicy = {
+  minimum?: string; phishingResistant?: boolean; maxAge?: string; allowedIdPs?: string[]; allowBreakGlass?: boolean; sessions?: string
+}
+export type WorkloadRef = { namespace: string; serviceAccount: string }
+export type ProfileSpec = {
+  continuity: string; description?: string; criticality: string; mode?: string
+  obligations?: string[]; owner?: string; workloads?: WorkloadRef[]; clients?: string[]
+  allowedIdPs?: string[]; allowBreakGlass?: boolean; sessions?: string
+  assurance?: { minimum?: string; phishingResistant?: boolean; maxAge?: string }
+}
+export type TrustCheck = { name: string; result: 'Pass' | 'Fail' | 'Unknown'; message?: string }
+export type AssuranceIdP = {
+  name: string; displayName?: string; type: string; enabled: boolean; healthy: boolean; assurance?: TierAssurance; checkedAt?: string; checks?: TrustCheck[]
+}
+export type RuleSchema = {
+  criticality: string[]; levels: string[]; sessions: string[]; modes: string[]
+  defaults: { mode: string; minimum: string; sessions: string }
+}
+export type RuleObject = {
+  name: string; resourceVersion: string; spec: ProfileSpec
+  status?: { phase?: string; serving?: string; eligibleIdPs?: string[]; clients?: { clientID: string; found: boolean; assuranceScope: boolean }[]; conditions?: { type: string; status: string; message?: string }[] }
+}
+export type PolicyPoint = {
+  apiVersion: string; kind: string; namespace: string; name: string; resourceVersion: string; gateway?: string
+  rule: string | null; failureMode?: string; extAuth?: string; workloads?: WorkloadRef[]
+}
+export type Uncovered = { name: string; label: string; source: 'sso' | 'policyPoint'; ref: string; hosts?: string[]; workloads?: WorkloadRef[]; clients?: string[] }
+export type AssuranceView = {
+  namespace: string; name: string; resourceVersion: string; issuer?: string; realm?: string; active?: string
+  schema?: RuleSchema; schemaError?: string; gate?: { namespace: string; name: string; grpcPort: number; evaluatePort: number }
+  policy: AssurancePolicy; idps: AssuranceIdP[]; rules: RuleObject[]; policyPoints: PolicyPoint[]; uncovered: Uncovered[]
+  options: { workloads: string[]; clients: string[] }
+}
+export const getAssurance = (ns: string, name: string) => api<AssuranceView>(`/api/assurance/${ns}/${name}`)
+
+// The assurance gate's own answers (apps/continuity gate_evaluate.go).
+export type Reach = { idp: string; outcome: 'Admit' | 'Conditional' | 'Refuse'; via?: string; reason: string }
+export type EvalRule = {
+  name: string; mode: string; phase: string; eligible: string[]; idps: Reach[]
+  effective: { minimum: string; phishingResistant: boolean; maxAge?: string; allowedIdPs: string[]; allowBreakGlass: boolean; sessions: string }
+  session?: { decision: 'allow' | 'deny' | 'would-deny' | 'off'; status: number; reason: string; acrValues?: string; maxAge?: string }
+}
+export type Evaluation = { continuity: string; active?: string; idps: { name: string; ceiling: string; active?: boolean; disabled?: boolean }[]; rules: EvalRule[] }
+export type EvalDraft = { policy?: AssurancePolicy; tiers?: Record<string, TierAssurance | null>; rules?: Record<string, ProfileSpec | null> }
+export type EvalSession = { idp: string; acr?: string; amr?: string[]; authTime?: number }
+export const evaluate = (ns: string, name: string, draft?: EvalDraft, session?: EvalSession) =>
+  api<Evaluation>(`/api/assurance/${ns}/${name}/evaluate`, { method: 'POST', body: JSON.stringify({ draft, session }) })
+
+// A rule: an update at the resourceVersion it was read at (409 if changed
+// since), or a new rule without one.
+export const putProfile = (ns: string, name: string, resourceVersion: string | undefined, spec: ProfileSpec) =>
+  api<{ metadata: { resourceVersion: string } }>(`/api/assurance/${ns}/profiles/${name}`, { method: 'PUT', body: JSON.stringify({ resourceVersion: resourceVersion ?? '', spec }) })
+export const deleteProfile = (ns: string, name: string) => api(`/api/assurance/${ns}/profiles/${name}`, { method: 'DELETE', body: '{}' })
+// A gateway policy asks the gate for a rule ("" the default rule), or no
+// longer asks it (null).
+export const putPolicyPoint = (ns: string, name: string, p: PolicyPoint, rule: string | null) =>
+  api<{ resourceVersion: string }>(`/api/assurance/${ns}/${name}/policy-points/${p.namespace}/${p.name}`, { method: 'PUT', body: JSON.stringify({ kind: p.kind, resourceVersion: p.resourceVersion, rule }) })
+export const checkTrust = (ns: string, name: string) => api(`/api/continuity/${ns}/${name}/check-trust`, { method: 'POST', body: '{}' })

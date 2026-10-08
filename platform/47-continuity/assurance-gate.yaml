@@ -1,0 +1,175 @@
+# The assurance gate: the decision service workloads' policy points ask, for
+# each request, whether the workload profile they enforce admits the session
+# behind the verified token (apps/continuity gate). It holds no secrets and
+# calls no IdP: it watches the profiles and the chain and decides from what it
+# last saw, so a failover reaches it as it happens, and an IdP outage, a
+# broker outage or an API server blip never takes it down. Replicated; a
+# policy point that can't reach it fails closed (the admission policy below
+# holds every policy to that).
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: assurance-gate, namespace: sv-identity}
+---
+# the profiles and the chain, watched, read only
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: assurance-gate, namespace: sv-identity}
+rules:
+- apiGroups: [continuity.lab.solo.io]
+  resources: [workloadprofiles, identitycontinuities]
+  verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: assurance-gate, namespace: sv-identity}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: assurance-gate}
+subjects: [{kind: ServiceAccount, name: assurance-gate, namespace: sv-identity}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: assurance-gate
+  namespace: sv-identity
+  labels: {app: assurance-gate}
+spec:
+  replicas: 3
+  selector: {matchLabels: {app: assurance-gate}}
+  template:
+    metadata:
+      labels: {app: assurance-gate}
+    spec:
+      serviceAccountName: assurance-gate
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector: {matchLabels: {app: assurance-gate}}
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector: {matchLabels: {app: assurance-gate}}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+      - name: gate
+        image: ${CONTINUITY_IMAGE}
+        args: [gate]
+        env:
+        - name: POD_NAMESPACE
+          valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+        ports:
+        - {name: grpc, containerPort: 9001}
+        - {name: evaluate, containerPort: 9002}
+        - {name: health, containerPort: 8081}
+        readinessProbe:
+          httpGet: {path: /healthz, port: health}
+        livenessProbe:
+          grpc: {port: 9001}
+        resources:
+          requests: {cpu: 10m, memory: 24Mi}
+          limits: {memory: 64Mi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: [ALL]}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: assurance-gate, namespace: sv-identity}
+spec:
+  minAvailable: 2
+  selector: {matchLabels: {app: assurance-gate}}
+---
+# The label is how the Observatory finds a gate, whatever it's called: a
+# policy whose extAuth names this Service asks it, and its evaluate port is
+# where the Observatory asks what the rules decide.
+apiVersion: v1
+kind: Service
+metadata:
+  name: assurance-gate
+  namespace: sv-identity
+  labels: {continuity.lab.solo.io/assurance-gate: "true"}
+spec:
+  selector: {app: assurance-gate}
+  ports:
+  - {name: grpc, port: 9001, targetPort: grpc, appProtocol: kubernetes.io/h2c}
+  - {name: evaluate, port: 9002, targetPort: evaluate, appProtocol: http}
+---
+# Who may ask it (sv-identity is default-deny): S&V's gateways, on its gRPC
+# port, and the Observatory, on the evaluate port. An admin turning
+# enforcement on at another gateway's policy from the Observatory adds a
+# policy of its own beside this one (labelled
+# continuity.lab.solo.io/assurance-gate-caller).
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: assurance-gate-callers, namespace: sv-identity}
+spec:
+  selector: {matchLabels: {app: assurance-gate}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/agentgateway-system/sa/ai-gateway
+        - cluster.local/ns/sv-mcp/sa/mcp-waypoint
+    to: [{operation: {ports: ["9001"]}}]
+  - from:
+    - source:
+        principals: [cluster.local/ns/observatory/sa/observatory]
+    to: [{operation: {ports: ["9002"]}}]
+---
+# The identity team lets S&V's gateways' policies name it. Enforcement turned
+# on in another namespace from the Observatory adds a grant of its own (same
+# label as above).
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata: {name: gateways-to-assurance-gate, namespace: sv-identity}
+spec:
+  from:
+  - {group: ${AGW_POLICY_GROUP}, kind: ${AGW_POLICY_KIND}, namespace: sv-mcp}
+  - {group: ${AGW_POLICY_GROUP}, kind: ${AGW_POLICY_KIND}, namespace: agentgateway-system}
+  to: [{group: "", kind: Service, name: assurance-gate}]
+---
+# A policy that sends requests to an assurance gate fails closed: if the gate
+# can't be asked, the request is refused, never let through. A gate is any
+# Service labelled continuity.lab.solo.io/assurance-gate, whatever it's called
+# (each one is a parameter of this policy, through the binding's selector).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: {name: assurance-gate-fail-closed}
+spec:
+  failurePolicy: Fail
+  paramKind: {apiVersion: v1, kind: Service}
+  matchConstraints:
+    resourceRules:
+    - {apiGroups: [agentgateway.dev, enterpriseagentgateway.solo.io], apiVersions: ["*"], operations: [CREATE, UPDATE],
+       resources: [agentgatewaypolicies, enterpriseagentgatewaypolicies]}
+  variables:
+  - name: ext
+    expression: "object.spec.?traffic.?extAuth"
+  - name: policies
+    expression: >-
+      variables.ext.hasValue() ? (has(variables.ext.value().conditional)
+        ? variables.ext.value().conditional.map(c, c.policy) : [variables.ext.value()]) : []
+  validations:
+  - expression: >-
+      variables.policies.all(p,
+        p.?backendRef.?kind.orValue('Service') != 'Service'
+        || p.?backendRef.?name.orValue('') != params.metadata.name
+        || p.?backendRef.?namespace.orValue(object.metadata.namespace) != params.metadata.namespace
+        || p.?failureMode.orValue('FailClosed') == 'FailClosed')
+    messageExpression: >-
+      'a policy that asks the assurance gate ' + params.metadata.namespace + '/' + params.metadata.name
+        + ' fails closed (extAuth.failureMode FailClosed)'
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: {name: assurance-gate-fail-closed}
+spec:
+  policyName: assurance-gate-fail-closed
+  validationActions: [Deny]
+  paramRef:
+    namespace: sv-identity
+    selector: {matchLabels: {continuity.lab.solo.io/assurance-gate: "true"}}
+    parameterNotFoundAction: Allow

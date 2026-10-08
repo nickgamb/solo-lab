@@ -34,6 +34,7 @@ var watched = []schema.GroupVersionResource{
 	{Group: "gateway.kgateway.dev", Version: "v1alpha1", Resource: "trafficpolicies"},
 	{Group: "agentgateway.dev", Version: "v1alpha1", Resource: "agentgatewaybackends"},
 	{Group: "agentgateway.dev", Version: "v1alpha1", Resource: "agentgatewaypolicies"},
+	{Group: "enterpriseagentgateway.solo.io", Version: "v1alpha1", Resource: "enterpriseagentgatewaypolicies"},
 	{Group: "kagent.dev", Version: "v1alpha2", Resource: "agents"},
 	{Group: "kagent.dev", Version: "v1alpha2", Resource: "sandboxagents"},
 	{Group: "kagent.dev", Version: "v1alpha2", Resource: "remotemcpservers"},
@@ -46,6 +47,7 @@ var watched = []schema.GroupVersionResource{
 	{Group: "security.istio.io", Version: "v1", Resource: "requestauthentications"},
 	{Group: "postgresql.cnpg.io", Version: "v1", Resource: "clusters"},
 	{Group: "continuity.lab.solo.io", Version: "v1alpha1", Resource: "identitycontinuities"},
+	{Group: "continuity.lab.solo.io", Version: "v1alpha1", Resource: "workloadprofiles"},
 }
 
 type Kube struct {

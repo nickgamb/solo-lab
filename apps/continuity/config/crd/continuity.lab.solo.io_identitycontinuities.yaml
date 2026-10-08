@@ -54,6 +54,41 @@ spec:
             type: object
           spec:
             properties:
+              assurancePolicy:
+                default: {}
+                description: |-
+                  The assurance rules every WorkloadProfile following this chain has,
+                  unless it sets its own.
+                properties:
+                  allowBreakGlass:
+                    description: The broker's break-glass accounts may reach workloads.
+                    type: boolean
+                  allowedIdPs:
+                    description: 'The chain''s IdPs that may vouch for a session.
+                      Empty: every upstream.'
+                    items:
+                      type: string
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-type: set
+                  maxAge:
+                    type: string
+                  minimum:
+                    default: AAL1
+                    enum:
+                    - AAL1
+                    - AAL2
+                    - AAL3
+                    type: string
+                  phishingResistant:
+                    type: boolean
+                  sessions:
+                    default: Any
+                    enum:
+                    - Any
+                    - ActiveIdPOnly
+                    type: string
+                type: object
               broker:
                 properties:
                   keycloak:
@@ -238,6 +273,57 @@ spec:
                 description: 'Ordered: the first eligible, healthy tier is active.'
                 items:
                   properties:
+                    assurance:
+                      description: |-
+                        What a sign-in through this IdP proves, for workload profiles that
+                        require an assurance level. Unset: every sign-in counts as AAL1.
+                      properties:
+                        default:
+                          default: AAL1
+                          description: |-
+                            The level of a sign-in whose acr and amr match no entry: what this
+                            IdP's sign-in policy for S&V's client guarantees on its own (a local
+                            tier's only level).
+                          enum:
+                          - AAL1
+                          - AAL2
+                          - AAL3
+                          type: string
+                        levels:
+                          items:
+                            properties:
+                              acr:
+                                description: |-
+                                  The IdP's acr value, exactly (e.g. "aal2", "phr",
+                                  "http://schemas.openid.net/pape/policies/2007/06/multi-factor").
+                                maxLength: 256
+                                type: string
+                              amr:
+                                description: One amr value (RFC 8176, e.g. "mfa",
+                                  "otp", "hwk").
+                                maxLength: 64
+                                type: string
+                              level:
+                                enum:
+                                - AAL1
+                                - AAL2
+                                - AAL3
+                                type: string
+                              phishingResistant:
+                                description: |-
+                                  The authenticator resists phishing (FIDO2/WebAuthn, smart card): what
+                                  AAL3 requires, and what a profile can require at any level.
+                                type: boolean
+                            required:
+                            - level
+                            type: object
+                            x-kubernetes-validations:
+                            - message: exactly one of acr or amr
+                              rule: has(self.acr) != has(self.amr)
+                          maxItems: 32
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      type: object
                     attributes:
                       description: |-
                         This IdP's attributes, paired with the broker's profile for the
@@ -620,6 +706,52 @@ spec:
                         oidc tiers: the callback the upstream client must allow,
                         <broker issuer>/broker/<name>/endpoint.
                       type: string
+                    trust:
+                      description: |-
+                        oidc tiers: S&V's registration at this IdP checked against what the
+                        IdP publishes, and whether it accepts the broker's callback. Run every
+                        10 minutes, on every spec change, and when the instance's
+                        continuity.lab.solo.io/check-trust annotation changes. Informational:
+                        selection only ever follows the probes.
+                      properties:
+                        checkedAt:
+                          format: date-time
+                          type: string
+                        checks:
+                          items:
+                            description: |-
+                              TrustCheck is one property of S&V's registration at an IdP. Unknown: the
+                              IdP doesn't publish what the check needs (many omit some discovery
+                              fields), which is not a failure.
+                            properties:
+                              message:
+                                type: string
+                              name:
+                                type: string
+                              result:
+                                enum:
+                                - Pass
+                                - Fail
+                                - Unknown
+                                type: string
+                            required:
+                            - name
+                            - result
+                            type: object
+                          type: array
+                          x-kubernetes-list-map-keys:
+                          - name
+                          x-kubernetes-list-type: map
+                        generation:
+                          description: The spec generation and check-trust annotation
+                            the checks ran for.
+                          format: int64
+                          type: integer
+                        requested:
+                          type: string
+                      required:
+                      - checkedAt
+                      type: object
                     type:
                       type: string
                   required:

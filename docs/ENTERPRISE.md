@@ -38,7 +38,10 @@ Both editions run the rest of the lab the same way: MCP federation and
 per-tool authorization, token exchange and Cross App Access toward tools
 (the lab's `xaa-relay` and `idtoken-exchange` serve its brokered identity
 continuity, on either edition), prompt guards, provider failover, cost per
-call, API keys and format translation, and MCP guardrails.
+call, API keys and format translation, and MCP guardrails. Assurance rules
+and the assurance gate are the lab's own too: agentgateway's `extAuth` asks
+the gate on both editions (`AgentgatewayPolicy` or
+`EnterpriseAgentgatewayPolicy`).
 
 Solo Enterprise also offers, per Solo's pages, and this lab doesn't show yet:
 
@@ -78,7 +81,7 @@ does with a key it doesn't accept:
 | --- | --- | --- |
 | [Istio](https://docs.solo.io/istio/) | upstream 1.31.1 | Solo Enterprise for Istio `1.31.1-solo` |
 | [kgateway](https://docs.solo.io/kgateway/) | 2.4.5, GatewayClass `kgateway` | Solo Enterprise for kgateway 2.3.5, `enterprise-kgateway` |
-| [agentgateway](https://docs.solo.io/agentgateway/) | 1.5.0, `agentgateway` | Solo Enterprise for agentgateway v2026.9.2, `enterprise-agentgateway` |
+| [agentgateway](https://docs.solo.io/agentgateway/) | 1.6.0, `agentgateway` | Solo Enterprise for agentgateway v2026.9.2, `enterprise-agentgateway` |
 | [kagent](https://docs.solo.io/kagent/) | 0.10.2 + `tools/kagent` | Solo Enterprise for kagent 0.5.9 + `tools/kagent`'s Go ADK |
 | [agentregistry](https://docs.solo.io/agentregistry/) | 0.4.0, behind edge SSO | agentregistry-enterprise 2026.9.0, its own sign-in |
 

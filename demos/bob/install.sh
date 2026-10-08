@@ -64,4 +64,4 @@ for a in meeting-prep market-brief compliance-check; do
   wait_for "$a Ready" 60 5 K wait "sandboxagent/$a" -n sv-agents --for=condition=Ready --timeout=2s
 done
 ok "advisor desk (sv-agents/sa/advisor-desk): meeting-prep, market-brief, compliance-check"
-ok "sign in at https://kagent.$SV_DOMAIN as bob / bob-demo, chat with sv-agents/bob-assistant"
+ok "sign in at https://kagent.$SV_DOMAIN as bob / bob-demo (and make totp at S&V's own Keycloak), chat with sv-agents/bob-assistant"

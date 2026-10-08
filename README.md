@@ -93,14 +93,15 @@ workers in zones a, b and c). The full lab uses about 17 GB of memory.
 
 | URL | What | Sign in |
 | --- | --- | --- |
-| https://observatory.ops.lab | Observatory: topology, traffic, identity continuity | `ops` / `ops-demo` |
+| https://observatory.ops.lab | Observatory: topology, traffic, identity and model continuity | `ops` / `ops-demo` |
 | https://kagent.sterling.lab | kagent, where Bob's agents run | Bob at S&V's active IdP: Auth0 (`bob@sterling.lab`, your password) or S&V's own Keycloak (`bob` / `bob-demo`) |
 | https://registry.sterling.lab | agentregistry | S&V sign-in, as for kagent |
 | https://portal.alice.lab | Alice's portal (her grants and terms) | `alice` / `alice-demo` |
 | https://grafana.ops.lab | Grafana | `ops` / `ops-demo` |
 | https://kiali.ops.lab | Kiali mesh graph (view-only) | `ops` / `ops-demo` |
 | https://idp.sterling.lab/realms/sterling-vance/account | S&V broker account: sign-in through S&V's active IdP | S&V sign-in, as for kagent |
-| https://login.sterling.lab/realms/workforce/account | S&V's own Keycloak (an IdP in `ENTERPRISE_IDP`): a user's own account | `bob` / `bob-demo` |
+| https://login.sterling.lab/realms/workforce/account | S&V's own Keycloak (an IdP in `ENTERPRISE_IDP`): a user's own account | `bob` / `bob-demo`, then the code from `make totp` |
+| https://login-dr.sterling.lab/realms/contingency/account | S&V's contingency IdP (password only, after S&V's own Keycloak in `ENTERPRISE_IDP`) | `bob` / `bob-demo` |
 | https://llm.sterling.lab/v1 | the firm's model route for developers: OpenAI chat completions or Anthropic messages | API key `LLM_API_KEY` in `.lab/secrets.env` (docs/COMMANDS.md) |
 
 APIs on the edge, for agents and the checks rather than browsers:
@@ -135,6 +136,7 @@ Open it in a browser (`open docs/cards/<card>.html` on macOS, `xdg-open` on Linu
 | [Bob to Alice](docs/cards/bob-to-alice.html) | the same agent asks Alice for her data on her terms (UMA for agents) | `make alice-verify` |
 | [Observatory tour](docs/cards/observatory.html) | every story end to end from one command, watched live: the agent waking, verified tokens per hop, refusals, Alice's terms, an IdP outage | `make tour` |
 | [Identity continuity](docs/cards/identity-continuity.html) | a real network outage of the active IdP, automatic failover to the next one, and failback, live in the Observatory | `make continuity-verify` |
+| [Assurance rules](docs/cards/assurance.html) | what each workload needs a sign-in to prove, through failover to an IdP that proves less: the rules, what-if, report-only, and failing closed | `make bob-verify` |
 | [Gluu](docs/cards/gluu.html) (experimental) | Bob signs in with a passkey at Gluu, his agent reaches Ledgerline as him: Gluu vouches (ID-JAG), Ledgerline's Gluu redeems it, every hop checked and logged | `make bob-verify` |
 
 `make reset` rewinds every demo without a rebuild. The identity continuity
@@ -153,7 +155,7 @@ different lab renders the same way.
 - **Traffic:** every gateway's access log, with the verified token claims on
   each request.
 - **Identity Continuity:** the sign-in chain, the outage button, the rule
-  builder, and the directory sync.
+  builder, the directory sync, and the assurance rules.
 
 ![Identity Continuity: Auth0 signing people in through the S&V egress, S&V's own Keycloak as the failover, the rule builder on the right](docs/images/observatory-continuity-connected.jpg)
 
@@ -166,6 +168,15 @@ then writes that profile to every failover IdP, creating the users the
 primary has. Each IdP's attributes are detected from its directory and wired
 to S&V's on a canvas; the same mapping is editable as JSON, and the sync runs
 on a schedule or on demand.
+
+Failing over must not lower what a sign-in proves. The broker carries how
+each IdP authenticated the user (its `acr`, `amr` and `auth_time`), and
+assurance rules say what each resource requires: here Bob's
+workspace and Ledgerline need a second factor (AAL2), which S&V's own
+Keycloak asks for and its contingency IdP doesn't. Fail over to the
+contingency IdP and those requests are refused at their gateways (fail
+closed), while the kagent console keeps working. The broker never steps
+anyone up itself.
 
 ![Directory sync: each IdP's detected attributes wired to S&V's profile; the primary is read, the failovers are written](docs/images/observatory-directory-sync-canvas.jpg)
 
@@ -185,7 +196,7 @@ See [docs/OBSERVATORY.md](docs/OBSERVATORY.md).
 | `LLM_FALLBACK`, `LLM_FALLBACK_MODEL` | a second provider (and model) the gateway fails over to; apply with `make llm` |
 | `OLLAMA_MODEL`, `OLLAMA_URL` | the local model and where the cluster reaches it |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL` | hosted models (held by agentgateway only) |
-| `ENTERPRISE_IDP` | S&V's IdPs in failover order (`okta`, `auth0`, `gluu`, `keycloak`; default `auth0,keycloak`): who signs Bob in and, for an IdP that issues ID-JAGs, who vouches for him to Ledgerline; the broker vouches otherwise |
+| `ENTERPRISE_IDP` | S&V's IdPs in failover order (`okta`, `auth0`, `gluu`, `keycloak`, `contingency`; default `auth0,keycloak,contingency`): who signs Bob in and, for an IdP that issues ID-JAGs, who vouches for him to Ledgerline; the broker vouches otherwise |
 | `RESOURCE_AS`, `RESOURCE_AS_ISSUER` | Ledgerline's authorization server: `keycloak` (default) or `gluu` |
 | `AUTH0_ISSUER`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | the auth0 IdP (your Auth0 tenant); left out without an issuer |
 | `AUTH0_DIRECTORY_CLIENT_ID`, `AUTH0_DIRECTORY_CLIENT_SECRET` | Auth0's Management API, for the directory sync |
@@ -193,6 +204,7 @@ See [docs/OBSERVATORY.md](docs/OBSERVATORY.md).
 | `OKTA_ISSUER`, `OKTA_CLIENT_ID` | the okta IdP; the broker vouches for its users |
 | `GLUU_ISSUER`, `GLUU_CLIENT_ID` | the gluu IdP, authenticated with S&V's keys ([GLUU.md](docs/GLUU.md)) |
 | `KEYCLOAK_ISSUER`, `KEYCLOAK_CLIENT_ID` | the keycloak IdP; default S&V's own at `login.sterling.lab` |
+| `CONTINGENCY_ISSUER`, `CONTINGENCY_CLIENT_ID` | the contingency IdP; default S&V's own at `login-dr.sterling.lab` |
 | `<NAME>_CLIENT_SECRET` | optional per IdP; without it S&V authenticates with its keys (`make xaa-keys`) |
 | `EDITION`, `<PRODUCT>_EDITION`, `SOLO_LICENSE_KEY` | Solo Enterprise, all products or one at a time |
 | `SOLO_<PRODUCT>_LICENSE_KEY` | a licence for one product, in place of `SOLO_LICENSE_KEY` |
@@ -239,7 +251,7 @@ scripts/         cluster lifecycle, DNS, CA, machine setup, preflight, helpers (
 platform/NN-*/   one install.sh per layer, applied in order by make platform
 demos/           each story: install.sh, verify.sh, manifests, agents, tools
 apps/observatory Observatory: Go server (server/) and React UI (web/)
-apps/continuity  IdentityContinuity CRD, controller and directory sync
+apps/continuity  IdentityContinuity and WorkloadProfile CRDs, controller, directory sync, assurance gate
 apps/idtoken-exchange, apps/xaa-relay
                  Cross App Access at S&V's egress (ID token, ID-JAG relay and checks)
 tools/           patched upstream builds (kagent, Substrate, Keycloak), the probe
@@ -256,8 +268,8 @@ Layers:
 | `20-observability` | kube-prometheus-stack, Tempo, OTel collector, Kiali |
 | `30-kgateway` | the edge: per-party TLS listeners on NodePorts 30080/30443 |
 | `40-agentgateway` | ai-gateway: LLM backend, MCP |
-| `45-identity` | S&V's mesh baseline, S&V's broker (Keycloak, `idp.sterling.lab`), S&V's own Keycloak (`login.sterling.lab`, realm `workforce`), client secrets for S&V components |
-| `47-continuity` | IdentityContinuity CRD and controller, the directory sync, S&V egress waypoint |
+| `45-identity` | S&V's mesh baseline, S&V's broker (Keycloak, `idp.sterling.lab`), S&V's own Keycloak (`login.sterling.lab`, realm `workforce`), its contingency IdP (`login-dr.sterling.lab`), client secrets for S&V components |
+| `47-continuity` | IdentityContinuity and WorkloadProfile CRDs and controller, the directory sync, the assurance gate, S&V egress waypoint |
 | `50-substrate` | Agent Substrate (patched), in the mesh |
 | `60-kagent` | kagent + kmcp (patched), ops agents on Substrate, edge SSO |
 | `70-agentregistry` | agentregistry behind S&V SSO |
@@ -273,6 +285,6 @@ Layers:
 | [COMMANDS.md](docs/COMMANDS.md) | terminal commands for every part of the running lab: cluster, mesh, gateways, identity, agents, observability |
 | [IDENTITY-FLOWS.md](docs/IDENTITY-FLOWS.md) | acting for a user (RFC 8693 token exchange), Cross App Access (ID-JAG), UMA for agents: every hop, policy and check |
 | [OBSERVATORY.md](docs/OBSERVATORY.md) | using the Observatory, how it derives the map, access model, local development |
-| [IDENTITY-CONTINUITY.md](docs/IDENTITY-CONTINUITY.md) | the IdP chain and break-glass, the IdentityContinuity API and controller, the directory sync, Auth0/Okta/S&V Keycloak setup, the kill switch |
+| [IDENTITY-CONTINUITY.md](docs/IDENTITY-CONTINUITY.md) | the IdP chain and break-glass, the IdentityContinuity API and controller, the directory sync, assurance, trust across IdPs, assurance rules and the gate, Auth0/Okta/S&V Keycloak setup, the kill switch |
 | [ENTERPRISE.md](docs/ENTERPRISE.md) | switching products to Solo Enterprise |
 | [GLUU.md](docs/GLUU.md) | Gluu (experimental) as S&V's enterprise IdP and Ledgerline's authorization server: settings, registration, logs, roadmap |

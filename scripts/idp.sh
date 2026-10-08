@@ -5,14 +5,15 @@
 #
 #   ENTERPRISE_IDP  S&V's IdPs, in failover order, each brokered by S&V's
 #                   Keycloak (the broker). Each needs <NAME>_ISSUER and
-#                   <NAME>_CLIENT_ID (keycloak's default to S&V's own, layer
-#                   45), and <NAME>_CLIENT_SECRET unless S&V uses its keys.
+#                   <NAME>_CLIENT_ID (keycloak's and contingency's default to
+#                   S&V's own, layer 45), and <NAME>_CLIENT_SECRET unless S&V
+#                   uses its keys.
 #   ID-JAG          Bob's ID-JAG comes from the IdP he signed in with when it
 #                   issues them (gluu, keycloak); for one that doesn't
 #                   (okta, auth0), the broker vouches for that sign-in.
 #   RESOURCE_AS     keycloak (Ledgerline's own) or gluu (RESOURCE_AS_ISSUER).
 
-IDP_UPSTREAMS="okta auth0 gluu keycloak"  # brokered by S&V's Keycloak
+IDP_UPSTREAMS="okta auth0 gluu keycloak contingency"  # brokered by S&V's Keycloak
 IDP_ISSUES_IDJAG="gluu keycloak"          # upstreams that issue ID-JAGs
 SV_ISSUER="https://idp.$SV_DOMAIN/realms/sterling-vance"
 SV_CLIENT_AT_LEDGERLINE=sterling-vance-kagent
@@ -162,6 +163,15 @@ sv_upstream_client_jwks() {
 # workforce_realm <realm.json>: S&V's workforce IdP, with S&V's client keys
 workforce_realm() {
   jq --arg jwks "$(sv_upstream_client_jwks | jq -c .)" \
+    '(.clients[] | select(.clientId == "sterling-vance-broker") | .attributes["jwks.string"]) = $jwks' "$1"
+}
+
+# contingency_realm <realm.json>: S&V's contingency IdP, with the broker's key
+# (it vouches for no one, so the egress's key isn't there)
+contingency_realm() {
+  local certs
+  certs=$(curl -sf --cacert "$LAB_CA_DIR/ca.crt" "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/certs") || die "no JWKS from S&V's Keycloak"
+  jq --arg jwks "$(echo "$certs" | jq -c '{keys: [.keys[] | select(.use == "sig" and .alg == "PS256")]}')" \
     '(.clients[] | select(.clientId == "sterling-vance-broker") | .attributes["jwks.string"]) = $jwks' "$1"
 }
 
