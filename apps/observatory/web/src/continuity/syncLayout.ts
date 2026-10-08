@@ -25,3 +25,12 @@ export function idpPositions(rows: number[]): { x: number; y: number }[] {
     return p
   })
 }
+
+// the profile, level with the middle of the IdPs' stack, so each IdP's wires
+// reach it at about the same slope
+const profileHeight = (rows: number) => 64 + (Math.max(rows, 1) + 1) * ROW
+export function profilePosition(idpRows: number[], attrs: number): { x: number; y: number } {
+  const stack = idpPositions(idpRows)
+  const bottom = stack.length ? stack[stack.length - 1].y + idpHeight(idpRows[idpRows.length - 1]) : 0
+  return { x: 0, y: Math.max(0, Math.round(bottom / 2 - profileHeight(attrs) / 2)) }
+}

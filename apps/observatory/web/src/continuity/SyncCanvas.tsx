@@ -6,7 +6,7 @@ import '@xyflow/react/dist/style.css'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { BUILTIN_ATTRIBUTES, type AttributeType, type ContinuitySpec, type IdentityContinuity } from '../api'
 import { useSync } from './syncContext'
-import { IDP_W, PROFILE_W, idpColor, idpPositions } from './syncLayout'
+import { IDP_W, PROFILE_W, idpColor, idpPositions, profilePosition } from './syncLayout'
 import { IdpNode, MappingEdge, ProfileNode, type AttrRow, type IdpData, type MapEdgeData, type PathRow, type ProfileData } from './SyncNodes'
 
 type XY = { x: number; y: number }
@@ -54,7 +54,7 @@ function Canvas({ ic, spec, schemas, pending, positions, onMap }: Props) {
       ...[...new Set(orphans)].map(name => ({ name, builtin: false, declared: false, type: 'string' as AttributeType })),
     ]
     const profile: ProfileData = { title: `${ic.spec.broker?.keycloak?.realm || ic.metadata.name} profile`, issuer: ic.status?.broker?.issuer, attrs }
-    nodes.push({ id: 'profile', type: 'profile', position: positions.get('profile') ?? { x: 0, y: 0 }, data: profile, deletable: false, style: { width: PROFILE_W } })
+    nodes.push({ id: 'profile', type: 'profile', position: positions.get('profile') ?? profilePosition(data.map(d => d.paths.length), attrs.length), data: profile, deletable: false, style: { width: PROFILE_W } })
     const edges: Edge[] = idps.flatMap((t, k) => (t.attributes ?? []).map(m => {
       const id = edgeId(t.name, m.attribute)
       const d: MapEdgeData = { idp: t.name, path: m.path, attribute: m.attribute, color: idpColor(k) }
