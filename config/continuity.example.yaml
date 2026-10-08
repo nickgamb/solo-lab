@@ -22,5 +22,8 @@ tiers:
   keycloak:
     attributes:
     - {attribute: department, path: department}
+  contingency:
+    attributes:
+    - {attribute: department, path: department}
 # The scheduled directory sync (optional; without it, run it on demand).
 # sync: {schedule: "0 * * * *", suspend: false}

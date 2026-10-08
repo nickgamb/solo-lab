@@ -286,6 +286,11 @@ spec:
     - {attribute: department, path: department}
     directory: {type: keycloak, url: http://keycloak.sv-workforce.svc/admin/realms/workforce,
       credentialsRef: {name: directory-keycloak}}
+  - name: contingency                # failover: written
+    attributes:
+    - {attribute: department, path: department}
+    directory: {type: keycloak, url: http://keycloak.sv-contingency.svc/admin/realms/contingency,
+      credentialsRef: {name: directory-contingency}}
 ```
 
 | Directory | Client | Paths |
@@ -732,7 +737,9 @@ down: layer 45 installs a Keycloak in `sv-contingency` at
 `https://login-dr.sterling.lab`, realm `contingency`, with its own accounts
 for the employees (`bob` / `bob-demo`, `carol` / `carol-demo`) and a password
 only (`acr aal1`). S&V's client there (`sterling-vance-broker`) takes the
-broker's key. It is in its own namespace, so cutting S&V's own Keycloak
+broker's key, and its directory (`continuity-directory`, users' profiles only,
+never a credential) is wired into the directory sync as a failover, so the
+broker's users and their attributes reach it before it's needed. It is in its own namespace, so cutting S&V's own Keycloak
 leaves it up, and it is cut on its own (a DENY in `sv-contingency`). It
 doesn't issue ID-JAGs: the broker vouches for its sign-ins. Workloads that
 require more than a password fail closed while it signs people in.

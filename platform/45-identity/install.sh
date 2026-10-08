@@ -85,10 +85,12 @@ step "Sterling & Vance contingency IdP, Keycloak $KEYCLOAK_VERSION (sv-contingen
 # The IdP S&V keeps for when its own is down (contingency in ENTERPRISE_IDP):
 # its own accounts, password only (acr aal1), in its own namespace. Workloads
 # that need more than a password fail closed while it carries sign-ins
-# (docs/IDENTITY-CONTINUITY.md). S&V's client there takes the broker's key.
+# (docs/IDENTITY-CONTINUITY.md). S&V's client there takes the broker's key;
+# continuity-directory lets the profile sync keep its users current.
 secret_apply sv-contingency kc-secrets \
   KC_BOOTSTRAP_ADMIN_USERNAME=admin \
-  KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret SV_CONTINGENCY_KC_ADMIN_PASSWORD)"
+  KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret SV_CONTINGENCY_KC_ADMIN_PASSWORD)" \
+  SV_CONTINGENCY_DIRECTORY_SECRET="$(lab_secret SV_CONTINGENCY_DIRECTORY_SECRET)"
 contingency_realm "$D/realm-contingency.json" >"$LAB_STATE/realm/realm-contingency.json"
 KC_HOST=login-dr \
   deploy_keycloak sv-contingency "$SV_DOMAIN" https-sterling "$LAB_STATE/realm/realm-contingency.json"

@@ -202,8 +202,8 @@ within 15 cj_scheduled >/dev/null   # the controller applies spec.sync on its ne
 expect '^0 3 \* \* \* Etc/UTC true Forbid IdentityContinuity continuity-sync$' "schedule UTC, suspended, no overlap, owned by the instance, runs as continuity-sync" \
   "$(K get cronjob "$CJ" -n "$NS" -o jsonpath='{.spec.schedule} {.spec.timeZone} {.spec.suspend} {.spec.concurrencyPolicy} {.metadata.ownerReferences[0].kind} {.spec.jobTemplate.spec.template.spec.serviceAccountName}')"
 can() { K auth can-i get "secret/$2" -n "$NS" --as="system:serviceaccount:$NS:$1" 2>/dev/null; }
-expect '^no no yes yes$' "the sync reads only its Secrets and the directories': not the controller's or an IdP's client secret" \
-  "$(can continuity-sync continuity-controller) $(can continuity-sync upstream-auth0) $(can continuity-sync continuity-sync) $(can continuity-sync directory-keycloak)"
+expect '^no no yes yes yes$' "the sync reads only its Secrets and the directories': not the controller's or an IdP's client secret" \
+  "$(can continuity-sync continuity-controller) $(can continuity-sync upstream-auth0) $(can continuity-sync continuity-sync) $(can continuity-sync directory-keycloak) $(can continuity-sync directory-contingency)"
 expect '^no$' "the controller can't read a directory's credentials" "$(can continuity-controller directory-keycloak)"
 
 # Bob's department at the broker (as the sync's client) and at S&V's own

@@ -53,6 +53,9 @@ fi
 secret_apply sv-identity directory-keycloak \
   client-id=continuity-directory client-secret="$(lab_secret SV_WORKFORCE_DIRECTORY_SECRET)"
 credentials directory-keycloak
+secret_apply sv-identity directory-contingency \
+  client-id=continuity-directory client-secret="$(lab_secret SV_CONTINGENCY_DIRECTORY_SECRET)"
+credentials directory-contingency
 for n in $IDP_UPSTREAMS; do
   case " $CHAIN " in *" $n "*) ;; *) continue ;; esac
   N=$(echo "$n" | tr '[:lower:]' '[:upper:]')
@@ -106,8 +109,9 @@ ASSURANCE='{
 # issues ID-JAGs the broker keeps the user's tokens (storeTokens) so the
 # egress can have it vouch for them (docs/IDENTITY-FLOWS.md). No offline
 # access: the stored refresh token lives and dies with the user's session at
-# that IdP, so a logout there stops its ID-JAGs. S&V's own workforce IdP
-# comes with its directory and an attribute mapping, for the directory sync.
+# that IdP, so a logout there stops its ID-JAGs. S&V's own workforce and
+# contingency IdPs come with their directories and an attribute mapping, for
+# the directory sync.
 desired=$({ for n in $CHAIN; do
   store=false; if echo " $IDP_ISSUES_IDJAG " | grep -q " $n "; then store=true; fi
   dir=null
@@ -118,6 +122,10 @@ desired=$({ for n in $CHAIN; do
   fi
   if [ "$n" = keycloak ] && [ "$KEYCLOAK_ISSUER" = "https://login.$SV_DOMAIN/realms/workforce" ]; then
     dir='{"directory": {"type": "keycloak", "url": "http://keycloak.sv-workforce.svc/admin/realms/workforce", "credentialsRef": {"name": "directory-keycloak"}},
+      "attributes": [{"attribute": "email", "path": "email"}, {"attribute": "firstName", "path": "firstName"}, {"attribute": "lastName", "path": "lastName"}]}'
+  fi
+  if [ "$n" = contingency ] && [ "$CONTINGENCY_ISSUER" = "https://login-dr.$SV_DOMAIN/realms/contingency" ]; then
+    dir='{"directory": {"type": "keycloak", "url": "http://keycloak.sv-contingency.svc/admin/realms/contingency", "credentialsRef": {"name": "directory-contingency"}},
       "attributes": [{"attribute": "email", "path": "email"}, {"attribute": "firstName", "path": "firstName"}, {"attribute": "lastName", "path": "lastName"}]}'
   fi
   jq -nc --arg n "$n" --arg iss "$(_idp_var "$n" ISSUER)" --arg cid "$(_idp_var "$n" CLIENT_ID)" \
