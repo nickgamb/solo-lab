@@ -29,7 +29,7 @@ S&V's registration the way the broker uses it
 
 - API and controller: `apps/continuity` (`IdentityContinuity` and `WorkloadProfile`, `continuity.lab.solo.io/v1alpha1`; the assurance gate is its `gate` command)
 - Install: `platform/47-continuity` (`make layer-47`, after `45-identity`)
-- Demo card: [cards/identity-continuity.html](cards/identity-continuity.html)
+- Demo cards: [cards/identity-continuity.html](cards/identity-continuity.html) (failover), [cards/assurance.html](cards/assurance.html) (assurance rules)
 - Checks: `make continuity-verify`
 
 ```bash
@@ -561,7 +561,8 @@ It is built not to become what it protects against:
 
 The gate's Service carries the label `continuity.lab.solo.io/assurance-gate`,
 with ports named `grpc` and `evaluate`: that, not its name, is how the
-Observatory finds it.
+Observatory finds it, and how the admission policy knows which policies must
+fail closed (each labelled Service is one of its parameters).
 
 Changing the default rule or a rule changes the gate's next decision; no
 gateway policy is touched. A rule no gateway policy asks for isn't enforced,

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Identity Continuity Demo Card</title>
+<title>Assurance Rules Demo Card</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
@@ -12,8 +12,8 @@
 <body>
 <div class="wrap">
   <header class="masthead">
-    <h1>Identity Continuity Demo Card</h1>
-    <p class="standfirst">Take the firm's IdP off the network. Sign-in moves to the firm's next IdP, and nothing downstream notices. When the next IdP proves less than a workload needs: the Assurance rules card.</p>
+    <h1>Assurance Rules Demo Card</h1>
+    <p class="standfirst">Fail over to an IdP that proves less, and the workloads that need more fail closed, while the rest keep working. What each needs is a rule; the gate that enforces it also answers what it would decide.</p>
   </header>
   <section class="screens">
     <div class="screen left">
@@ -30,7 +30,6 @@
 
   <section class="setup">
     <h2>Pre-demo setup</h2>
-    <p class="setup-note">Needs an Auth0 tenant (free tier): <code>docs/IDENTITY-CONTINUITY.md</code>, Auth0 setup.</p>
     <div class="table-scroll">
       <table>
         <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
@@ -47,34 +46,18 @@
         <tr class="term">
           <td class="num">2</td>
           <td class="act">
-            <span class="where">Settings</span>
-            <div class="cmdwrap"><code class="cmd">cp .env.example .env</code></div>
-          </td>
-          <td class="say">Set <strong>AUTH0_ISSUER</strong>, <strong>AUTH0_CLIENT_ID</strong>, <strong>AUTH0_CLIENT_SECRET</strong>.</td>
-        </tr>
-        <tr class="term">
-          <td class="num">3</td>
-          <td class="act">
             <span class="where">Build the lab</span>
             <div class="cmdwrap"><code class="cmd">make up &amp;&amp; make verify</code></div>
           </td>
           <td class="say">Every layer and demo. Must end with <strong>all checks passed</strong>.</td>
         </tr>
-        <tr class="term">
-          <td class="num">4</td>
-          <td class="act">
-            <span class="where">Check</span>
-            <div class="cmdwrap"><code class="cmd">make status</code></div>
-          </td>
-          <td class="say">Sign-in: <strong>active: auth0</strong>.</td>
-        </tr>
         <tr class="port">
-          <td class="num">5</td>
+          <td class="num">3</td>
           <td class="act">
             <span class="where">Left screen</span>
             <span class="click"><strong>https://observatory.ops.lab</strong> as <strong>ops / ops-demo</strong>, then <strong>Identity Continuity</strong></span>
           </td>
-          <td class="say">Green banner: <strong>CONNECTED</strong>.</td>
+          <td class="say">If an IdP above <strong>Sterling &amp; Vance (Keycloak)</strong> is in the chain, drain it and Save: the firm's own Keycloak signs people in.</td>
         </tr>
         </tbody>
       </table>
@@ -82,11 +65,11 @@
     <div class="afters">
       <div class="after">
         <span class="after-label">Running it again</span>
-        <p><strong>Restore IdP network</strong> ends the outage.</p>
+        <p><strong>Restore IdP network</strong> ends the outage; set every rule back to <strong>Enforce</strong>.</p>
       </div>
       <div class="after">
         <span class="after-label">Unattended</span>
-        <p><code>make continuity-verify</code></p>
+        <p><code>make bob-verify</code></p>
       </div>
     </div>
   </section>
@@ -103,88 +86,110 @@
           <td class="num">1</td>
           <td class="act">
             <span class="where">Observatory</span>
-            <span class="click">Point at the map, left to right</span>
+            <span class="click">Rule builder: <strong>Assurance rules</strong></span>
           </td>
           <td class="say">
-            <span class="chip tier">One issuer</span>
-            <span class="lede">Every app trusts one issuer: the firm's broker.</span>
+            <span class="chip tier">Rules</span>
+            <span class="lede">What a sign-in must prove to reach each group of workloads, most critical first, and the default rule every rule starts from.</span>
           </td>
         </tr>
         <tr class="port">
           <td class="num">2</td>
           <td class="act">
-            <span class="where">Right screen</span>
-            <span class="click">Open kagent in a private window. On Auth0's page, sign in as <strong>bob@sterling.lab</strong></span>
+            <span class="where">Observatory</span>
+            <span class="click"><strong>advisor-workspace</strong>: Requirements, then <strong>Outcome by IdP</strong></span>
           </td>
           <td class="say">
-            <span class="chip through">Brokered</span>
-            <span class="lede">Auth0's login page, then kagent, as Bob.</span>
+            <span class="chip tier">From the gate</span>
+            <span class="lede">AAL2. The firm's Keycloak meets it with a one-time code; the contingency IdP never can. Those answers come from the gate that enforces them.</span>
           </td>
         </tr>
         <tr class="port">
           <td class="num">3</td>
           <td class="act">
             <span class="where">Observatory</span>
-            <span class="click">Click <span class="btn deny">Simulate IdP outage</span></span>
+            <span class="click"><strong>Enforced at</strong></span>
           </td>
           <td class="say">
-            <span class="chip refused">Network cut</span>
-            <span class="lede">This isn't a flag: it's a real network cut.</span>
+            <span class="chip refused">Fail closed</span>
+            <span class="lede">The gateway in front of Bob's workspace asks the gate on every call. No answer, no request.</span>
           </td>
         </tr>
         <tr class="port">
           <td class="num">4</td>
           <td class="act">
             <span class="where">Observatory</span>
-            <span class="click">Watch the banner for about ten seconds</span>
+            <span class="click"><strong>What if</strong>: the contingency IdP, acr <strong>aal1</strong>, <strong>Evaluate</strong></span>
           </td>
           <td class="say">
-            <span class="chip held">Failover</span>
-            <span class="lede">Amber, counting failed checks. Then red: FAILOVER ACTIVE.</span>
+            <span class="chip held">What if</span>
+            <span class="lede">A password-only sign-in: 401 at the workspace and at Ledgerline, with what to ask the IdP for. The console lets it in.</span>
           </td>
         </tr>
         <tr class="port">
           <td class="num">5</td>
           <td class="act">
             <span class="where">Right screen</span>
-            <span class="click">Open a new private window, open kagent, and sign in at the firm's own Keycloak as <strong>bob / bob-demo</strong>, then the code from <code>make totp</code></span>
+            <span class="click">Private window: kagent, sign in at the firm's Keycloak as <strong>bob / bob-demo</strong> with the code from <code>make totp</code>. Ask Bob's agent to list his clients</span>
           </td>
           <td class="say">
-            <span class="chip through">Still Bob</span>
-            <span class="lede">The next IdP's login page, and the same Bob.</span>
+            <span class="chip through">Allowed</span>
+            <span class="lede">A second factor, so AAL2: the workspace answers.</span>
           </td>
         </tr>
-        <tr class="term">
+        <tr class="port">
           <td class="num">6</td>
           <td class="act">
-            <span class="where">Terminal</span>
-            <div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab -n sv-egress get authorizationpolicy -L continuity.lab.solo.io/tier</code></div>
+            <span class="where">Observatory</span>
+            <span class="click">Identity Continuity: <span class="btn deny">Simulate IdP outage</span> on <strong>Sterling &amp; Vance (Keycloak)</strong></span>
           </td>
           <td class="say">
-            <span class="chip tier">Auditable</span>
-            <span class="lede">The whole outage is one policy: <code>continuity-partition-auth0</code>, DENY.</span>
+            <span class="chip held">Weaker IdP</span>
+            <span class="lede">Sign-in falls to the contingency IdP: a password, nothing more. The banner names the rules now failing closed.</span>
           </td>
         </tr>
         <tr class="port">
           <td class="num">7</td>
           <td class="act">
-            <span class="where">Observatory</span>
-            <span class="click">Click <span class="btn approve">Restore IdP network</span></span>
+            <span class="where">Right screen</span>
+            <span class="click">New private window: kagent as <strong>bob / bob-demo</strong> at the contingency IdP, then ask the agent again</span>
           </td>
           <td class="say">
-            <span class="chip held">Failback</span>
-            <span class="lede">Amber, counting healthy checks, then green again.</span>
+            <span class="chip refused">Refused</span>
+            <span class="lede">Signed in, but the workspace refuses a password-only session. Traffic shows the gate's reason.</span>
           </td>
         </tr>
         <tr class="port">
           <td class="num">8</td>
           <td class="act">
             <span class="where">Observatory</span>
-            <span class="click">Point at <strong>Transitions</strong> and the rule builder on the right</span>
+            <span class="click">Assurance rules: <strong>advisor-workspace</strong>, mode <strong>ReportOnly</strong>, Save. Ask the agent again</span>
           </td>
           <td class="say">
-            <span class="chip tier">Any IdP</span>
-            <span class="lede">The sequence was cut, failover, restore, failback, and every step is recorded.</span>
+            <span class="chip held">Report only</span>
+            <span class="lede">Let through, and Traffic shows <strong>would-deny</strong>: see a rule's effect before you enforce it.</span>
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">9</td>
+          <td class="act">
+            <span class="where">Observatory</span>
+            <span class="click">Mode back to <strong>Enforce</strong> and Save, then the <strong>Code</strong> tab</span>
+          </td>
+          <td class="say">
+            <span class="chip tier">As code</span>
+            <span class="lede">The same rules as HCL: the default, each IdP, each rule.</span>
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">10</td>
+          <td class="act">
+            <span class="where">Observatory</span>
+            <span class="click"><span class="btn approve">Restore IdP network</span>, then undrain what you drained and Save</span>
+          </td>
+          <td class="say">
+            <span class="chip through">Recovered</span>
+            <span class="lede">The broker never stepped anyone up. A stronger sign-in only ever comes from the IdP.</span>
           </td>
         </tr>
         </tbody>

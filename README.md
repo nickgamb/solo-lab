@@ -136,6 +136,7 @@ Open it in a browser (`open docs/cards/<card>.html` on macOS, `xdg-open` on Linu
 | [Bob to Alice](docs/cards/bob-to-alice.html) | the same agent asks Alice for her data on her terms (UMA for agents) | `make alice-verify` |
 | [Observatory tour](docs/cards/observatory.html) | every story end to end from one command, watched live: the agent waking, verified tokens per hop, refusals, Alice's terms, an IdP outage | `make tour` |
 | [Identity continuity](docs/cards/identity-continuity.html) | a real network outage of the active IdP, automatic failover to the next one, and failback, live in the Observatory | `make continuity-verify` |
+| [Assurance rules](docs/cards/assurance.html) | what each workload needs a sign-in to prove, through failover to an IdP that proves less: the rules, what-if, report-only, and failing closed | `make bob-verify` |
 | [Gluu](docs/cards/gluu.html) (experimental) | Bob signs in with a passkey at Gluu, his agent reaches Ledgerline as him: Gluu vouches (ID-JAG), Ledgerline's Gluu redeems it, every hop checked and logged | `make bob-verify` |
 
 `make reset` rewinds every demo without a rebuild. The identity continuity
