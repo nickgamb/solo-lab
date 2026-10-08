@@ -26,7 +26,8 @@ secret_apply ops-identity kc-secrets \
   KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret OPS_KC_ADMIN_PASSWORD)" \
   OBSERVATORY_CLIENT_SECRET="$(lab_secret OBSERVATORY_CLIENT_SECRET)" \
   GRAFANA_CLIENT_SECRET="$(lab_secret OPS_GRAFANA_CLIENT_SECRET)" \
-  KIALI_CLIENT_SECRET="$(lab_secret OPS_KIALI_CLIENT_SECRET)"
+  KIALI_CLIENT_SECRET="$(lab_secret OPS_KIALI_CLIENT_SECRET)" \
+  SOLO_UI_CLIENT_SECRET="$(lab_secret OPS_SOLO_UI_CLIENT_SECRET)"
 deploy_keycloak ops-identity "$OPS_DOMAIN" https-ops "$D/realm-ops.json"
 secret_apply observatory observatory-oidc client-secret="$(lab_secret OBSERVATORY_CLIENT_SECRET)"
 # its S&V service account, for Agent Substrate's status from kagent
@@ -38,6 +39,24 @@ secret_apply observability grafana-sso client-secret="$(lab_secret OPS_GRAFANA_C
 secret_apply kiali kiali-sso client-secret="$(lab_secret OPS_KIALI_CLIENT_SECRET)"
 apply_tmpl "$D/platform-uis.yaml"
 ok "https://grafana.$OPS_DOMAIN  https://kiali.$OPS_DOMAIN  (ops / ops-demo)"
+
+if [ -n "${ISTIO_UI_CHART:-}" ]; then
+  # Solo Enterprise for Istio's own UI (ISTIO_EDITION=enterprise): it signs
+  # the platform admins in itself, against the ops realm
+  step "Solo Enterprise for Istio UI (solo-enterprise)"
+  [ -n "$SOLO_ISTIO_LICENSE_KEY" ] || warn "no SOLO_ISTIO_LICENSE_KEY (or SOLO_LICENSE_KEY) in .env: the UI needs an Enterprise licence for Solo Enterprise for Istio"
+  apply_tmpl "$D/solo-ui.yaml"
+  deny_internet solo-enterprise
+  printf '%s' "$SOLO_ISTIO_LICENSE_KEY" | K create secret generic solo-ui-license -n solo-enterprise \
+    --from-file=license-key=/dev/stdin --dry-run=client -o yaml | K apply -f - >/dev/null
+  secret_apply solo-enterprise solo-ui-oidc clientSecret="$(lab_secret OPS_SOLO_UI_CLIENT_SECRET)"
+  # the cluster as Istio names it, so the UI's graph matches the mesh's
+  ISTIO_CLUSTER=$(K get deploy istiod -n istio-system -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="CLUSTER_ID")].value}')
+  export ISTIO_CLUSTER
+  values_for "$D" values-solo-ui "$ISTIO_EDITION"
+  helm_up solo-management "$ISTIO_UI_CHART" "$ISTIO_UI_VERSION" solo-enterprise "${VALS[@]}"
+  ok "https://mesh.$OPS_DOMAIN  (ops / ops-demo)"
+fi
 
 step "Observatory"
 deny_internet observatory ops-identity

@@ -182,8 +182,8 @@ The kill switch itself is in [IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#kil
 | `kubectl --context kind-solo-lab auth can-i --list --as=observatory:admin --as-group=observatory:observatory-admins -n sv-identity` | what the Observatory's admins may do in a namespace |
 | `kubectl --context kind-solo-lab get wlp advisor-workspace -n sv-identity --show-managed-fields -o jsonpath='{range .metadata.managedFields[*]}{.manager}{"\t"}{.time}{"\n"}{end}'` | which clients wrote an object, and when (any kind and name) |
 
-Grafana and Kiali are at https://grafana.ops.lab and https://kiali.ops.lab
-(`ops` / `ops-demo`). The Observatory's local development loop is in
+Grafana and Kiali are at https://grafana.ops.lab and https://kiali.ops.lab,
+and on Enterprise Solo's mesh UI at https://mesh.ops.lab (`ops` / `ops-demo`). The Observatory's local development loop is in
 [OBSERVATORY.md](OBSERVATORY.md#local-development).
 
 ## Fixing things

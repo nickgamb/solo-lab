@@ -99,6 +99,7 @@ workers in zones a, b and c). The full lab uses about 17 GB of memory.
 | https://portal.alice.lab | Alice's portal (her grants and terms) | `alice` / `alice-demo` |
 | https://grafana.ops.lab | Grafana | `ops` / `ops-demo` |
 | https://kiali.ops.lab | Kiali mesh graph (view-only) | `ops` / `ops-demo` |
+| https://mesh.ops.lab | Solo Enterprise for Istio's UI (`ISTIO_EDITION=enterprise`) | `ops` / `ops-demo` |
 | https://idp.sterling.lab/realms/sterling-vance/account | S&V broker account: sign-in through S&V's active IdP | S&V sign-in, as for kagent |
 | https://login.sterling.lab/realms/workforce/account | S&V's own Keycloak (an IdP in `ENTERPRISE_IDP`): a user's own account | `bob` / `bob-demo`, then the code from `make totp` |
 | https://login-dr.sterling.lab/realms/contingency/account | S&V's contingency IdP (password only, after S&V's own Keycloak in `ENTERPRISE_IDP`) | `bob` / `bob-demo` |

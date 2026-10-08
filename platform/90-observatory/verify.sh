@@ -145,4 +145,13 @@ expect '^no$' "may not read a Secret itself" "$(K auth can-i get secrets -n sv-i
 expect '^yes no$' "may read the assurance rules' CRDs (their choices), and no other" \
   "$(K auth can-i get customresourcedefinitions/workloadprofiles.continuity.lab.solo.io --as="$SA" 2>/dev/null) $(K auth can-i get customresourcedefinitions/agents.kagent.dev --as="$SA" 2>/dev/null)"
 
+if [ -n "${ISTIO_UI_CHART:-}" ]; then
+  step "Solo Enterprise for Istio UI"
+  expect '^true$' "its pods are ready (UI, collectors, ClickHouse)" \
+    "$(K get pods -n solo-enterprise -o json | jq '[.items[] | .status.containerStatuses[]?.ready] | length > 0 and all')"
+  expect '^200$' "https://mesh.$OPS_DOMAIN answers" "$(curl -s -o /dev/null -w '%{http_code}' --cacert "$LAB_CA_DIR/ca.crt" "https://mesh.$OPS_DOMAIN/")"
+  expect 'Sign in to' "the ops realm takes its sign-in (client solo-ui, PKCE, its callback)" \
+    "$(curl -s --cacert "$LAB_CA_DIR/ca.crt" "https://idp.$OPS_DOMAIN/realms/ops/protocol/openid-connect/auth?client_id=solo-ui&redirect_uri=https%3A%2F%2Fmesh.$OPS_DOMAIN%2Fcallback&response_type=code&scope=openid&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=verify" | grep -o '<title>[^<]*</title>')"
+fi
+
 echo; [ $fail -eq 0 ] && ok "observatory: $pass/$((pass+fail)) checks passed" || die "observatory: $fail of $((pass+fail)) checks failed"

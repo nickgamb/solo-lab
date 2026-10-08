@@ -1,0 +1,36 @@
+# Solo Enterprise for Istio's UI (ISTIO_EDITION=enterprise): Solo's own view
+# of the ambient mesh, at https://mesh.${OPS_DOMAIN}. It signs the platform
+# admins in itself, against their Keycloak (realm ops, clients solo-ui and
+# solo-ui-backend), and reads the cluster as its own service account. The
+# chart (values-solo-ui.yaml) runs it with ClickHouse and two collectors in
+# solo-enterprise; the edge is the only way in.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: solo-enterprise
+  labels: {istio.io/dataplane-mode: ambient, lab.solo.io/party: platform}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: solo-ui, namespace: solo-enterprise}
+spec:
+  parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-ops}]
+  hostnames: ["mesh.${OPS_DOMAIN}"]
+  rules:
+  - backendRefs: [{name: solo-enterprise-ui, port: 80}]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: default-deny, namespace: solo-enterprise}
+spec: {}
+---
+# the UI, from the edge only; within the namespace, the UI and the
+# collectors reach ClickHouse and each other
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: solo-ui-callers, namespace: solo-enterprise}
+spec:
+  action: ALLOW
+  rules:
+  - from: [{source: {principals: [cluster.local/ns/kgateway-system/sa/edge]}}]
+  - from: [{source: {namespaces: [solo-enterprise]}}]

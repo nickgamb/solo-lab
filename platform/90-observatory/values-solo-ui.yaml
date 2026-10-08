@@ -1,0 +1,35 @@
+# Solo Enterprise for Istio's UI (the management chart), one cluster. Its
+# licence is the Secret solo-ui-license (SOLO_ISTIO_LICENSE_KEY); the OIDC
+# client secret, solo-ui-oidc. Both are written by layer 90.
+cluster: ${ISTIO_CLUSTER}
+products:
+  mesh: {enabled: true}
+licensing:
+  createSecret: false
+  secretName: solo-ui-license
+# on the edge only, never a load balancer of its own
+service: {type: ClusterIP}
+oidc:
+  issuer: https://idp.${OPS_DOMAIN}/realms/ops
+ui:
+  publicUrl: https://mesh.${OPS_DOMAIN}
+  frontend:
+    oidc: {clientId: solo-ui}
+  backend:
+    oidc: {clientId: solo-ui-backend, secretRef: solo-ui-oidc}
+    # the ops Keycloak's certificate is the lab CA's
+    extraEnvs: {SSL_CERT_FILE: {value: /etc/lab-ca/ca.crt}}
+    volumes: [{name: lab-ca, configMap: {name: lab-ca-bundle}}]
+    volumeMounts: [{name: lab-ca, mountPath: /etc/lab-ca, readOnly: true}]
+# the ops realm's platform admins administer it; nobody else gets a role
+rbac:
+  roleMapping:
+    roleMapper: "has(claims.groups) ? claims.groups.transformList(i, v, v in rolesMap, rolesMap[v]) : []"
+    roleMappings: {observatory-admins: global.Admin}
+    defaultRoles: []
+  subjectMapping: {groupsClaim: groups}
+# ClickHouse keeps the chart's credentials: mesh policy lets only this
+# namespace reach it (solo-ui.yaml)
+clickhouse:
+  resources:
+    requests: {cpu: 500m, memory: 2Gi}

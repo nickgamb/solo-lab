@@ -33,6 +33,7 @@ comparison of the editions.
 | kgateway | A web application firewall on the edge: SQL and script injection refused for every party's hostnames | none | [WAF](https://docs.solo.io/kgateway/latest/security/waf/overview/) | `make bob-verify` |
 | kagent | The controller verifies each user's token against S&V's broker, and maps the token's groups to roles | trusted-proxy mode: the controller trusts the forwarded token, so mesh policy fences who may reach it (ARCHITECTURE.md) | [OIDC authentication, RBAC mapped to IdP groups](https://docs.solo.io/kagent/latest/about/) | `make bob-verify` |
 | agentregistry | Signs users in itself, roles from the token's groups | behind the edge's SSO | [user access control](https://docs.solo.io/agentregistry/latest/about/oss-enterprise/) | sign in at https://registry.sterling.lab |
+| Istio | The Solo UI at https://mesh.ops.lab: the ambient mesh's workloads, traffic and policy, signing platform admins in against the ops realm (`observatory-admins` are its admins) | Kiali, view-only | [Solo UI](https://docs.solo.io/istio/latest/ui/about/architecture/) | `make observatory-verify` |
 
 Both editions run the rest of the lab the same way: MCP federation and
 per-tool authorization, token exchange and Cross App Access toward tools
@@ -90,7 +91,11 @@ does with a key it doesn't accept:
 ### Istio
 
 Solo-built images (`global.hub`/`tag`), the licence on istiod, peering
-enabled. Nothing else.
+enabled. Layer 90 adds the Solo UI (the `management` chart, mesh views, in
+`solo-enterprise`; `ENT_ISTIO_UI_*` in `config/enterprise.env`): ClickHouse
+and two collectors beside it, its own OIDC sign-in against the ops realm
+(clients `solo-ui` and `solo-ui-backend`), on the ops edge with mesh policy
+letting only the edge reach it. It needs an Enterprise-level licence.
 
 ### kgateway
 
