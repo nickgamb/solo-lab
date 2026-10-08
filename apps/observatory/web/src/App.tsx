@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, useLab, type Me } from './api'
-import wordmark from './assets/solo-wordmark.svg?raw'
 import { Topology } from './topology/Topology'
 import { TrafficTab } from './traffic/TrafficTab'
 import { ContinuityTab } from './continuity/ContinuityTab'
@@ -44,7 +43,7 @@ export default function App() {
     <div className="app">
       <header className="top">
         <div className="brand">
-          <span className="wordmark" dangerouslySetInnerHTML={{ __html: wordmark }} />
+          <a className="lab-name" href="https://github.com/nickgamb/solo-lab" target="_blank" rel="noopener noreferrer" title="The lab on GitHub">Solo-Lab</a>
           <span className="product">Observatory</span>
         </div>
         <nav className="tabs">

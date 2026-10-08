@@ -1,4 +1,4 @@
-# Observatory
+# Solo-Lab Observatory
 
 A live view of the whole lab for platform admins: what runs where, what calls
 what, the traffic on each call, and the sign-in chain. It reads the cluster at
@@ -7,6 +7,8 @@ renders the same way.
 
 Source: `apps/observatory` (Go server in `server/`, React UI in `web/`).
 Install: `platform/90-observatory` (`make layer-90`).
+
+It is part of this lab, built to show what the stack does, not a Solo product.
 
 ## Seeing it work
 
