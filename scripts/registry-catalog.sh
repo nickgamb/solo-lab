@@ -8,7 +8,7 @@
 # Kubernetes namespace, in the registry's default namespace (what its UI
 # lists first). Published as the catalog's service account (S&V client
 # agentregistry-catalog, a platform admin there). Idempotent: apply
-# replaces what's there.
+# replaces what's there. The groups in AGENTREGISTRY_READERS may browse it.
 . "$(dirname "$0")/lib.sh"
 need_cluster
 step "agentregistry catalog: the lab's agents and MCP servers"
@@ -46,6 +46,13 @@ docs=$(jq -n --argjson p "$parties" --argjson m "$mcps" --argjson a "$agents" --
                 | {kind: "MCPServer", name: .mcpServer.name}]}
             + (if ($d.systemMessage // "") != "" then {instructions: {kind: "Prompt", name: "\($ag.metadata.name)-instructions"}} else {} end))}]
     ] | add // [])')
+# who may browse it: the registry admits only its superusers (platform-admins)
+# until an AccessPolicy grants a role more
+docs=$(jq --arg readers "$AGENTREGISTRY_READERS" '. + [{apiVersion: "ar.dev/v1alpha1", kind: "AccessPolicy",
+  metadata: {name: "catalog-readers"},
+  spec: {description: "Browse the catalog: agents, MCP servers, prompts and skills",
+    principals: [$readers | split(" ")[] | select(. != "") | {kind: "Role", name: .}],
+    rules: [{actions: ["registry:read"], resources: [{kind: "agent", name: "*"}, {kind: "server", name: "*"}, {kind: "prompt", name: "*"}, {kind: "skill", name: "*"}]}]}}]' <<<"$docs")
 n_mcp=$(jq '[.[] | select(.kind == "MCPServer")] | length' <<<"$docs")
 n_agent=$(jq '[.[] | select(.kind == "Agent")] | length' <<<"$docs")
 n_prompt=$(jq '[.[] | select(.kind == "Prompt")] | length' <<<"$docs")
@@ -67,4 +74,4 @@ code=$(tail -1 <<<"$out")
 failed=$(sed '$d' <<<"$out" | jq -r '[.results[]? | select(.status == "failed") | "\(.kind) \(.namespace)/\(.name): \(.error)"] | .[:5][]')
 [ -z "$failed" ] || die "agentregistry refused some of the catalog:
 $failed"
-ok "published $n_agent agents, $n_prompt prompts and $n_mcp MCP servers (https://registry.$SV_DOMAIN)"
+ok "published $n_agent agents, $n_prompt prompts and $n_mcp MCP servers, readable by: $AGENTREGISTRY_READERS (https://registry.$SV_DOMAIN)"
