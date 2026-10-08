@@ -23,6 +23,10 @@ jobs:
       with:
         go-version-file: ${{ matrix.module }}/go.mod
         cache-dependency-path: ${{ matrix.module }}/go.sum
+    # the Observatory embeds its web build (built by the web job and the
+    # image, not committed): a placeholder for vet and test
+    - if: matrix.module == 'apps/observatory/server'
+      run: mkdir -p web && touch web/.keep
     - run: go vet ./...
     - run: go test ./...
     - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
