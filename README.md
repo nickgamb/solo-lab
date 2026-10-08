@@ -95,7 +95,7 @@ workers in zones a, b and c). The full lab uses about 17 GB of memory.
 | --- | --- | --- |
 | https://observatory.ops.lab | Observatory: topology, traffic, identity and model continuity | `ops` / `ops-demo` |
 | https://kagent.sterling.lab | kagent, where Bob's agents run | Bob at S&V's active IdP: Auth0 (`bob@sterling.lab`, your password) or S&V's own Keycloak (`bob` / `bob-demo`) |
-| https://registry.sterling.lab | agentregistry | S&V sign-in, as for kagent |
+| https://registry.sterling.lab | agentregistry: on Enterprise, a catalog of the lab's agents, their instructions and MCP servers | S&V sign-in, as for kagent |
 | https://portal.alice.lab | Alice's portal (her grants and terms) | `alice` / `alice-demo` |
 | https://grafana.ops.lab | Grafana | `ops` / `ops-demo` |
 | https://kiali.ops.lab | Kiali mesh graph (view-only) | `ops` / `ops-demo` |
