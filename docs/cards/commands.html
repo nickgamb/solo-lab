@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Under the Hood Card</title>
+<title>Commands</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
@@ -12,40 +12,39 @@
 <body>
 <div class="wrap">
   <header class="masthead">
-    <h1>Under the Hood Card</h1>
-    <p class="standfirst">Every screen in the Observatory, from a terminal.</p>
+    <h1>Commands</h1>
   </header>
   <section class="setup">
     <h2>The cluster</h2>
     <div class="table-scroll">
       <table>
         <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
-        <thead><tr><th>#</th><th>Run this</th><th>Shows</th></tr></thead>
+        <thead><tr><th>#</th><th>Run this</th><th>Does</th></tr></thead>
         <tbody>
         <tr class="term">
           <td class="num">1</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kind get clusters</code></div></td>
-          <td class="say">One kind cluster.</td>
+          <td class="say">Lists kind clusters.</td>
         </tr>
         <tr class="term">
           <td class="num">2</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">docker ps --format '{{.Names}}\t{{.Status}}'</code></div></td>
-          <td class="say">Its nodes: containers on this machine.</td>
+          <td class="say">Lists running containers and their status.</td>
         </tr>
         <tr class="term">
           <td class="num">3</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get nodes -L topology.kubernetes.io/zone</code></div></td>
-          <td class="say">Three workers, three zones.</td>
+          <td class="say">Lists the nodes, with each node's zone.</td>
         </tr>
         <tr class="term">
           <td class="num">4</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get ns -L lab.solo.io/party,istio.io/dataplane-mode</code></div></td>
-          <td class="say">Every party, in the ambient mesh.</td>
+          <td class="say">Lists namespaces, with each one's party and mesh mode.</td>
         </tr>
         <tr class="term">
           <td class="num">5</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get pods -A</code></div></td>
-          <td class="say">Every pod.</td>
+          <td class="say">Lists every pod.</td>
         </tr>
         </tbody>
       </table>
@@ -56,32 +55,32 @@
     <div class="table-scroll">
       <table>
         <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
-        <thead><tr><th>#</th><th>Run this</th><th>Shows</th></tr></thead>
+        <thead><tr><th>#</th><th>Run this</th><th>Does</th></tr></thead>
         <tbody>
         <tr class="term">
           <td class="num">1</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">istioctl --context kind-solo-lab ztunnel-config workloads</code></div></td>
-          <td class="say">Every workload ztunnel knows: node, address, waypoint.</td>
+          <td class="say">Lists the workloads ztunnel knows, with node, address and waypoint.</td>
         </tr>
         <tr class="term">
           <td class="num">2</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">istioctl --context kind-solo-lab ztunnel-config certificates --node solo-lab-worker</code></div></td>
-          <td class="say">The SPIFFE certificates it holds.</td>
+          <td class="say">Lists the certificates ztunnel holds on a node.</td>
         </tr>
         <tr class="term">
           <td class="num">3</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">istioctl --context kind-solo-lab waypoint list -A</code></div></td>
-          <td class="say">The waypoints.</td>
+          <td class="say">Lists the waypoints.</td>
         </tr>
         <tr class="term">
           <td class="num">4</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get authorizationpolicy -A</code></div></td>
-          <td class="say">Who may call whom, by identity.</td>
+          <td class="say">Lists every authorization policy.</td>
         </tr>
         <tr class="term">
           <td class="num">5</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get serviceentry -A</code></div></td>
-          <td class="say">External hosts the mesh knows.</td>
+          <td class="say">Lists the external hosts registered in the mesh.</td>
         </tr>
         </tbody>
       </table>
@@ -92,32 +91,32 @@
     <div class="table-scroll">
       <table>
         <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
-        <thead><tr><th>#</th><th>Run this</th><th>Shows</th></tr></thead>
+        <thead><tr><th>#</th><th>Run this</th><th>Does</th></tr></thead>
         <tbody>
         <tr class="term">
           <td class="num">1</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab -n agentgateway-system logs deploy/ai-gateway -f | grep request</code></div></td>
-          <td class="say">The AI gateway: caller, route, claims, status.</td>
+          <td class="say">Follows the AI gateway's access log.</td>
         </tr>
         <tr class="term">
           <td class="num">2</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab -n sv-mcp logs deploy/mcp-waypoint -f | grep request</code></div></td>
-          <td class="say">The MCP waypoint: tool, user, allowed or refused.</td>
+          <td class="say">Follows the MCP waypoint's access log.</td>
         </tr>
         <tr class="term">
           <td class="num">3</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab -n sv-mcp logs deploy/mcp-waypoint | grep -o 'continuity.decision="[^"]*"'</code></div></td>
-          <td class="say">The assurance gate's decisions, as logged.</td>
+          <td class="say">Prints the assurance decisions the waypoint logged.</td>
         </tr>
         <tr class="term">
           <td class="num">4</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">make xaa-logs SINCE=2h</code></div></td>
-          <td class="say">The Cross App Access trail.</td>
+          <td class="say">Collects the Cross App Access logs for a time window.</td>
         </tr>
         <tr class="term">
           <td class="num">5</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab -n istio-system logs ds/ztunnel --since=5m | grep -i -E "deny|rbac"</code></div></td>
-          <td class="say">Connections the mesh refused.</td>
+          <td class="say">Prints connections ztunnel refused in the last five minutes.</td>
         </tr>
         </tbody>
       </table>
@@ -128,52 +127,52 @@
     <div class="table-scroll">
       <table>
         <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
-        <thead><tr><th>#</th><th>Run this</th><th>Shows</th></tr></thead>
+        <thead><tr><th>#</th><th>Run this</th><th>Does</th></tr></thead>
         <tbody>
         <tr class="term">
           <td class="num">1</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get idc -A</code></div></td>
-          <td class="say">The active IdP.</td>
+          <td class="say">Lists the IdentityContinuity resources and their active IdP.</td>
         </tr>
         <tr class="term">
           <td class="num">2</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o jsonpath='{range .status.tiers[*]}{.name}: {.reason} {.message}{"\n"}{end}'</code></div></td>
-          <td class="say">Each IdP's health.</td>
+          <td class="say">Prints each IdP's health.</td>
         </tr>
         <tr class="term">
           <td class="num">3</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o jsonpath='{.status.transitions}' | jq</code></div></td>
-          <td class="say">Every failover and failback.</td>
+          <td class="say">Prints the failover and failback history.</td>
         </tr>
         <tr class="term">
           <td class="num">4</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get events -n sv-identity --field-selector involvedObject.name=sterling-vance</code></div></td>
-          <td class="say">Health and failover events.</td>
+          <td class="say">Lists the chain's events.</td>
         </tr>
         <tr class="term">
           <td class="num">5</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get authorizationpolicy -A -l continuity.lab.solo.io/tier -o custom-columns='NAMESPACE:.metadata.namespace,POLICY:.metadata.name,IDP:.metadata.labels.continuity\.lab\.solo\.io/tier,CUT BY:.metadata.annotations.continuity\.lab\.solo\.io/cut-by'</code></div></td>
-          <td class="say">A simulated outage: one DENY policy, and who cut it.</td>
+          <td class="say">Lists the simulated-outage policies, with the IdP and who applied each.</td>
         </tr>
         <tr class="term">
           <td class="num">6</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get lease continuity.lab.solo.io -n sv-identity -o jsonpath='{.spec.holderIdentity}'</code></div></td>
-          <td class="say">The controller replica that leads.</td>
+          <td class="say">Prints which controller replica holds the leader lease.</td>
         </tr>
         <tr class="term">
           <td class="num">7</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o json | jq -r '.status.tiers[] | .name as $n | .trust.checks[]? | [$n, .name, .result] | @tsv'</code></div></td>
-          <td class="say">Trust checks, per IdP.</td>
+          <td class="say">Prints each IdP's trust check results.</td>
         </tr>
         <tr class="term">
           <td class="num">8</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">curl -s https://idp.sterling.lab/realms/sterling-vance/.well-known/openid-configuration | jq '{issuer, authorization_endpoint, token_endpoint, jwks_uri}'</code></div></td>
-          <td class="say">The one issuer every app trusts.</td>
+          <td class="say">Fetches the broker's OpenID discovery document.</td>
         </tr>
         <tr class="term">
           <td class="num">9</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">make totp</code></div></td>
-          <td class="say">Bob's one-time code.</td>
+          <td class="say">Prints the current one-time code (TOTP).</td>
         </tr>
         </tbody>
       </table>
@@ -184,52 +183,52 @@
     <div class="table-scroll">
       <table>
         <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
-        <thead><tr><th>#</th><th>Run this</th><th>Shows</th></tr></thead>
+        <thead><tr><th>#</th><th>Run this</th><th>Does</th></tr></thead>
         <tbody>
         <tr class="term">
           <td class="num">1</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get wlp -n sv-identity</code></div></td>
-          <td class="say">Each rule: criticality, mode, minimum, phase.</td>
+          <td class="say">Lists the assurance rules.</td>
         </tr>
         <tr class="term">
           <td class="num">2</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o jsonpath='{.spec.assurancePolicy}'</code></div></td>
-          <td class="say">The default rule.</td>
+          <td class="say">Prints the default rule.</td>
         </tr>
         <tr class="term">
           <td class="num">3</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get "$(kubectl --context kind-solo-lab api-resources -o name | grep agentgatewaypolicies | paste -sd, -)" -A -o custom-columns='NAMESPACE:.metadata.namespace,POLICY:.metadata.name,EXTAUTH:.spec.traffic.extAuth.backendRef.name,RULE:.spec.traffic.extAuth.grpc.contextExtensions.profile,FAILURE:.spec.traffic.extAuth.failureMode'</code></div></td>
-          <td class="say">Where each rule is enforced, failing closed.</td>
+          <td class="say">Lists gateway policies with their external authorization settings.</td>
         </tr>
         <tr class="term">
           <td class="num">4</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get svc -A -l continuity.lab.solo.io/assurance-gate</code></div></td>
-          <td class="say">The gate, found by its label.</td>
+          <td class="say">Lists Services labelled as assurance gates.</td>
         </tr>
         <tr class="term">
           <td class="num">5</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get pods -n sv-identity -l app=assurance-gate -o wide</code></div></td>
-          <td class="say">Its replicas, across nodes.</td>
+          <td class="say">Lists the gate's pods and their nodes.</td>
         </tr>
         <tr class="term">
           <td class="num">6</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get validatingadmissionpolicy assurance-gate-fail-closed -o jsonpath='{.spec.validations[*].expression}'</code></div></td>
-          <td class="say">Admission: no policy asks a gate and fails open.</td>
+          <td class="say">Prints the fail-closed admission check.</td>
         </tr>
         <tr class="term">
           <td class="num">7</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab -n sv-identity logs -l app=assurance-gate --prefix -f | grep '"msg":"decision"'</code></div></td>
-          <td class="say">Its decisions, live.</td>
+          <td class="say">Follows the gate's decision log.</td>
         </tr>
         <tr class="term">
           <td class="num">8</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab -n sv-identity port-forward svc/assurance-gate 19002:evaluate</code></div></td>
-          <td class="say">Its evaluate port (another terminal).</td>
+          <td class="say">Forwards the gate's evaluate port to localhost.</td>
         </tr>
         <tr class="term">
           <td class="num">9</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">curl -s localhost:19002/v1/evaluate -d '{"continuity": "sterling-vance", "session": {"idp": "contingency", "acr": "aal1"}}' | jq '.rules[] | {name, decision: .session.decision, reason: .session.reason}'</code></div></td>
-          <td class="say">What every rule decides for a password-only sign-in.</td>
+          <td class="say">Asks the gate to evaluate a sign-in against every rule.</td>
         </tr>
         </tbody>
       </table>
@@ -240,22 +239,22 @@
     <div class="table-scroll">
       <table>
         <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
-        <thead><tr><th>#</th><th>Run this</th><th>Shows</th></tr></thead>
+        <thead><tr><th>#</th><th>Run this</th><th>Does</th></tr></thead>
         <tbody>
         <tr class="term">
           <td class="num">1</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get agentgatewaybackend llm -n agentgateway-system -o jsonpath='{range .spec.ai.groups[*].providers[*]}{.name}{"\n"}{end}'</code></div></td>
-          <td class="say">The model chain, in failover order.</td>
+          <td class="say">Lists the model chain's providers, in order.</td>
         </tr>
         <tr class="term">
           <td class="num">2</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get httproute llm llm-external -n agentgateway-system</code></div></td>
-          <td class="say">The model routes.</td>
+          <td class="say">Lists the model routes.</td>
         </tr>
         <tr class="term">
           <td class="num">3</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get "$(kubectl --context kind-solo-lab api-resources -o name | grep agentgatewaypolicies | paste -sd, -)" -n agentgateway-system</code></div></td>
-          <td class="say">Retries, health and guards on it.</td>
+          <td class="say">Lists the policies in the AI gateway's namespace.</td>
         </tr>
         </tbody>
       </table>
@@ -266,27 +265,27 @@
     <div class="table-scroll">
       <table>
         <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
-        <thead><tr><th>#</th><th>Run this</th><th>Shows</th></tr></thead>
+        <thead><tr><th>#</th><th>Run this</th><th>Does</th></tr></thead>
         <tbody>
         <tr class="term">
           <td class="num">1</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get sandboxagents,agents -A</code></div></td>
-          <td class="say">The agents.</td>
+          <td class="say">Lists the agents.</td>
         </tr>
         <tr class="term">
           <td class="num">2</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get workerpools,actortemplates -A</code></div></td>
-          <td class="say">Agent Substrate's pools and templates.</td>
+          <td class="say">Lists the worker pools and actor templates.</td>
         </tr>
         <tr class="term">
           <td class="num">3</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get pods -A -l ate.dev/worker-pool</code></div></td>
-          <td class="say">The workers an agent's calls leave from.</td>
+          <td class="say">Lists the worker pods.</td>
         </tr>
         <tr class="term">
           <td class="num">4</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get remotemcpservers,mcpservers,modelconfigs -A</code></div></td>
-          <td class="say">Their tools and models.</td>
+          <td class="say">Lists MCP servers and model configs.</td>
         </tr>
         </tbody>
       </table>
@@ -297,27 +296,27 @@
     <div class="table-scroll">
       <table>
         <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
-        <thead><tr><th>#</th><th>Run this</th><th>Shows</th></tr></thead>
+        <thead><tr><th>#</th><th>Run this</th><th>Does</th></tr></thead>
         <tbody>
         <tr class="term">
           <td class="num">1</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab auth can-i --list --as=system:serviceaccount:observatory:observatory</code></div></td>
-          <td class="say">As itself: read, and impersonate one admin identity.</td>
+          <td class="say">Lists what the Observatory's service account may do.</td>
         </tr>
         <tr class="term">
           <td class="num">2</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab auth can-i --list --as=observatory:admin --as-group=observatory:observatory-admins -n sv-identity</code></div></td>
-          <td class="say">What its admins may change.</td>
+          <td class="say">Lists what the Observatory's admins may do in a namespace.</td>
         </tr>
         <tr class="term">
           <td class="num">3</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get wlp advisor-workspace -n sv-identity --show-managed-fields -o jsonpath='{range .metadata.managedFields[*]}{.manager}{"\t"}{.time}{"\n"}{end}'</code></div></td>
-          <td class="say">Who wrote it: observatory, when saved from the UI.</td>
+          <td class="say">Prints which clients wrote an object, and when.</td>
         </tr>
         <tr class="term">
           <td class="num">4</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab -n observatory logs deploy/observatory -f</code></div></td>
-          <td class="say">Its server.</td>
+          <td class="say">Follows the Observatory's log.</td>
         </tr>
         </tbody>
       </table>

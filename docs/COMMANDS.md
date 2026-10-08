@@ -8,7 +8,7 @@ another cluster selected. To skip the flag, select the lab once:
 kubectl config use-context kind-solo-lab
 ```
 
-The `make` targets are in the [README](../README.md#make-targets); the commands behind each Observatory screen, as a card, in [cards/under-the-hood.html](cards/under-the-hood.html). Commands
+The `make` targets are in the [README](../README.md#make-targets); the same commands grouped by Observatory screen, as a card, in [cards/commands.html](cards/commands.html). Commands
 that need the lab's helpers (`lab_secret`, `port_forward`) run under bash from
 the repo root: `bash -c '. scripts/lib.sh; ...'`.
 
@@ -121,9 +121,9 @@ jq -r .access_token /tmp/bob.json | jq -R 'split(".")[1] | gsub("-";"+") | gsub(
 | `kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o jsonpath='{range .status.tiers[*]}{.name}: {.reason} {.message}{"\n"}{end}'` | each IdP's health (and break-glass) |
 | `kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o jsonpath='{.status.transitions}' \| jq` | the last 20 failovers and failbacks |
 | `kubectl --context kind-solo-lab get events -n sv-identity --field-selector involvedObject.name=sterling-vance` | IdP health and failover events |
-| `kubectl --context kind-solo-lab -n sv-identity logs -l app=continuity-controller --prefix -f` | the controller, both replicas (the leader does the work) |
+| `kubectl --context kind-solo-lab -n sv-identity logs -l app=continuity-controller --prefix -f` | the controller's logs, every replica |
 | `kubectl --context kind-solo-lab get lease continuity.lab.solo.io -n sv-identity -o jsonpath='{.spec.holderIdentity}'` | which controller replica leads |
-| `kubectl --context kind-solo-lab get authorizationpolicy -A -l continuity.lab.solo.io/tier -o custom-columns='NAMESPACE:.metadata.namespace,POLICY:.metadata.name,IDP:.metadata.labels.continuity\.lab\.solo\.io/tier,CUT BY:.metadata.annotations.continuity\.lab\.solo\.io/cut-by'` | every simulated outage in effect, wherever its IdP runs, and who cut it |
+| `kubectl --context kind-solo-lab get authorizationpolicy -A -l continuity.lab.solo.io/tier -o custom-columns='NAMESPACE:.metadata.namespace,POLICY:.metadata.name,IDP:.metadata.labels.continuity\.lab\.solo\.io/tier,CUT BY:.metadata.annotations.continuity\.lab\.solo\.io/cut-by'` | the simulated-outage policies, with the IdP and who applied each |
 | `kubectl --context kind-solo-lab -n sv-egress delete authorizationpolicy continuity-partition-auth0` | end a simulated Auth0 outage |
 | `kubectl --context kind-solo-lab -n sv-identity get cronjob,job -l app=continuity-sync` | the directory sync's schedule and runs |
 | `kubectl --context kind-solo-lab -n sv-identity create job --from=cronjob/sterling-vance-profile-sync sync-now` | run the directory sync now |
@@ -143,7 +143,7 @@ jq -r .access_token /tmp/bob.json | jq -R 'split(".")[1] | gsub("-";"+") | gsub(
 | `kubectl --context kind-solo-lab get events -n sv-identity --field-selector involvedObject.kind=WorkloadProfile` | rules failing closed and recovering |
 | `kubectl --context kind-solo-lab get "$(kubectl --context kind-solo-lab api-resources -o name \| grep agentgatewaypolicies \| paste -sd, -)" -A -o custom-columns='NAMESPACE:.metadata.namespace,POLICY:.metadata.name,EXTAUTH:.spec.traffic.extAuth.backendRef.name,RULE:.spec.traffic.extAuth.grpc.contextExtensions.profile,FAILURE:.spec.traffic.extAuth.failureMode'` | every gateway policy, the external authorization it asks (the assurance gate, for which rule) and how it fails |
 | `kubectl --context kind-solo-lab get svc -A -l continuity.lab.solo.io/assurance-gate` | the assurance gates (any Service with the label, whatever its name) |
-| `kubectl --context kind-solo-lab get pods -n sv-identity -l app=assurance-gate -o wide` | the gate's replicas, spread across nodes |
+| `kubectl --context kind-solo-lab get pods -n sv-identity -l app=assurance-gate -o wide` | the gate's pods and their nodes |
 | `kubectl --context kind-solo-lab get pdb assurance-gate -n sv-identity` | how many may be down at once |
 | `kubectl --context kind-solo-lab get validatingadmissionpolicy assurance-gate-fail-closed -o jsonpath='{.spec.validations[*].expression}'` | the admission rule that holds every policy asking a gate to FailClosed (its binding selects the gates by label) |
 | `kubectl --context kind-solo-lab get referencegrant,authorizationpolicy -n sv-identity -l continuity.lab.solo.io/assurance-gate-caller` | the grants the Observatory added when enforcement was turned on at another gateway |
@@ -178,9 +178,9 @@ The kill switch itself is in [IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#kil
 | `curl -s --get http://127.0.0.1:19090/api/v1/query --data-urlencode 'query=sum by (source_principal,destination_workload) (istio_tcp_connections_opened_total{reporter="destination"})' \| jq '.data.result[] \| [.metric.source_principal, .metric.destination_workload, .value[1]]'` | who has connected to what, by SPIFFE identity |
 | `kubectl --context kind-solo-lab -n observability logs deploy/otel-collector --since=5m \| grep -i "exporting failed"` | the collector failing to deliver (to the Observatory, Tempo or Prometheus) |
 | `kubectl --context kind-solo-lab -n observatory logs deploy/observatory -f` | the Observatory's server |
-| `kubectl --context kind-solo-lab auth can-i --list --as=system:serviceaccount:observatory:observatory` | what the Observatory may do as itself: read, and impersonate one admin identity |
-| `kubectl --context kind-solo-lab auth can-i --list --as=observatory:admin --as-group=observatory:observatory-admins -n sv-identity` | what its signed-in admins may change there |
-| `kubectl --context kind-solo-lab get wlp advisor-workspace -n sv-identity --show-managed-fields -o jsonpath='{range .metadata.managedFields[*]}{.manager}{"\t"}{.time}{"\n"}{end}'` | who last wrote an object (`observatory`: saved from the Observatory, as the signed-in admin); any kind and name |
+| `kubectl --context kind-solo-lab auth can-i --list --as=system:serviceaccount:observatory:observatory` | what the Observatory's service account may do |
+| `kubectl --context kind-solo-lab auth can-i --list --as=observatory:admin --as-group=observatory:observatory-admins -n sv-identity` | what the Observatory's admins may do in a namespace |
+| `kubectl --context kind-solo-lab get wlp advisor-workspace -n sv-identity --show-managed-fields -o jsonpath='{range .metadata.managedFields[*]}{.manager}{"\t"}{.time}{"\n"}{end}'` | which clients wrote an object, and when (any kind and name) |
 
 Grafana and Kiali are at https://grafana.ops.lab and https://kiali.ops.lab
 (`ops` / `ops-demo`). The Observatory's local development loop is in
