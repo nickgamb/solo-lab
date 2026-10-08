@@ -162,7 +162,7 @@ The kill switch itself is in [IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#kil
 | Command | Shows |
 | --- | --- |
 | `kubectl --context kind-solo-lab get sandboxagents,agents -A` | agents, and which run on Substrate |
-| `scripts/registry-catalog.sh` | publishes the agents and MCP servers in the cluster to agentregistry's catalog (Enterprise) |
+| `scripts/registry.sh` | publishes the agents and MCP servers in the cluster to agentregistry's catalog, its readers' access and its kagent runtime (Enterprise) |
 | `kubectl --context kind-solo-lab get remotemcpservers,mcpservers,modelconfigs -A` | the tools and models agents use |
 | `kubectl --context kind-solo-lab get sandboxagent bob-assistant -n sv-agents -o yaml` | Bob's agent: tools, approvals, forwarded headers |
 | `kubectl --context kind-solo-lab get workerpools,actortemplates -A` | Substrate's worker pools and the agents' actor templates |

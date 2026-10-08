@@ -4,5 +4,5 @@
 . "$(dirname "$0")/../../scripts/lib.sh"
 "$LAB_ROOT/demos/bob/install.sh"
 "$LAB_ROOT/demos/bob-to-alice/install.sh"
-# agentregistry's catalog: the agents and MCP servers the demos just made
-"$LAB_ROOT/scripts/registry-catalog.sh"
+# agentregistry: the catalog of what the demos just made, its readers, its kagent runtime
+"$LAB_ROOT/scripts/registry.sh"

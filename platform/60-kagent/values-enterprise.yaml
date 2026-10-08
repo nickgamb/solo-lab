@@ -21,12 +21,14 @@ oidc:
 
 # Roles from the token's groups (S&V's realm emits lowercase "groups"; the
 # chart's default reads "Groups" and refuses everyone). The Observatory's
-# client-credentials token reads Substrate status.
+# client-credentials token reads Substrate status; agentregistry's (its
+# kagent runtime) manages agents.
 rbac:
   roleMapping:
     roleMapper: >-
       (has(claims.groups) ? claims.groups.transformList(i, v, v in rolesMap, rolesMap[v]) : [])
       + (has(claims.azp) && claims.azp == 'observatory' ? ['global.Reader'] : [])
+      + (has(claims.azp) && claims.azp == 'agentregistry' ? ['global.Writer'] : [])
     roleMappings:
       platform-admins: global.Admin
       advisors: global.Writer

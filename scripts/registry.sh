@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# agentregistry's catalog, from what the lab runs (AGENTREGISTRY_EDITION=
-# enterprise): every agent kagent runs (its harness), with its instructions
+# agentregistry (AGENTREGISTRY_EDITION=enterprise): its catalog, who may
+# browse it, and its kagent runtime.
+#
+# The catalog is what the lab runs: every agent kagent runs (its harness), with its instructions
 # as a Prompt, its model, and the MCP servers it uses; and every MCP server
 # kagent knows.
 # Read from the cluster, so it's whatever the lab has now; each entry is
@@ -9,9 +11,13 @@
 # lists first). Published as the catalog's service account (S&V client
 # agentregistry-catalog, a platform admin there). Idempotent: apply
 # replaces what's there. The groups in AGENTREGISTRY_READERS may browse it.
+# With Solo Enterprise for kagent too, the registry connects to the kagent
+# controller as a runtime (as its own client, agentregistry, a kagent
+# Writer): it discovers the agents running there and can deploy from the
+# catalog.
 . "$(dirname "$0")/lib.sh"
 need_cluster
-step "agentregistry catalog: the lab's agents and MCP servers"
+step "agentregistry: the catalog, its readers and the kagent runtime"
 if [ "$AGENTREGISTRY_EDITION" != enterprise ]; then
   ok "skipped: the catalog is published on agentregistry Enterprise (AGENTREGISTRY_EDITION=enterprise)"
   exit 0
@@ -38,10 +44,10 @@ docs=$(jq -n --argjson p "$parties" --argjson m "$mcps" --argjson a "$agents" --
           metadata: meta($ag.metadata.namespace; "\($ag.metadata.name)-instructions"),
           spec: {description: "\($ag.metadata.name)'"'"'s instructions", content: $d.systemMessage}}] else [] end)
       + [{apiVersion: ar, kind: "Agent",
-          metadata: meta($ag.metadata.namespace; $ag.metadata.name),
+          metadata: (meta($ag.metadata.namespace; $ag.metadata.name)
+            | .labels += {"lab.solo.io/model-provider": ($model.spec.provider // "" | ascii_downcase), "lab.solo.io/model": ($model.spec.model // "")}),
           spec: ({description: ($ag.spec.description // $ag.metadata.name), source: {protocol: "A2A"},
               compatibleHarnesses: [{type: "kagent"}],
-              modelProvider: ($model.spec.provider // ""), modelName: ($model.spec.model // ""),
               mcpServers: [$d.tools[]? | select(.type == "McpServer" and .mcpServer.kind == "RemoteMCPServer")
                 | {kind: "MCPServer", name: .mcpServer.name}]}
             + (if ($d.systemMessage // "") != "" then {instructions: {kind: "Prompt", name: "\($ag.metadata.name)-instructions"}} else {} end))}]
@@ -50,9 +56,24 @@ docs=$(jq -n --argjson p "$parties" --argjson m "$mcps" --argjson a "$agents" --
 # until an AccessPolicy grants a role more
 docs=$(jq --arg readers "$AGENTREGISTRY_READERS" '. + [{apiVersion: "ar.dev/v1alpha1", kind: "AccessPolicy",
   metadata: {name: "catalog-readers"},
-  spec: {description: "Browse the catalog: agents, MCP servers, prompts and skills",
+  spec: {description: "Browse the catalog (agents, MCP servers, prompts, skills), the runtimes and what runs there",
     principals: [$readers | split(" ")[] | select(. != "") | {kind: "Role", name: .}],
-    rules: [{actions: ["registry:read"], resources: [{kind: "agent", name: "*"}, {kind: "server", name: "*"}, {kind: "prompt", name: "*"}, {kind: "skill", name: "*"}]}]}}]' <<<"$docs")
+    rules: [{actions: ["registry:read"], resources: [{kind: "agent", name: "*"}, {kind: "server", name: "*"}, {kind: "prompt", name: "*"}, {kind: "skill", name: "*"},
+      {kind: "runtime", name: "*"}]}]}}]' <<<"$docs")
+# the kagent runtime: its client secret as a registry Secret, then the
+# Runtime that uses it to call the kagent controller
+runtime=none
+if [ "$KAGENT_EDITION" = enterprise ]; then
+  runtime=kagent
+  docs=$(jq --arg secret "$(lab_secret SV_AGENTREGISTRY_CLIENT_SECRET)" --arg issuer "https://idp.$SV_DOMAIN/realms/sterling-vance" '. + [
+    {apiVersion: "ar.dev/v1alpha1", kind: "Secret", metadata: {name: "kagent-oidc"},
+     spec: {type: "Opaque", stringData: {clientSecret: $secret}}},
+    {apiVersion: "ar.dev/v1alpha1", kind: "Runtime", metadata: {name: "kagent"},
+     spec: {type: "Kagent",
+       telemetryEndpoint: "http://agentregistry-enterprise-telemetry-collector.agentregistry.svc.cluster.local:4318",
+       config: {kagentUrl: "http://kagent-controller.kagent:8083", namespace: "sv-agents",
+         auth: {oidc: {issuer: $issuer, clientId: "agentregistry", clientSecretRef: {name: "kagent-oidc", key: "clientSecret"}}}}}}]' <<<"$docs")
+fi
 n_mcp=$(jq '[.[] | select(.kind == "MCPServer")] | length' <<<"$docs")
 n_agent=$(jq '[.[] | select(.kind == "Agent")] | length' <<<"$docs")
 n_prompt=$(jq '[.[] | select(.kind == "Prompt")] | length' <<<"$docs")
@@ -74,4 +95,12 @@ code=$(tail -1 <<<"$out")
 failed=$(sed '$d' <<<"$out" | jq -r '[.results[]? | select(.status == "failed") | "\(.kind) \(.namespace)/\(.name): \(.error)"] | .[:5][]')
 [ -z "$failed" ] || die "agentregistry refused some of the catalog:
 $failed"
-ok "published $n_agent agents, $n_prompt prompts and $n_mcp MCP servers, readable by: $AGENTREGISTRY_READERS (https://registry.$SV_DOMAIN)"
+ok "published $n_agent agents, $n_prompt prompts and $n_mcp MCP servers, readable by: $AGENTREGISTRY_READERS; runtime: $runtime (https://registry.$SV_DOMAIN)"
+if [ "$runtime" = kagent ]; then
+  # the registry connects to the kagent controller on its own; its discovery
+  # lists what runs there as unmanaged instances a moment later
+  synced=$(curl -s --cacert "$LAB_CA_DIR/ca.crt" -H @<(printf 'Authorization: Bearer %s\n' "$token") "https://registry.$SV_DOMAIN/v0/runtimes/kagent" \
+    | jq -r '[.status.conditions[]? | select(.type == "Synced") | .status][0] // "unknown"')
+  [ "$synced" = True ] && ok "runtime kagent: connected to the kagent controller (sv-agents)" \
+    || warn "runtime kagent: not synced yet ($synced): GET /v0/runtimes/kagent says why"
+fi

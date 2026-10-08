@@ -42,7 +42,7 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | `sv-workforce` | Keycloak `workforce` (S&V's own IdP, `login.sterling.lab`; password and a one-time code) | `keycloak` | S&V | edge (browsers, and in-lab callers of `login.sterling.lab`); continuity-sync (admin API) |
 | `sv-contingency` | Keycloak `contingency` (S&V's contingency IdP, `login-dr.sterling.lab`; password only) | `keycloak` | S&V | edge only |
 | `sv-egress` | `egress-waypoint` (Istio waypoint for external upstream IdPs) | `egress-waypoint` | S&V | the broker's Keycloak, continuity-controller, continuity-sync, idtoken-exchange, xaa-relay, observatory |
-| `kagent` | controller, UI, tools | `kagent-*` | S&V | UI: edge (after sign-in); controller: the UI and the agents' worker pools; tools: the ops agents. The controller's RBAC covers only `kagent`, `sv-agents` and `sv-mcp` |
+| `kagent` | controller, UI, tools | `kagent-*` | S&V | UI: edge (after sign-in); controller: the UI, the agents' worker pools, the Observatory, and on Enterprise agentregistry (its kagent runtime); tools: the ops agents. The controller's RBAC covers only `kagent`, `sv-agents` and `sv-mcp` |
 | `kagent` | ops agents (k8s, istio, helm, promql, kgateway): SandboxAgents on pool `kagent-ops` | `kagent-ops` | S&V | atenet-router only |
 | `ate-system` | Agent Substrate: ate-api, atenet-router, atelet, ate-controller, valkey, rustfs | one SA per component | platform | ate-api and router: kagent controller only; the rest: `ate-system` only |
 | `agentgateway-system` | ai-gateway (LLM + MCP) | `ai-gateway` | S&V | the agents' worker pools, by ServiceAccount (models, Cross App Access); the kagent controller (Ledgerline's public catalog) |
