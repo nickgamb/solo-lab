@@ -10,7 +10,8 @@
 #             the one it asked in
 #   guards    prompts that try to override the agent's instructions are
 #             refused; card and social security numbers are masked before
-#             the prompt leaves for the provider, and again in the answer
+#             the prompt leaves for the provider, and again in the answer;
+#             tool results are masked too, account numbers with them
 apiVersion: ${AGW_POLICY_API}
 kind: ${AGW_POLICY_KIND}
 metadata:
@@ -43,6 +44,14 @@ spec:
         - regex:
             action: Mask
             builtins: [CreditCard, Ssn]
+        # what tools returned, on its way to the model: the same, and account
+        # numbers (runs of 8 to 17 digits). The MCP guard (sv-mcp) masks tool
+        # results before the agent; this holds for every tool, MCP or not.
+        - regex:
+            action: Mask
+            builtins: [CreditCard, Ssn]
+            matches: ['\b[0-9]{8,17}\b']
+          scope: [ToolOutput]
         response:
         - regex:
             action: Mask

@@ -165,6 +165,19 @@ else
   if [ "$(echo "$out" | tail -1)" = 200 ] && ! echo "$seen" | grep -qE '123-45-6789|4111 1111'; then
     res ok "card and SSN masked before the model sees them (and in its answer)"
   else res no "card and SSN masked before the model sees them (and in its answer)" "$(echo "$out" | tail -1) ${seen:0:200}"; fi
+  # a tool's result on its way back to the model: account numbers masked too
+  out=$(jq -nc '{model: "any", max_tokens: 200, messages: [
+      {role: "system", content: "You repeat tool results verbatim and nothing else."},
+      {role: "user", content: "What is my account number? Use the tool."},
+      {role: "assistant", content: null, tool_calls: [{id: "c1", type: "function", function: {name: "account_lookup", arguments: "{}"}}]},
+      {role: "tool", tool_call_id: "c1", content: "Account number 4402918837 for Bob"},
+      {role: "user", content: "Repeat the tool result exactly."}]}' \
+    | K exec -i -n sv-agents probe-bob-assistant -- sh -c \
+      "curl -s -m 180 -w '\n%{http_code}' http://ai-gateway.agentgateway-system/v1/chat/completions -H 'content-type: application/json' -d @-")
+  seen=$(echo "$out" | sed '$d' | jq -r '[.choices[0].message.content, (.choices[0].message.reasoning_content // .choices[0].message.reasoning // "")] | join(" ")' 2>/dev/null)
+  if [ "$(echo "$out" | tail -1)" = 200 ] && ! echo "$seen" | grep -q '4402918837'; then
+    res ok "an account number in a tool's result masked before the model sees it"
+  else res no "an account number in a tool's result masked before the model sees it" "$(echo "$out" | tail -1) ${seen:0:200}"; fi
 fi
 
 # a developer outside the mesh, at https://llm.<firm>: an API key, either API
