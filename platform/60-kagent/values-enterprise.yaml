@@ -1,4 +1,4 @@
-# Solo Enterprise for kagent 0.5.9: the same agent model as OSS (SandboxAgents
+# Solo Enterprise for kagent 0.5.10: the same agent model as OSS (SandboxAgents
 # on Agent Substrate 0.0.9, which layer 50 installs), with its own controller
 # that verifies every user token against S&V's Keycloak. docs/ENTERPRISE.md
 # lists what changes against OSS + tools/kagent.

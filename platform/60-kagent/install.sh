@@ -3,8 +3,8 @@
 #   model   -> agentgateway (no provider key in kagent, ever)
 #   runtime -> pods, or Agent Substrate for SandboxAgents
 #   traces  -> otel-collector
-#   oss:        kagent 0.10.2 + tools/kagent
-#   enterprise: Solo Enterprise for kagent 0.5.9 + tools/kagent's Go ADK
+#   oss:        kagent 0.10.3 + tools/kagent
+#   enterprise: Solo Enterprise for kagent 0.5.10 + tools/kagent's Go ADK
 . "$(dirname "$0")/../../scripts/lib.sh"
 D="$(cd "$(dirname "$0")" && pwd)"
 need_cluster

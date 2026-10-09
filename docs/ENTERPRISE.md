@@ -83,9 +83,9 @@ does with a key it doesn't accept:
 | Product | OSS | Enterprise |
 | --- | --- | --- |
 | [Istio](https://docs.solo.io/istio/) | upstream 1.31.1 | Solo Enterprise for Istio `1.31.1-solo` |
-| [kgateway](https://docs.solo.io/kgateway/) | 2.4.5, GatewayClass `kgateway` | Solo Enterprise for kgateway 2.3.5, `enterprise-kgateway` |
-| [agentgateway](https://docs.solo.io/agentgateway/) | 1.6.0, `agentgateway` | Solo Enterprise for agentgateway v2026.9.2, `enterprise-agentgateway` |
-| [kagent](https://docs.solo.io/kagent/) | 0.10.2 + `tools/kagent` | Solo Enterprise for kagent 0.5.9 + `tools/kagent`'s Go ADK |
+| [kgateway](https://docs.solo.io/kgateway/) | 2.4.6, GatewayClass `kgateway` | Solo Enterprise for kgateway 2.3.5, `enterprise-kgateway` |
+| [agentgateway](https://docs.solo.io/agentgateway/) | 1.6.0, `agentgateway` | Solo Enterprise for agentgateway v2026.9.3, `enterprise-agentgateway` |
+| [kagent](https://docs.solo.io/kagent/) | 0.10.3 + `tools/kagent` | Solo Enterprise for kagent 0.5.10 + `tools/kagent`'s Go ADK |
 | [agentregistry](https://docs.solo.io/agentregistry/) | 0.4.0, behind edge SSO | agentregistry-enterprise 2026.9.0, its own sign-in |
 
 ## What changes, per product
@@ -119,7 +119,7 @@ letting only the edge reach it. It needs an Enterprise-level licence.
 
 ### kagent
 
-0.5.9 keeps OSS kagent's agent model: SandboxAgents on Agent Substrate 0.0.9
+0.5.10 keeps OSS kagent's agent model: SandboxAgents on Agent Substrate 0.0.9
 (layer 50), the same CRDs and the same controller API, so the agents and
 checks carry over.
 

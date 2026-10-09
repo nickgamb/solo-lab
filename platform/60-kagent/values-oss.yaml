@@ -1,4 +1,4 @@
-# OSS kagent v0.10.2 + tools/kagent (upstream PR candidates): two SandboxAgent
+# OSS kagent v0.10.3 + tools/kagent (upstream PR candidates): two SandboxAgent
 # fixes (callback auth in the Go ADK, suspend race). The controller pins the
 # patched golang-adk by digest; other runtimes are the release's.
 controller:

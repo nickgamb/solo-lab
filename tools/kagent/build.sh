@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Build kagent v0.10.2 + patches/ exactly as upstream `make build-controller`
+# Build kagent v0.10.3 + patches/ exactly as upstream `make build-controller`
 # does: same Dockerfile, same version ldflags, and the runtime-image digests of
-# the RELEASED 0.10.2 images (released-digests.env, verified against the
+# the RELEASED 0.10.3 images (released-digests.env, verified against the
 # released controller binary) for every runtime image the patches don't touch.
 #   golang-adk       built from the patched source (0001), pushed here
 #   golang-adk-full  the released index, mirrored here by digest (one registry
@@ -12,13 +12,13 @@
 # which must be under .lab: it is emptied first).
 . "$(dirname "$0")/../../scripts/lib.sh"
 cd "$(dirname "$0")" || exit 1
-TAG=${TAG:-${KAGENT_LAB_TAG:-0.10.2-lab.4}}
+TAG=${TAG:-${KAGENT_LAB_TAG:-0.10.3-lab.1}}
 REG=${REG:-localhost:${LAB_REGISTRY_PORT:-5001}}
 IMG=${IMG:-$REG/kagent-dev/kagent/controller:$TAG}
 ADK=$REG/kagent-dev/kagent/golang-adk
 SRC=$(build_src kagent-build)
-git -c advice.detachedHead=false clone -q --depth 1 --branch v0.10.2 https://github.com/kagent-dev/kagent.git "$SRC" \
-  || die "cloning kagent v0.10.2 failed"
+git -c advice.detachedHead=false clone -q --depth 1 --branch v0.10.3 https://github.com/kagent-dev/kagent.git "$SRC" \
+  || die "cloning kagent v0.10.3 failed"
 git -C "$SRC" -c user.name=lab -c user.email=lab@solo.lab am -q "$PWD"/patches/*.patch || die "kagent patches don't apply"
 set -a; . ./released-digests.env; set +a
 V=github.com/kagent-dev/kagent/go/core/internal/version

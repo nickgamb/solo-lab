@@ -1,6 +1,6 @@
-# kagent 0.10.2 patches (upstream PR candidates)
+# kagent 0.10.3 patches (upstream PR candidates)
 
-Two patches against v0.10.2, each its own upstream PR. `./build.sh` builds
+Two patches against v0.10.3, each its own upstream PR. `./build.sh` builds
 the controller and the Go ADK from them. Both editions run the Go ADK from
 here (kagent-enterprise pins it by digest); only OSS runs the controller.
 
@@ -33,11 +33,11 @@ resumes. Test: `TestSessionTurns_SuspendNeverLandsOnANewerTurn`.
 
 ## Build
 
-`./build.sh` → `localhost:5001/kagent-dev/kagent/{controller,golang-adk}:0.10.2-lab.4`.
+`./build.sh` → `localhost:5001/kagent-dev/kagent/{controller,golang-adk}:0.10.3-lab.1`.
 It reproduces `make build-controller`: the upstream Dockerfile, version
 ldflags, and the runtime-image digests baked into the controller. golang-adk
 is built from the patched source; every other runtime image keeps the
-**released** 0.10.2 digest (`released-digests.env`, checked against the
+**released** 0.10.3 digest (`released-digests.env`, checked against the
 released controller binary), and golang-adk-full is mirrored here by digest
 because one registry (`controller.goAgentImage.registry`) serves both Go
 variants. Each build re-snapshots every SandboxAgent (a new golang-adk digest

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Agent Substrate: agents as snapshot-backed actors in gVisor sandboxes on a
 # small pool of pre-warmed workers (thousands of agents on tens of pods).
-#   substrate 0.0.9, the pairing kagent 0.10.x and kagent-enterprise 0.5.9 vendor
+#   substrate 0.0.9, the pairing kagent 0.10.x and kagent-enterprise 0.5.10 vendor
 #   (kagent-enterprise 1.0 pairs with 0.2.x, docs/ENTERPRISE.md)
 # ate-system is in the ambient mesh like every platform namespace (mesh.yaml).
 . "$(dirname "$0")/../../scripts/lib.sh"
