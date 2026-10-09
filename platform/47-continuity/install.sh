@@ -15,13 +15,18 @@ need_cluster
 # known IdPs only, each once, at least one with an issuer.
 . "$LAB_ROOT/scripts/idp.sh"
 CHAIN=$(idp_chain) || exit 1
-# Auth0 as a directory (the directory sync) takes both halves of its Machine to
-# Machine app's credentials, or neither
-AUTH0_DIRECTORY=
-if [ -n "${AUTH0_DIRECTORY_CLIENT_ID:-}" ] && [ -n "${AUTH0_DIRECTORY_CLIENT_SECRET:-}" ]; then AUTH0_DIRECTORY=1
-elif [ -n "${AUTH0_DIRECTORY_CLIENT_ID:-}${AUTH0_DIRECTORY_CLIENT_SECRET:-}" ]; then
-  die "Auth0 as a directory needs both AUTH0_DIRECTORY_CLIENT_ID and AUTH0_DIRECTORY_CLIENT_SECRET in .env (or neither)"
-fi
+# has_directory <name>: whether the directory sync reaches the IdP's users. A
+# directory takes its type, URL and both halves of its client's credentials,
+# or none of the credentials.
+has_directory() {
+  local N; N=$(echo "$1" | tr '[:lower:]' '[:upper:]')
+  [ -n "$(_idp_var "$1" DIRECTORY_TYPE)" ] || return 1
+  if [ -z "$(_idp_var "$1" DIRECTORY_CLIENT_ID)$(_idp_var "$1" DIRECTORY_CLIENT_SECRET)" ]; then return 1; fi
+  [ -n "$(_idp_var "$1" DIRECTORY_CLIENT_ID)" ] && [ -n "$(_idp_var "$1" DIRECTORY_CLIENT_SECRET)" ] \
+    || die "$1 as a directory needs both ${N}_DIRECTORY_CLIENT_ID and ${N}_DIRECTORY_CLIENT_SECRET in .env (or neither)"
+  [ -n "$(_idp_var "$1" DIRECTORY_URL)" ] || die "$1 as a directory needs ${N}_DIRECTORY_URL in .env"
+}
+for n in $CHAIN; do has_directory "$n" || true; done
 
 step "continuity-controller image (local registry)"
 # tagged by source content, so a code change is a new image and a rollout
@@ -43,22 +48,14 @@ secret_apply sv-identity continuity-controller \
 # the scheduled profile sync's realm client (users' profile attributes only)
 secret_apply sv-identity continuity-sync \
   client-id=continuity-sync client-secret="$(lab_secret SV_CONTINUITY_SYNC_CLIENT_SECRET)"
-# Auth0 as a directory: its Management API app, in .env
-if [ -n "$AUTH0_DIRECTORY" ]; then
-  secret_apply sv-identity directory-auth0 \
-    client-id="$AUTH0_DIRECTORY_CLIENT_ID" client-secret="$AUTH0_DIRECTORY_CLIENT_SECRET"
-  credentials directory-auth0
-fi
-# the sync reads S&V's workforce IdP's users with its view-users client there
-secret_apply sv-identity directory-keycloak \
-  client-id=continuity-directory client-secret="$(lab_secret SV_WORKFORCE_DIRECTORY_SECRET)"
-credentials directory-keycloak
-secret_apply sv-identity directory-contingency \
-  client-id=continuity-directory client-secret="$(lab_secret SV_CONTINGENCY_DIRECTORY_SECRET)"
-credentials directory-contingency
-for n in $IDP_UPSTREAMS; do
-  case " $CHAIN " in *" $n "*) ;; *) continue ;; esac
+for n in $CHAIN; do
   N=$(echo "$n" | tr '[:lower:]' '[:upper:]')
+  # the directory sync's client at the IdP's directory
+  if has_directory "$n"; then
+    secret_apply sv-identity "directory-$n" \
+      client-id="$(_idp_var "$n" DIRECTORY_CLIENT_ID)" client-secret="$(idp_secret "$n" DIRECTORY_CLIENT_SECRET)"
+    credentials "directory-$n"
+  fi
   if [ -z "$(_idp_var "$n" CLIENT_ID)" ]; then
     warn "$n tier is NotConfigured until ${N}_CLIENT_ID is in .env (then re-run this layer)"
   elif [ "$(idp_client_auth "$n")" = private_key_jwt ]; then
@@ -66,7 +63,7 @@ for n in $IDP_UPSTREAMS; do
     ok "$n: private_key_jwt with S&V's broker key (make xaa-keys for its JWKS)"
   else
     secret_apply sv-identity "upstream-$n" \
-      client-id="$(_idp_var "$n" CLIENT_ID)" client-secret="$(_idp_var "$n" CLIENT_SECRET)"
+      client-id="$(_idp_var "$n" CLIENT_ID)" client-secret="$(idp_secret "$n" CLIENT_SECRET)"
     credentials "upstream-$n"
     ok "$n: client_secret_post (sv-identity/upstream-$n)"
   fi
@@ -81,6 +78,11 @@ ok "external upstreams leave through sv-egress/egress-waypoint"
 step "IdentityContinuity and WorkloadProfile CRDs + controller (sv-identity)"
 K apply --server-side -f "$APP/config/crd" >/dev/null
 K wait crd/identitycontinuities.continuity.lab.solo.io crd/workloadprofiles.continuity.lab.solo.io --for=condition=Established --timeout=60s >/dev/null
+# each IdP's client and directory Secrets, by name: the controller reads the
+# first, the sync the second
+CONTINUITY_UPSTREAM_SECRETS=$(for n in $CHAIN; do printf ', upstream-%s' "$n"; done)
+CONTINUITY_DIRECTORY_SECRETS=$(for n in $CHAIN; do printf ', directory-%s' "$n"; done)
+export CONTINUITY_UPSTREAM_SECRETS CONTINUITY_DIRECTORY_SECRETS
 apply_tmpl "$D/controller.yaml"
 # the assurance gate: the same image, its gate command
 apply_tmpl "$D/assurance-gate.yaml"
@@ -89,55 +91,47 @@ apply_tmpl "$D/assurance-gate.yaml"
 K delete clusterrolebinding,clusterrole continuity-controller-partitions --ignore-not-found >/dev/null
 rollout sv-identity deploy/continuity-controller
 rollout sv-identity deploy/assurance-gate
-# What each IdP's sign-ins prove (NIST 800-63B levels), by the acr or amr it
-# asserts: S&V's own IdPs by their level of authentication; the vendors' as
-# they publish them. A sign-in asserting none of them is its default, AAL1:
-# an IdP whose policy for S&V's client always takes a second factor says so
-# in config/continuity.local.yaml (or the Observatory) with default: AAL2.
-ASSURANCE='{
-  "keycloak": {"levels": [{"acr": "aal1", "level": "AAL1"}, {"acr": "aal2", "level": "AAL2"}], "default": "AAL1"},
-  "contingency": {"levels": [{"acr": "aal1", "level": "AAL1"}], "default": "AAL1"},
-  "auth0": {"levels": [{"amr": "mfa", "level": "AAL2"},
-    {"acr": "http://schemas.openid.net/pape/policies/2007/06/multi-factor", "level": "AAL2"}], "default": "AAL1"},
-  "okta": {"levels": [{"acr": "urn:okta:loa:2fa:any", "level": "AAL2"},
-    {"acr": "phr", "level": "AAL2", "phishingResistant": true}, {"acr": "phrh", "level": "AAL3", "phishingResistant": true}], "default": "AAL1"},
-  "gluu": {"levels": [{"acr": "fido2", "level": "AAL2", "phishingResistant": true}], "default": "AAL1"}}'
 # The tiers follow ENTERPRISE_IDP: which IdPs and in what order, then the
-# broker's break-glass accounts (platform admins only). Each existing tier
-# keeps its failover rules, attribute mappings, directory and assurance (the operators' and
-# the Observatory's); issuers and token settings follow .env. For an IdP that
+# broker's break-glass accounts (platform admins only), each from its NAME_*
+# settings (config/lab.env). Each existing tier keeps its failover rules,
+# attribute mappings, directory and assurance (the operators' and the
+# Observatory's); issuers and token settings follow .env. For an IdP that
 # issues ID-JAGs the broker keeps the user's tokens (storeTokens) so the
 # egress can have it vouch for them (docs/IDENTITY-FLOWS.md). No offline
 # access: the stored refresh token lives and dies with the user's session at
-# that IdP, so a logout there stops its ID-JAGs. S&V's own workforce and
-# contingency IdPs come with their directories and an attribute mapping, for
-# the directory sync.
+# that IdP, so a logout there stops its ID-JAGs.
+# What each IdP's sign-ins prove (NAME_ASSURANCE, NIST 800-63B levels by the
+# acr or amr it asserts): a sign-in asserting none of them is its default,
+# AAL1. An IdP whose policy for S&V's client always takes a second factor says
+# so in config/continuity.local.yaml (or the Observatory) with default: AAL2.
+# A directory's attribute mapping follows its type: where its records keep
+# the email and names.
+DIRECTORY_ATTRIBUTES='{
+  "auth0": [{"attribute": "email", "path": "email"}, {"attribute": "firstName", "path": "given_name"}, {"attribute": "lastName", "path": "family_name"}],
+  "keycloak": [{"attribute": "email", "path": "email"}, {"attribute": "firstName", "path": "firstName"}, {"attribute": "lastName", "path": "lastName"}],
+  "scim": [{"attribute": "email", "path": "emails[primary eq true].value"}, {"attribute": "firstName", "path": "name.givenName"}, {"attribute": "lastName", "path": "name.familyName"}]}'
 desired=$({ for n in $CHAIN; do
-  store=false; if echo " $IDP_ISSUES_IDJAG " | grep -q " $n "; then store=true; fi
+  store=false; if idp_issues_idjag "$n"; then store=true; fi
   dir=null
-  if [ "$n" = auth0 ] && [ -n "$AUTH0_DIRECTORY" ]; then
-    a=${AUTH0_ISSUER%/}
-    dir=$(jq -nc --arg a "$a" '{directory: {type: "auth0", url: "\($a)/api/v2", audience: "\($a)/api/v2/", credentialsRef: {name: "directory-auth0"}},
-      attributes: [{attribute: "email", path: "email"}, {attribute: "firstName", path: "given_name"}, {attribute: "lastName", path: "family_name"}]}')
+  if has_directory "$n"; then
+    dir=$(jq -nc --arg n "$n" --arg type "$(_idp_var "$n" DIRECTORY_TYPE)" --arg url "$(_idp_var "$n" DIRECTORY_URL)" \
+      --arg scopes "$(_idp_var "$n" DIRECTORY_SCOPES)" --arg aud "$(_idp_var "$n" DIRECTORY_AUDIENCE)" --argjson attrs "$DIRECTORY_ATTRIBUTES" '
+      {directory: ({type: $type, url: $url, credentialsRef: {name: "directory-\($n)"}}
+        + (if $scopes != "" then {scopes: ($scopes | split(" ") | map(select(. != "")))} else {} end)
+        + (if $aud != "" then {audience: $aud} else {} end)),
+       attributes: ($attrs[$type] // [{attribute: "email", path: "email"}])}')
   fi
-  if [ "$n" = keycloak ] && [ "$KEYCLOAK_ISSUER" = "https://login.$SV_DOMAIN/realms/workforce" ]; then
-    dir='{"directory": {"type": "keycloak", "url": "http://keycloak.sv-workforce.svc/admin/realms/workforce", "credentialsRef": {"name": "directory-keycloak"}},
-      "attributes": [{"attribute": "email", "path": "email"}, {"attribute": "firstName", "path": "firstName"}, {"attribute": "lastName", "path": "lastName"}]}'
-  fi
-  if [ "$n" = contingency ] && [ "$CONTINGENCY_ISSUER" = "https://login-dr.$SV_DOMAIN/realms/contingency" ]; then
-    dir='{"directory": {"type": "keycloak", "url": "http://keycloak.sv-contingency.svc/admin/realms/contingency", "credentialsRef": {"name": "directory-contingency"}},
-      "attributes": [{"attribute": "email", "path": "email"}, {"attribute": "firstName", "path": "firstName"}, {"attribute": "lastName", "path": "lastName"}]}'
-  fi
-  gclaim=$(_idp_var "$n" GROUPS_CLAIM); gclaim=${gclaim:-groups}
+  assurance=$(idp_setting "$n" ASSURANCE '{"default": "AAL1"}')
+  echo "$assurance" | jq -e . >/dev/null 2>&1 || die "$(echo "$n" | tr '[:lower:]' '[:upper:]')_ASSURANCE isn't JSON"
   jq -nc --arg n "$n" --arg iss "$(_idp_var "$n" ISSUER)" --arg cid "$(_idp_var "$n" CLIENT_ID)" \
-    --arg auth "$(idp_client_auth "$n")" --argjson store "$store" --argjson dir "$dir" --argjson assurance "$ASSURANCE" \
-    --arg gclaim "$gclaim" '{name: $n,
-    displayName: ({okta: "Okta", auth0: "Auth0", gluu: "Gluu", keycloak: "Sterling & Vance (Keycloak)", contingency: "Sterling & Vance (contingency)"}[$n] // $n), type: "oidc",
+    --arg auth "$(idp_client_auth "$n")" --argjson store "$store" --argjson dir "$dir" --argjson assurance "$assurance" \
+    --arg gclaim "$(idp_setting "$n" GROUPS_CLAIM groups)" --arg display "$(idp_setting "$n" DISPLAY_NAME "$n")" '{name: $n,
+    displayName: $display, type: "oidc",
     oidc: ({issuer: $iss, clientID: $cid, clientAuth: $auth}
       + (if $auth == "private_key_jwt" then {clientAssertionSigningAlg: "PS256"} else {clientSecretRef: {name: "upstream-\($n)"}} end)
       + (if $store then {scopes: ["openid", "email", "profile"], storeTokens: true} else {} end)),
     failoverWhen: {unreachable: true, serverError: true, invalidDiscovery: true, latencyAboveMs: 1500},
-    assurance: ($assurance[$n] // {default: "AAL1"}),
+    assurance: $assurance,
     groups: {claim: $gclaim}}
     + ($dir // {})'
 done

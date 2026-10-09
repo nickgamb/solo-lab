@@ -193,8 +193,54 @@ func (d *keycloakDir) SetGroups(ctx context.Context, id string, want, managed []
 	return nil
 }
 
-// ---- SCIM: the record's groups (read-only here; membership is written on
-// the Group resources, which the sync doesn't manage).
+// ---- SCIM: users a page at a time; the record's groups (read-only here;
+// membership is written on the Group resources, which the sync doesn't
+// manage).
+
+func (d *scim) List(ctx context.Context, first, max int) ([]Entry, error) {
+	var r struct {
+		Resources []map[string]any `json:"Resources"`
+	}
+	q := fmt.Sprintf("/Users?startIndex=%d&count=%d", first+1, max) // SCIM counts from 1
+	if err := d.call(ctx, http.MethodGet, q, nil, &r); err != nil {
+		return nil, err
+	}
+	out := make([]Entry, 0, len(r.Resources))
+	for _, u := range r.Resources {
+		id, _ := u["id"].(string)
+		email, verified := scimEmail(u)
+		out = append(out, Entry{ID: id, Email: email, Verified: verified})
+	}
+	return out, nil
+}
+
+// scimEmail is the user's primary email (else the first), and whether the
+// directory verified it: SCIM has no core attribute for that, so it is the
+// email's own "verified" or an extension's emailVerified (Gluu's), else
+// unknown.
+func scimEmail(u map[string]any) (string, *bool) {
+	var email string
+	var verified *bool
+	emails, _ := u["emails"].([]any)
+	for i, e := range emails {
+		m, _ := e.(map[string]any)
+		v, _ := m["value"].(string)
+		if p, _ := m["primary"].(bool); p || i == 0 {
+			email = v
+			if b, ok := m["verified"].(bool); ok {
+				verified = &b
+			}
+		}
+	}
+	for k, ext := range u {
+		if m, ok := ext.(map[string]any); ok && strings.HasPrefix(k, "urn:") && verified == nil {
+			if b, ok := m["emailVerified"].(bool); ok {
+				verified = &b
+			}
+		}
+	}
+	return email, verified
+}
 
 func (d *scim) Groups(ctx context.Context, id string) ([]string, error) {
 	rec, err := d.User(ctx, id)

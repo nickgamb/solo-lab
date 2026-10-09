@@ -573,3 +573,32 @@ func TestGroupsFromThePrimaryIntoTheBrokerAndOut(t *testing.T) {
 		t.Fatalf("failover groups %v", got)
 	}
 }
+
+func TestSCIMList(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			tokenOK(w)
+			return
+		}
+		if r.URL.Path != "/scim/v2/Users" || r.URL.Query().Get("startIndex") != "1" || r.URL.Query().Get("count") != "2" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Write([]byte(`{"Resources":[
+			{"id":"inum-bob","emails":[{"value":"x@y"},{"value":"bob@sterling.lab","primary":true}],
+			 "urn:ietf:params:scim:schemas:extension:gluu:2.0:User":{"emailVerified":true}},
+			{"id":"inum-eve","emails":[{"value":"eve@sterling.lab"}]}]}`))
+	}))
+	defer srv.Close()
+	d, _ := New("scim", srv.URL+"/scim/v2", Credentials{TokenURL: srv.URL + "/token", ClientID: "c", ClientSecret: "s"}, srv.Client())
+	page, err := d.(Lister).List(context.Background(), 0, 2)
+	if err != nil || len(page) != 2 {
+		t.Fatalf("list: %v %v", page, err)
+	}
+	if b := page[0]; b.ID != "inum-bob" || b.Email != "bob@sterling.lab" || b.Verified == nil || !*b.Verified {
+		t.Fatalf("bob: %+v (want his primary email, verified by the extension)", b)
+	}
+	if e := page[1]; e.Email != "eve@sterling.lab" || e.Verified != nil {
+		t.Fatalf("eve: %+v (want her only email, verification unknown)", e)
+	}
+}

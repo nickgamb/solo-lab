@@ -50,10 +50,18 @@
             <span class="where">Settings</span>
             <div class="cmdwrap"><code class="cmd">cp .env.example .env</code></div>
           </td>
-          <td class="say">Set <strong>ENTERPRISE_IDP=gluu,keycloak</strong>, <strong>GLUU_ISSUER</strong>, <strong>GLUU_CLIENT_ID</strong>, <strong>RESOURCE_AS=gluu</strong>, <strong>RESOURCE_AS_ISSUER</strong>.</td>
+          <td class="say">Set <strong>ENTERPRISE_IDP=gluu,auth0,keycloak,contingency</strong>, <strong>GLUU_ISSUER</strong>, <strong>GLUU_CLIENT_ID</strong>, <strong>RESOURCE_AS=gluu</strong>, <strong>LEDGERLINE_GLUU_ISSUER</strong>, <strong>LEDGERLINE_GLUU_CLIENT_ID</strong>, <strong>GLUU_DIRECTORY_CLIENT_ID</strong>, <strong>GLUU_DIRECTORY_CLIENT_SECRET</strong>.</td>
         </tr>
         <tr class="term">
           <td class="num">3</td>
+          <td class="act">
+            <span class="where">Keys</span>
+            <div class="cmdwrap"><code class="cmd">make xaa-keys</code></div>
+          </td>
+          <td class="say">Register S&amp;V's public keys at both Gluu servers before the build (docs/GLUU.md, Run it).</td>
+        </tr>
+        <tr class="term">
+          <td class="num">4</td>
           <td class="act">
             <span class="where">Build the lab</span>
             <div class="cmdwrap"><code class="cmd">make up</code></div>
@@ -61,15 +69,15 @@
           <td class="say">Every layer and demo, with Gluu in both roles.</td>
         </tr>
         <tr class="port">
-          <td class="num">4</td>
+          <td class="num">5</td>
           <td class="act">
             <span class="where">Right screen, once</span>
-            <span class="click">Sign in to kagent as <strong>bob</strong> at Gluu, then to <strong>https://idp.ledgerline.lab/realms/ledgerline/account</strong> through Gluu</span>
+            <span class="click">Sign in to kagent as <strong>bob</strong> at Gluu</span>
           </td>
-          <td class="say">Links Bob's Gluu account at S&amp;V and at Ledgerline.</td>
+          <td class="say">Enrolls his passkey; S&amp;V's broker links his account by verified email.</td>
         </tr>
         <tr class="term">
-          <td class="num">5</td>
+          <td class="num">6</td>
           <td class="act">
             <span class="where">Check</span>
             <div class="cmdwrap"><code class="cmd">make bob-verify</code></div>

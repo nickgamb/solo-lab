@@ -45,13 +45,11 @@ left out, so with no Auth0 tenant the lab signs people in through S&V's own
 Keycloak, then its contingency IdP. Failback is automatic
 (`platform/47-continuity/identitycontinuity.yaml`).
 
-| IdP | Where | Vouches for its users (ID-JAG) |
-| --- | --- | --- |
-| `okta` | `OKTA_ISSUER`, `OKTA_CLIENT_ID` | no: the broker vouches for those sign-ins |
-| `auth0` | `AUTH0_ISSUER`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | no: the broker vouches for those sign-ins |
-| `gluu` (experimental) | `GLUU_ISSUER`, `GLUU_CLIENT_ID` ([GLUU.md](GLUU.md)) | yes |
-| `keycloak` | S&V's own Keycloak: `https://login.sterling.lab`, realm `workforce`, namespace `sv-workforce` (layer 45), or `KEYCLOAK_ISSUER`; password and a one-time code | yes |
-| `contingency` | S&V's contingency IdP: `https://login-dr.sterling.lab`, realm `contingency`, namespace `sv-contingency` (layer 45), or `CONTINGENCY_ISSUER`; password only | no: the broker vouches for those sign-ins |
+Each IdP is configured by its name: `<NAME>_ISSUER`, `<NAME>_CLIENT_ID` and
+the rest of its settings ([IDPS.md](IDPS.md#settings)). `keycloak` is the
+Keycloak S&V runs itself (`https://login.sterling.lab`, realm `workforce`:
+password and a one-time code), `contingency` its password-only IdP for when
+that one is down (`https://login-dr.sterling.lab`); both come with the lab.
 
 Every IdP in the chain is trusted for S&V's workforce: a user who signs in
 through it is linked to the S&V account with the same verified email. The
@@ -70,7 +68,7 @@ S&V's broker authenticates to an upstream with `private_key_jwt`
 (`tiers[].oidc.clientAuth`), signing with a PS256 realm key kept for that alone; its
 public half is in the realm's JWKS and in `make xaa-keys`
 (`sv-upstream-client.jwks.json`). An upstream given `<NAME>_CLIENT_SECRET` in
-`.env` uses `client_secret_post` instead (the Auth0 setup below).
+`.env` uses `client_secret_post` instead ([Auth0](IDPS.md#auth0-auth0)).
 
 Each upstream's ServiceEntry is exported to `sv-identity` and to the
 namespaces in `spec.egress.exportTo` (`agentgateway-system`, where S&V's
@@ -91,7 +89,7 @@ set (display name, enabled, drain, failover rules, attributes, directory);
 | `keycloak,contingency` | S&V's own Keycloak, else its contingency IdP (the default without an Auth0 tenant) |
 | `okta,auth0,keycloak` | Okta, else Auth0, else S&V's own Keycloak |
 | `keycloak,auth0` | S&V's own Keycloak, else Auth0 |
-| `gluu,keycloak` | Gluu, else S&V's own Keycloak ([GLUU.md](GLUU.md)) |
+| `gluu,auth0,keycloak,contingency` | Gluu, else Auth0, else S&V's own Keycloak, else its contingency IdP ([IDPS.md](IDPS.md#gluu-gluu)) |
 
 `make verify` and `make tour` sign Bob in through S&V's own Keycloak
 (password, then a one-time code they compute from his seed), so `keycloak`
@@ -669,157 +667,11 @@ decides comes from the assurance gate. Each IdP in the rule builder shows its
 trust checks as a badge, and the banner names the enforced rules failing
 closed.
 
-## Auth0 setup
+## IdP setup
 
-Tenant: `AUTH0_ISSUER` in `.env`, your tenant's issuer with its trailing
-slash (`https://<tenant>.us.auth0.com/`). Unset, auth0 is left out of the chain.
-
-1. **Applications → Create Application → Regular Web Application.** Settings:
-
-   | Field | Value |
-   | --- | --- |
-   | Allowed Callback URLs | `https://idp.sterling.lab/realms/sterling-vance/broker/auth0/endpoint` |
-   | Allowed Logout URLs | `https://idp.sterling.lab/realms/sterling-vance/broker/auth0/endpoint/logout_response` |
-   | Credentials → Authentication Method | Client Secret (Post) |
-   | Advanced → Grant Types | Authorization Code |
-
-   The `.lab` hosts only resolve on your machine. That's fine: Auth0 only
-   redirects the browser to them.
-
-2. **Connections:** enable only Username-Password-Authentication. In
-   Authentication → Database → Username-Password-Authentication, turn on
-   **Disable Sign Ups**.
-
-3. **Create the users** `bob@sterling.lab`, `carol@sterling.lab` and
-   `dana@sterling.lab` with passwords of your choice, and **mark their emails
-   verified** (edit the email on the user's page, or `PATCH
-   /api/v2/users/{id}` with `{"email_verified": true}` from the Management
-   API Explorer). The directory sync gives S&V an account for each verified
-   user under `sterling.lab`; unverified emails are refused.
-
-4. **Roles, and the claim that carries them.** User Management → Roles:
-   `advisors` (Bob), `platform-engineers` (Dana) and `compliance` (nobody, for
-   the compliance-only tool), with those names. Auth0 puts roles in no token
-   by itself: Actions → Library → Build Custom, trigger Login / Post Login,
-   deployed into the Login flow:
-
-   ```javascript
-   exports.onExecutePostLogin = async (event, api) => {
-     const roles = (event.authorization && event.authorization.roles) || [];
-     api.idToken.setCustomClaim('https://sterling.lab/groups', roles);
-   };
-   ```
-
-   The claim is namespaced because Auth0 drops custom claims that aren't
-   (`AUTH0_GROUPS_CLAIM`, this one unless set).
-
-5. **Give the lab the tenant and credentials** in `.env` (`auth0` is in the
-   default `ENTERPRISE_IDP`), then install the layer again:
-
-   ```
-   AUTH0_ISSUER=https://<tenant>.us.auth0.com/
-   AUTH0_CLIENT_ID=<Client ID>
-   AUTH0_CLIENT_SECRET=<Client Secret>
-   ```
-
-   ```bash
-   make layer-47
-   ```
-
-   This writes Secret `sv-identity/upstream-auth0`. Within three probes the
-   IdP is healthy and, with automatic failback, active:
-
-   ```bash
-   kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}'
-   ```
-
-Bob's groups come from his Auth0 roles: at each sign-in from the claim, and
-in the directory sync from the Management API.
-
-**Assurance:** Auth0 puts `amr: ["mfa"]` in the ID token when the sign-in
-took a second factor, which maps to AAL2. Without multi-factor
-authentication (Security → Multi-factor Auth), Auth0 sign-ins prove AAL1 and
-workloads that require more refuse them. If your tenant's policy always
-takes a second factor for S&V's application, say so in
-`config/continuity.local.yaml` (`tiers.auth0.assurance.default: AAL2`; the
-example file shows it).
-
-**Auth0 as a directory** (the directory sync): **Applications → Create
-Application → Machine to Machine Applications**, authorized for the **Auth0
-Management API** with `read:users`, `update:users`, `read:roles`,
-`read:role_members` and, to write roles to Auth0 as a failover,
-`create:roles` and `create:role_members`, `delete:role_members`. Nothing
-more: the sync never needs the tenant's settings. Its credentials in
-`.env`, then `make layer-47`:
-
-```
-AUTH0_DIRECTORY_CLIENT_ID=<Client ID>
-AUTH0_DIRECTORY_CLIENT_SECRET=<Client Secret>
-```
-
-This writes Secret `sv-identity/directory-auth0` and sets the auth0 IdP's
-directory (`https://<tenant>/api/v2`); map its attributes in the
-Observatory's Directory sync.
-
-## Gluu setup
-
-Gluu as S&V's enterprise IdP: [GLUU.md](GLUU.md#sv-enterprise-idp-gluu).
-
-## S&V's own Keycloak
-
-`keycloak` in `ENTERPRISE_IDP` is a Keycloak S&V runs itself, apart from the
-broker: layer 45 installs one in `sv-workforce` at
-`https://login.sterling.lab`, realm `workforce`, with the employees
-(`bob` / `bob-demo`, `carol` / `carol-demo`, `dana` / `dana-demo`). The broker's sign-ins there
-take a password and then a one-time code from an authenticator app (`acr
-aal2`). The employees' seeds are lab secrets (`SV_WORKFORCE_TOTP_<USER>` in
-`.lab/secrets.env`); `make totp` prints Bob's current code
-(`make totp EMPLOYEE=carol` for Carol's, `EMPLOYEE=dana` for Dana's). It is an upstream like the
-others: S&V's client there (`sterling-vance-broker`) authenticates with the
-broker's key and the egress's key (`private_key_jwt`), it issues ID-JAGs for
-the broker's sign-ins, and the directory sync reads and writes its users
-with `continuity-directory` (`view-users`, `manage-users`) over its admin
-API, which only the sync reaches. To use another Keycloak, set `KEYCLOAK_ISSUER` and
-`KEYCLOAK_CLIENT_ID` in `.env` and register the callback and keys as for any
-upstream.
-
-## S&V's contingency IdP
-
-`contingency` in `ENTERPRISE_IDP` is the IdP S&V keeps for when its own is
-down: layer 45 installs a Keycloak in `sv-contingency` at
-`https://login-dr.sterling.lab`, realm `contingency`, with its own accounts
-for the employees (`bob` / `bob-demo`, `carol` / `carol-demo`, `dana` / `dana-demo`) and a password
-only (`acr aal1`). S&V's client there (`sterling-vance-broker`) takes the
-broker's key, and its directory (`continuity-directory`, users' profiles only,
-never a credential) is wired into the directory sync as a failover, so the
-broker's users and their attributes reach it before it's needed. It is in its own namespace, so cutting S&V's own Keycloak
-leaves it up, and it is cut on its own (a DENY in `sv-contingency`). It
-doesn't issue ID-JAGs: the broker vouches for its sign-ins. Workloads that
-require more than a password fail closed while it signs people in.
-
-## Okta setup
-
-`OKTA_ISSUER` (your org's authorization server, e.g.
-`https://<org>.okta.com`) and `OKTA_CLIENT_ID` in `.env`, `okta` in
-`ENTERPRISE_IDP`. An OIDC web app integration: sign-in redirect URI
-`https://idp.sterling.lab/realms/sterling-vance/broker/okta/endpoint`,
-client authentication with a public key (the JWKS from `make xaa-keys`,
-`sv-upstream-client.jwks.json`), grant type Authorization Code, PKCE
-required. In Cross App Access the broker vouches for Okta sign-ins.
-
-## Another upstream IdP
-
-Any OIDC provider works (Entra ID, Ping, another Keycloak). In the
-rule builder, **+ Add OIDC IdP**: name, display name, issuer, client ID and
-secret. Register `<broker issuer>/broker/<name>/endpoint` as the app's
-callback (shown in the form and in `status.tiers[].redirectURI`), allow
-`openid email profile`, use `client_secret_post`, and make sure the IdP
-sends `email_verified: true` for the user. The rule builder also grants the
-controller read access to the new IdP's Secret. Editing `spec.tiers` by hand,
-create the Secret and add its name to Role `sv-identity/continuity-controller-secrets`
-(the controller reads Secrets by name only, and never lists or watches them).
-The layer knows `okta`, `auth0`, `gluu` and `keycloak`; another IdP added
-here is removed when the layer is re-run.
+Each IdP, the settings it takes and how to register S&V there:
+[IDPS.md](IDPS.md) (S&V's own Keycloak and contingency IdP, Auth0, Gluu,
+Okta, Ping, any other OIDC provider).
 
 ## Checks
 

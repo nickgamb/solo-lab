@@ -34,8 +34,8 @@ K get "$AGW_BACKEND_KIND" -n agentgateway-system -l lab.solo.io/xaa-idp -o yaml 
 for n in $(idp_xaa_upstreams); do
   (idp_discover "$(_idp_var "$n" ISSUER)") >"$out/discovery-$n.json" || warn "no discovery from $n: $out/discovery-$n.json is empty"
 done
-if [ "$RESOURCE_AS" = gluu ]; then
-  (idp_discover "$RESOURCE_AS_ISSUER") >"$out/discovery-resource-as.json" || warn "no discovery from Ledgerline's AS: $out/discovery-resource-as.json is empty"
+if ras_external; then
+  (idp_discover "$LEDGERLINE_AS_ISSUER") >"$out/discovery-resource-as.json" || warn "no discovery from Ledgerline's AS: $out/discovery-resource-as.json is empty"
 fi
 for f in "$out"/*; do printf '  %-28s %s lines\n' "$(basename "$f")" "$(wc -l <"$f" | tr -d ' ')"; done
 ok "Cross App Access trail: $out"

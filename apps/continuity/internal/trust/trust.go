@@ -29,11 +29,12 @@ const (
 	Assurance  = "Assurance"
 )
 
-// identityClaims are what the broker needs from every IdP's ID token: who
-// (sub), and the email it links the S&V user by. It also requires
-// email_verified at sign-in, which IdPs often issue without listing it in
-// claims_supported (Keycloak's doesn't), so its absence there is a note.
-var identityClaims = []string{"sub", "email"}
+// identityClaims are what the broker needs from every IdP's ID token beyond
+// sub, which every OpenID provider issues (OIDC Core 2) whether or not it
+// lists it in claims_supported (Gluu's doesn't): the email it links the S&V
+// user by. It also requires email_verified at sign-in, which IdPs often issue
+// without listing it (Keycloak's doesn't), so its absence there is a note.
+var identityClaims = []string{"email"}
 
 // Checks are an oidc tier's checks: its spec, the IdP's discovery and the
 // callback probe's outcome (probe.Callback*).
@@ -91,7 +92,7 @@ func Checks(t v1.Tier, d *probe.Discovery, callback, callbackMsg string) []v1.Tr
 	if len(d.ClaimsSupported) == 0 {
 		add(Claims, Unknown, "the IdP doesn't publish its claims")
 	} else if missing := without(identityClaims, d.ClaimsSupported); len(missing) > 0 {
-		add(Claims, Fail, "the broker links users by %s; the IdP doesn't issue %s", strings.Join(identityClaims, ", "), strings.Join(missing, ", "))
+		add(Claims, Fail, "the broker links users by sub, %s; the IdP doesn't issue %s", strings.Join(identityClaims, ", "), strings.Join(missing, ", "))
 	} else if !slices.Contains(d.ClaimsSupported, "email_verified") {
 		add(Claims, Pass, "sub, email (email_verified isn't listed; the broker requires it at sign-in)")
 	} else {

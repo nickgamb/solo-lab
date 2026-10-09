@@ -79,6 +79,15 @@ func TestEachMismatchFails(t *testing.T) {
 	}
 }
 
+// sub is in every ID token: an IdP that doesn't list it (Gluu) passes.
+func TestSubNeedNotBeListed(t *testing.T) {
+	d := keycloakDiscovery()
+	d.ClaimsSupported = []string{"email", "email_verified"}
+	if f := Failed(Checks(keycloakTier(), d, probe.CallbackRegistered, "msg")); len(f) != 0 {
+		t.Fatalf("failed %v", f)
+	}
+}
+
 // Many IdPs publish only part of discovery: what isn't published is Unknown,
 // never a failure.
 func TestUnpublishedIsUnknown(t *testing.T) {

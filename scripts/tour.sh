@@ -131,33 +131,35 @@ if scene 4 "Bob to Alice (UMA for agents)"; then
 fi
 
 if scene 5 "An IdP outage (identity continuity)"; then
-  if ! K get serviceentry continuity-auth0 -n sv-egress >/dev/null 2>&1 \
-     || [ "$(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}')" != auth0 ]; then
-    warn "the upstream IdP isn't signing people in (docs/IDENTITY-CONTINUITY.md#auth0-setup): skipping"
+  # the active IdP, when it is one S&V reaches through its egress (an external
+  # one); S&V's own are cut in their namespaces by make continuity-verify
+  IDP=$(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}')
+  if [ -z "$IDP" ] || ! K get serviceentry "continuity-$IDP" -n sv-egress >/dev/null 2>&1; then
+    warn "no external IdP is signing people in (docs/IDPS.md): skipping"
   else
-    look "Identity Continuity tab. The network to the upstream IdP is cut now, at S&V's egress."
-    on_exit "K delete authorizationpolicy continuity-partition-auth0 -n sv-egress --ignore-not-found >/dev/null 2>&1"
+    look "Identity Continuity tab. The network to $IDP is cut now, at S&V's egress."
+    on_exit "K delete authorizationpolicy continuity-partition-$IDP -n sv-egress --ignore-not-found >/dev/null 2>&1"
     K apply -f - >/dev/null <<YAML
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata:
-  name: continuity-partition-auth0
+  name: continuity-partition-$IDP
   namespace: sv-egress
-  labels: {continuity.lab.solo.io/tier: auth0}
-  annotations: {continuity.lab.solo.io/cut-by: make tour, continuity.lab.solo.io/path: "$(K get serviceentry continuity-auth0 -n sv-egress -o jsonpath='{.spec.hosts[0]}') at the sv-egress egress"}
+  labels: {continuity.lab.solo.io/tier: $IDP}
+  annotations: {continuity.lab.solo.io/cut-by: make tour, continuity.lab.solo.io/path: "$(K get serviceentry "continuity-$IDP" -n sv-egress -o jsonpath='{.spec.hosts[0]}') at the sv-egress egress"}
 spec:
-  targetRefs: [{group: networking.istio.io, kind: ServiceEntry, name: continuity-auth0}]
+  targetRefs: [{group: networking.istio.io, kind: ServiceEntry, name: continuity-$IDP}]
   action: DENY
   rules: [{}]
 YAML
     look "Banner: amber OUTAGE while failed checks count, then red FAILOVER ACTIVE."
-    t=$(date +%s); until [ "$(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}')" != auth0 ] || [ $(( $(date +%s) - t )) -gt 60 ]; do sleep 1; done
+    t=$(date +%s); until [ "$(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}')" != "$IDP" ] || [ $(( $(date +%s) - t )) -gt 60 ]; do sleep 1; done
     say "failed over to $(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}') after $(( $(date +%s) - t ))s"
-    look "A new sign-in to kagent now goes to the next IdP, S&V's own Keycloak. Bob's sessions keep working."
+    look "A new sign-in to kagent now goes to the next IdP. Bob's sessions keep working."
     next
-    K delete authorizationpolicy continuity-partition-auth0 -n sv-egress --ignore-not-found >/dev/null
+    K delete authorizationpolicy "continuity-partition-$IDP" -n sv-egress --ignore-not-found >/dev/null
     look "Network restored. Amber while healthy checks count, then it fails back and turns green."
-    t=$(date +%s); until [ "$(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}')" = auth0 ] || [ $(( $(date +%s) - t )) -gt 90 ]; do sleep 1; done
+    t=$(date +%s); until [ "$(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}')" = "$IDP" ] || [ $(( $(date +%s) - t )) -gt 90 ]; do sleep 1; done
     say "back on $(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}') after $(( $(date +%s) - t ))s"
   fi
   next

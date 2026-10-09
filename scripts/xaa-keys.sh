@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # xaa-keys: the public keys other parties register, into .lab/xaa/keys/. Every
 # key is stable across rebuilds (.lab/keys); private halves never leave the lab.
+# Runs before make up too, so the keys can be registered first.
 #
 #   sv-upstream-client.jwks.json  S&V's client at an upstream IdP (e.g. Gluu):
 #                                 the broker's key (Keycloak, PS256) and the
@@ -17,20 +18,13 @@
 #                                 S&V's IdPs
 . "$(dirname "$0")/lib.sh"
 . "$LAB_ROOT/scripts/idp.sh"
-need_cluster
+# no cluster needed: the keys are the lab's own (.lab/keys), made here if this
+# runs before make up, so they can be registered before the lab is built
 out="$LAB_STATE/xaa/keys"; mkdir -p "$out"
-for k in sv-xaa-client sv-egress-client; do realm_signing_key "$k"; done
 sv_upstream_client_jwks >"$out/sv-upstream-client.jwks.json"
-lp=$(free_port); port_forward sv-identity keycloak "$lp" 80
-certs=$(curl -sf "http://127.0.0.1:$lp/realms/sterling-vance/protocol/openid-connect/certs") || die "no JWKS from S&V's Keycloak"
 xaa_client_jwks >"$out/sv-ras-client.jwks.json"
-echo "$certs" | jq '{keys: [.keys[] | select(.use == "sig" and .alg == "RS256")]}' >"$out/sv-idp.jwks.json"
-curl -sf --cacert "$LAB_CA_DIR/ca.crt" "https://login.$SV_DOMAIN/realms/workforce/protocol/openid-connect/certs" \
-  | jq '{keys: [.keys[] | select(.use == "sig" and .alg == "RS256")]}' >"$out/sv-workforce.jwks.json" \
-  || die "no JWKS from S&V's own Keycloak"
-lp=$(free_port); port_forward ledgerline-identity keycloak "$lp" 80
-curl -sf "http://127.0.0.1:$lp/realms/ledgerline/protocol/openid-connect/certs" \
-  | jq '{keys: [.keys[] | select(.use == "sig" and .alg == "PS256")]}' >"$out/ledgerline-sso-client.jwks.json" \
-  || die "no JWKS from Ledgerline's Keycloak"
+kc_jwks sterling-vance RS256 >"$out/sv-idp.jwks.json"
+kc_jwks workforce RS256 >"$out/sv-workforce.jwks.json"
+kc_jwks ledgerline-sso-client PS256 >"$out/ledgerline-sso-client.jwks.json"
 for f in "$out"/*.json; do printf '  %-34s %s\n' "$(basename "$f")" "$(jq -r '[.keys[].kid] | join(", ")' "$f")"; done
 ok "public keys: $out"
