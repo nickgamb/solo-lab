@@ -19,7 +19,7 @@ BOB=$(sso_token bob bob-demo | jq -r '.access_token // empty') || BOB=""
 [ -n "$BOB" ] || die "could not sign Bob in"
 ALICE=$(user_token alice-identity alice alice-portal "" alice alice-demo) || ALICE=""
 [ -n "$ALICE" ] || die "could not sign Alice in (alice-portal, password grant)"
-probe_pod kagent kagent-ui; probe_pod sv-agents
+probe_pod "$KAGENT_UI_NS" "$KAGENT_UI_SA"; probe_pod sv-agents
 AS="https://as.$ALICE_DOMAIN"; CA=(--cacert "$LAB_CA_DIR/ca.crt")
 
 ask_bob() {  # ask_bob <question> -> the agent's last reply (what the UI shows), in a new session

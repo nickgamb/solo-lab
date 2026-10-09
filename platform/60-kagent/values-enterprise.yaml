@@ -31,7 +31,7 @@ rbac:
       + (has(claims.azp) && claims.azp == 'agentregistry' ? ['global.Writer'] : [])
     roleMappings:
       platform-admins: global.Admin
-      advisors: global.Writer
+      advisors: global.Reader
       admins: null
       readers: null
       writers: null
@@ -44,5 +44,6 @@ controller:
 
 substrate: {enabled: false}   # layer 50 owns Substrate (tools/substrate-mesh)
 
+# the UI is the Solo UI (layer 90), not the chart's own
 ui:
-  enabled: true
+  enabled: false

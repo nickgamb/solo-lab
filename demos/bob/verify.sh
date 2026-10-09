@@ -9,12 +9,20 @@ prefer_tier keycloak
 # Bob's access token as the edge forwards it after SSO (kagent)
 BOB=$(sso_token bob bob-demo | jq -r '.access_token // empty') || BOB=""
 [ -n "$BOB" ] || die "could not sign Bob in"
+# the token kagent's UI holds for Bob: on Enterprise the Solo UI's own sign-in
+# (client kagent-ui), on OSS the edge's (the same as above)
+CHAT_TOKEN=$BOB CHAT_VIA="kagent's UI"
+if [ "$KAGENT_EDITION" = enterprise ]; then
+  CHAT_TOKEN=$(ui_token bob bob-demo | jq -r '.access_token // empty') || CHAT_TOKEN=""
+  [ -n "$CHAT_TOKEN" ] || die "could not sign Bob in to the Solo UI (client kagent-ui)"
+  CHAT_VIA="the Solo UI"
+fi
 # someone else's ID token (Carol, another S&V employee), to try to swap in
 OTHER_ID=$(sso_token carol carol-demo | jq -r '.id_token // empty') || OTHER_ID=""
 [ -n "$OTHER_ID" ] || die "could not sign Carol in (her ID token is the one swapped in below)"
 # Bob's agent's workload identity (its worker pool's ServiceAccount), another
 # workload in the same namespace, and one in another namespace.
-probe_pod sv-agents bob-assistant; probe_pod sv-agents; probe_pod observability; probe_pod kagent kagent-ui
+probe_pod sv-agents bob-assistant; probe_pod sv-agents; probe_pod observability; probe_pod "$KAGENT_UI_NS" "$KAGENT_UI_SA"
 AGENT=sv-agents/probe-bob-assistant
 # Agents call the tool's own Service; the mesh carries every call into sv-mcp's
 # agentgateway waypoint. There is no gateway URL to remember, or to skip.
@@ -141,9 +149,21 @@ if ! why=$(llm_ready); then
   skipped "Bob's agent, in chat: needs the model ($why)"
 else
   ask='{jsonrpc:"2.0",id:"1",method:"message/send",params:{message:{role:"user",kind:"message",messageId:(now|tostring),contextId:$c,parts:[{kind:"text",text:"Which Ledgerline account am I using? Use account_info."}]}}}'
-  out=$(a2a_send "$BOB" "$(jq -nc --arg c "$(new_uuid)" "$ask")" | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"' 2>&1) || true
-  if echo "$out" | grep -qE "$CHAT"; then res ok "Bob's agent, in chat: Ledgerline's own account for Bob"
-  else res no "Bob's agent, in chat: Ledgerline's own account for Bob" "$out"; fi
+  out=$(a2a_send "$CHAT_TOKEN" "$(jq -nc --arg c "$(new_uuid)" "$ask")" | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"' 2>&1) || true
+  if echo "$out" | grep -qE "$CHAT"; then res ok "Bob's agent, in chat ($CHAT_VIA): Ledgerline's own account for Bob"
+  else res no "Bob's agent, in chat ($CHAT_VIA): Ledgerline's own account for Bob" "$out"; fi
+fi
+if [ "$KAGENT_EDITION" = enterprise ]; then
+  # the Solo UI calls kagent with Bob's own token; he reads, and chats as himself
+  api() { printf '%s\n' "$CHAT_TOKEN" | K exec -i -n "$KAGENT_UI_NS" "probe-$KAGENT_UI_SA" -- sh -c \
+    "read -r t; curl -s -m 30 -w '\n%{http_code}' -X $1 http://kagent-controller.kagent:8083$2 -H \"authorization: Bearer \$t\""; }
+  me=$(echo "$CHAT_TOKEN" | cut -d. -f2 | python3 -c 'import base64,json,sys; s=sys.stdin.read().strip(); print(json.loads(base64.urlsafe_b64decode(s+"="*(-len(s)%4)))["sub"])')
+  users=$(api GET /api/sessions | sed '$d' | jq -r '[.data[]?.user_id] | unique | join(",")' 2>/dev/null) || users=""
+  if [ "$users" = "$me" ]; then res ok "the Solo UI lists Bob's own sessions, no one else's"
+  else res no "the Solo UI lists Bob's own sessions, no one else's" "sessions of: ${users:-none}"; fi
+  code=$(api DELETE /api/agents/sv-agents/no-such-agent | tail -1)   # a write that changes nothing if allowed (404)
+  case "$code" in 401|403) res ok "an advisor (kagent Reader) changing an agent through the Solo UI: refused ($code)" ;;
+    *) res no "an advisor (kagent Reader) changing an agent through the Solo UI: refused" "HTTP $code" ;; esac
 fi
 
 step "The firm's model route: guards on every call"

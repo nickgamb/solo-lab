@@ -15,7 +15,7 @@ spec:
   obligations: [client-data, books-and-records]
   owner: Wealth platform
   workloads: [{namespace: sv-mcp, serviceAccount: bob-workspace}]
-  clients: [kagent]
+  clients: [kagent, kagent-ui]
   assurance: {minimum: AAL2}
 ---
 apiVersion: continuity.lab.solo.io/v1alpha1
@@ -28,7 +28,7 @@ spec:
   obligations: [third-party-data]
   owner: Research desk
   workloads: [{namespace: agentgateway-system, serviceAccount: ai-gateway}]
-  clients: [kagent]
+  clients: [kagent, kagent-ui]
   # the IdP that vouches for Bob to Ledgerline is the one signing him in
   sessions: ActiveIdPOnly
   assurance: {minimum: AAL2}
@@ -41,6 +41,6 @@ spec:
   description: The kagent console, where advisors talk to their agents
   criticality: Standard
   owner: Wealth platform
-  workloads: [{namespace: kagent, serviceAccount: kagent-ui}, {namespace: kagent, serviceAccount: kagent-controller}]
-  clients: [kagent]
+  workloads: [{namespace: kagent, serviceAccount: kagent-ui}, {namespace: solo-enterprise, serviceAccount: solo-enterprise-ui}, {namespace: kagent, serviceAccount: kagent-controller}]
+  clients: [kagent, kagent-ui]
   allowBreakGlass: true

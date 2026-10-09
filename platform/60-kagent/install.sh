@@ -34,7 +34,7 @@ values_for "$D" values "$ED"
 HELM_TIMEOUT=15m helm_up kagent "$KAGENT_CHART" "$KAGENT_VERSION" kagent ${VALS[@]+"${VALS[@]}"}
 # before the rollout: the enterprise controller restarts until it can read GatewayClasses
 [ "$ED" = enterprise ] && apply_tmpl "$D/enterprise.yaml"
-rollout kagent deploy/kagent-controller deploy/kagent-ui
+if [ "$ED" = enterprise ]; then rollout kagent deploy/kagent-controller; else rollout kagent deploy/kagent-controller deploy/kagent-ui; fi
 
 step "Ops agents on Agent Substrate (kagent-ops)"
 # The chart's built-in agents, rendered from the same chart and made
@@ -50,6 +50,15 @@ H template kagent "$KAGENT_CHART" --version "$KAGENT_VERSION" -n kagent ${VALS[@
 for a in $OPS; do wait_for "SandboxAgent $a Ready" 120 5 K wait "sandboxagent/$a" -n kagent --for=condition=Ready --timeout=2s; done
 ok "$OPS"
 
-step "Edge SSO: https://kagent.${SV_DOMAIN}"
-apply_tmpl "$D/edge-sso.yaml"
-ok "kgateway OAuth2 -> S&V Keycloak; access token forwarded to kagent"
+if [ "$ED" = enterprise ]; then
+  # the Solo UI (layer 90) is kagent's UI, with its own sign-in; earlier labs
+  # had the chart's UI behind the edge's SSO, and its /api route
+  K delete httproute kagent-ui kagent-api -n kagent --ignore-not-found >/dev/null
+  K delete trafficpolicies.gateway.kgateway.dev kagent-sso kagent-api-sso -n kagent --ignore-not-found >/dev/null
+  K delete authorizationpolicy kagent-controller-edge -n kagent --ignore-not-found >/dev/null
+  ok "kagent's UI: the Solo UI at https://kagent.${SV_DOMAIN} (layer 90)"
+else
+  step "Edge SSO: https://kagent.${SV_DOMAIN}"
+  apply_tmpl "$D/edge-sso.yaml"
+  ok "kgateway OAuth2 -> S&V Keycloak; access token forwarded to kagent"
+fi

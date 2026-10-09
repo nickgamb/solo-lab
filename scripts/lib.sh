@@ -601,11 +601,30 @@ sso_token() {
     | curl -s --cacert "$LAB_CA_DIR/ca.crt" "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/token" --data @-
 }
 
+# ui_token <user> <pass>: an S&V employee signs in to the Solo UI as in the
+# browser (its public client kagent-ui, authorization code with PKCE) through
+# the broker's active IdP, which must be one of S&V's own. Prints the tokens.
+ui_token() {
+  local verifier challenge state cb code
+  verifier=$(openssl rand -hex 32) state=$(openssl rand -hex 8)
+  challenge=$(printf '%s' "$verifier" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+  cb="https://kagent.$SV_DOMAIN/callback"
+  cb=$(browser_signin "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/auth?client_id=kagent-ui&response_type=code&scope=openid&redirect_uri=$(jq -rn --arg u "$cb" '$u|@uri')&state=$state&code_challenge=$challenge&code_challenge_method=S256" \
+    "$cb" "$1" "$2") || return 1
+  code=$(echo "$cb" | sed -nE 's/.*[?&]code=([^&]+).*/\1/p')
+  [ -n "$code" ] || { echo "ui_token: no code in $cb" >&2; return 1; }
+  _C=$code _V=$verifier _R="https://kagent.$SV_DOMAIN/callback" jq -rn \
+    '{grant_type: "authorization_code", client_id: "kagent-ui", code: $ENV._C, code_verifier: $ENV._V, redirect_uri: $ENV._R}
+     | to_entries | map("\(.key)=\(.value | @uri)") | join("&")' \
+    | curl -s --cacert "$LAB_CA_DIR/ca.crt" "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/token" --data @-
+}
+
 # a2a_send <access token> <json-rpc body>: one A2A turn with Bob's agent, sent
-# as kagent's UI would (from probe-kagent-ui, with the access token the edge
-# forwards). The token and body reach the pod on stdin.
+# as kagent's UI would (from a probe running as its service account,
+# KAGENT_UI_NS/KAGENT_UI_SA, with Bob's access token). The token and body
+# reach the pod on stdin.
 a2a_send() {
-  printf '%s\n%s\n' "$1" "$2" | K exec -i -n kagent probe-kagent-ui -- sh -c \
+  printf '%s\n%s\n' "$1" "$2" | K exec -i -n "$KAGENT_UI_NS" "probe-$KAGENT_UI_SA" -- sh -c \
     'read -r t; read -r b; curl -s -m 300 http://kagent-controller.kagent:8083/api/a2a-sandboxes/sv-agents/bob-assistant/ \
        -H "authorization: Bearer $t" -H "content-type: application/json" -d "$b"'
 }

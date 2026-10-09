@@ -36,7 +36,7 @@ prefer_tier keycloak
 BOB=$(sso_token bob bob-demo | jq -r '.access_token // empty') || BOB=""
 restore_tiers wait
 [ -n "$BOB" ] || die "could not get Bob's token"
-probe_pod kagent kagent-ui; probe_pod sv-agents bob-assistant; probe_pod sv-agents; probe_pod observability
+probe_pod "$KAGENT_UI_NS" "$KAGENT_UI_SA"; probe_pod sv-agents bob-assistant; probe_pod sv-agents; probe_pod observability
 AGENT=sv-agents/probe-bob-assistant   # Bob's agent's workload identity
 on_exit 'kill $(jobs -p) 2>/dev/null'
 ok "tokens for bob; probe pods in kagent, sv-agents, observability"

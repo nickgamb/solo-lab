@@ -1,47 +1,20 @@
 # What kagent-enterprise 0.5.10 needs beyond the chart, in this lab.
 #
-# Its UI image proxies /api to 127.0.0.1:8083 inside its own pod, where
-# nothing listens. The edge sends /api straight to the
-# controller instead, behind the same sign-in (kagent-sso), so the browser's
-# calls carry Bob's access token as before.
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: kagent-api
-  namespace: kagent
-spec:
-  parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-sterling}]
-  hostnames: ["kagent.${SV_DOMAIN}"]
-  rules:
-  - matches: [{path: {type: PathPrefix, value: /api}}]
-    backendRefs: [{name: kagent-controller, port: 8083}]
-    timeouts:
-      request: 1800s
----
-apiVersion: gateway.kgateway.dev/v1alpha1
-kind: TrafficPolicy
-metadata:
-  name: kagent-api-sso
-  namespace: kagent
-spec:
-  targetRefs:
-  - {group: gateway.networking.k8s.io, kind: HTTPRoute, name: kagent-api}
-  oauth2:
-    extensionRef: {name: kagent-sso}
----
-# The enterprise controller verifies every token itself, so the edge may reach
-# it too (the browser's /api calls, above).
+# Its UI is the Solo UI (the management chart, layer 90), at
+# https://kagent.${SV_DOMAIN}: it signs Bob in through S&V's IdP and calls the
+# controller with his token, which the controller verifies itself. Only the
+# Solo UI may reach the controller's API on that behalf.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata:
-  name: kagent-controller-edge
+  name: kagent-controller-solo-ui
   namespace: kagent
 spec:
   selector:
     matchLabels: {app.kubernetes.io/name: kagent, app.kubernetes.io/component: controller}
   action: ALLOW
   rules:
-  - from: [{source: {principals: [cluster.local/ns/kgateway-system/sa/edge]}}]
+  - from: [{source: {principals: [cluster.local/ns/solo-enterprise/sa/solo-enterprise-ui]}}]
     to: [{operation: {ports: ["8083"]}}]
 ---
 # The controller watches GatewayClasses (cluster-scoped). values.yaml scopes
