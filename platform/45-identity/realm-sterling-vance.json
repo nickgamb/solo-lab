@@ -19,6 +19,9 @@
       "realmRoles": [
         "local-only"
       ]
+    },
+    {
+      "name": "platform-engineers"
     }
   ],
   "users": [
@@ -101,6 +104,18 @@
       "enabled": true,
       "serviceAccountClientId": "agentregistry",
       "id": "5b0b0000-0000-4000-8000-0000000000c5"
+    },
+    {
+      "username": "dana",
+      "email": "dana@${SV_DOMAIN}",
+      "emailVerified": true,
+      "groups": [
+        "platform-engineers"
+      ],
+      "enabled": true,
+      "firstName": "Dana",
+      "lastName": "Okafor",
+      "id": "5b0b0000-0000-4000-8000-000000000da0"
     }
   ],
   "clients": [

@@ -31,6 +31,7 @@ rbac:
       + (has(claims.azp) && claims.azp == 'agentregistry' ? ['global.Writer'] : [])
     roleMappings:
       platform-admins: global.Admin
+      platform-engineers: global.Admin
       advisors: global.Reader
       admins: null
       readers: null

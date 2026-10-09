@@ -74,7 +74,8 @@ secret_apply sv-workforce kc-secrets \
   SV_WORKFORCE_DIRECTORY_SECRET="$(lab_secret SV_WORKFORCE_DIRECTORY_SECRET)" \
   SV_CLIENT_AT_LEDGERLINE="$SV_CLIENT_AT_LEDGERLINE" \
   SV_WORKFORCE_TOTP_BOB="$(lab_secret SV_WORKFORCE_TOTP_BOB)" \
-  SV_WORKFORCE_TOTP_CAROL="$(lab_secret SV_WORKFORCE_TOTP_CAROL)"
+  SV_WORKFORCE_TOTP_CAROL="$(lab_secret SV_WORKFORCE_TOTP_CAROL)" \
+  SV_WORKFORCE_TOTP_DANA="$(lab_secret SV_WORKFORCE_TOTP_DANA)"
 mkdir -p "$LAB_STATE/realm"
 workforce_realm "$D/realm-workforce.json" >"$LAB_STATE/realm/realm-workforce.json"
 KC_HOST=login KC_IMAGE="localhost:${LAB_REGISTRY_PORT}/$KC_IDJAG" \

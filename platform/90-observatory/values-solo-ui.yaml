@@ -37,14 +37,16 @@ ui:
     volumes: [{name: lab-ca, configMap: {name: lab-ca-bundle}}]
     volumeMounts: [{name: lab-ca, mountPath: /etc/lab-ca, readOnly: true}]
 # roles from the token's groups, the same mapping as kagent's controller
-# (platform/60-kagent/values-enterprise.yaml): platform admins administer
-# everything; advisors read, and chat with agents as themselves, each seeing
+# (platform/60-kagent/values-enterprise.yaml): platform engineers (an
+# employee group, signing in through the active IdP like everyone) and the
+# break-glass platform admins administer everything; advisors read, and chat with agents as themselves, each seeing
 # only their own sessions
 rbac:
   roleMapping:
     roleMapper: "has(claims.groups) ? claims.groups.transformList(i, v, v in rolesMap, rolesMap[v]) : []"
     roleMappings:
       platform-admins: global.Admin
+      platform-engineers: global.Admin
       advisors: global.Reader
     defaultRoles: []
   subjectMapping: {groupsClaim: groups}

@@ -164,6 +164,11 @@ if [ "$KAGENT_EDITION" = enterprise ]; then
   code=$(api DELETE /api/agents/sv-agents/no-such-agent | tail -1)   # a write that changes nothing if allowed (404)
   case "$code" in 401|403) res ok "an advisor (kagent Reader) changing an agent through the Solo UI: refused ($code)" ;;
     *) res no "an advisor (kagent Reader) changing an agent through the Solo UI: refused" "HTTP $code" ;; esac
+  # a platform engineer (group platform-engineers) administers kagent
+  DANA=$(ui_token dana dana-demo | jq -r '.access_token // empty') || DANA=""
+  code=$(CHAT_TOKEN=$DANA api DELETE /api/agents/sv-agents/no-such-agent | tail -1)
+  if [ "$code" = 404 ]; then res ok "a platform engineer (kagent Admin) through the Solo UI: may change agents (404 for no such agent)"
+  else res no "a platform engineer (kagent Admin) through the Solo UI: may change agents" "HTTP ${code:-no answer}"; fi
 fi
 
 step "The firm's model route: guards on every call"

@@ -717,11 +717,11 @@ Gluu as S&V's enterprise IdP: [GLUU.md](GLUU.md#sv-enterprise-idp-gluu).
 `keycloak` in `ENTERPRISE_IDP` is a Keycloak S&V runs itself, apart from the
 broker: layer 45 installs one in `sv-workforce` at
 `https://login.sterling.lab`, realm `workforce`, with the employees
-(`bob` / `bob-demo`, `carol` / `carol-demo`). The broker's sign-ins there
+(`bob` / `bob-demo`, `carol` / `carol-demo`, `dana` / `dana-demo`). The broker's sign-ins there
 take a password and then a one-time code from an authenticator app (`acr
 aal2`). The employees' seeds are lab secrets (`SV_WORKFORCE_TOTP_<USER>` in
 `.lab/secrets.env`); `make totp` prints Bob's current code
-(`make totp EMPLOYEE=carol` for Carol's). It is an upstream like the
+(`make totp EMPLOYEE=carol` for Carol's, `EMPLOYEE=dana` for Dana's). It is an upstream like the
 others: S&V's client there (`sterling-vance-broker`) authenticates with the
 broker's key and the egress's key (`private_key_jwt`), it issues ID-JAGs for
 the broker's sign-ins, and the directory sync reads and writes its users
@@ -735,7 +735,7 @@ upstream.
 `contingency` in `ENTERPRISE_IDP` is the IdP S&V keeps for when its own is
 down: layer 45 installs a Keycloak in `sv-contingency` at
 `https://login-dr.sterling.lab`, realm `contingency`, with its own accounts
-for the employees (`bob` / `bob-demo`, `carol` / `carol-demo`) and a password
+for the employees (`bob` / `bob-demo`, `carol` / `carol-demo`, `dana` / `dana-demo`) and a password
 only (`acr aal1`). S&V's client there (`sterling-vance-broker`) takes the
 broker's key, and its directory (`continuity-directory`, users' profiles only,
 never a credential) is wired into the directory sync as a failover, so the

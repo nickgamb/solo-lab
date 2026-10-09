@@ -112,7 +112,10 @@ APIs on the edge, for agents and the checks rather than browsers:
 `ledgerline`, `ops`).
 
 Demo accounts: `bob` (`bob-demo`, S&V group `advisors`); `carol`
-(`carol-demo`, S&V's own Keycloak): another S&V employee; `ops` (`ops-demo`,
+(`carol-demo`, S&V's own Keycloak): another S&V employee; `dana`
+(`dana-demo`, S&V group `platform-engineers`): an S&V platform engineer, an
+admin in the Solo UI on Enterprise (to sign her in through Auth0, add
+`dana@sterling.lab` there with its email verified); `ops` (`ops-demo`,
 groups `platform-admins` / `observatory-admins`): realm `ops` for the
 Observatory, Grafana and Kiali, and S&V's break-glass platform admin at the
 broker, the only sign-in when every IdP is down; `alice` (`alice-demo`, her
