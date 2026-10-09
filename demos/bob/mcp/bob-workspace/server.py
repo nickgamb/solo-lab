@@ -48,11 +48,17 @@ def _claims() -> dict:
         raise ToolError(f"refused: {e}")
 
 
+# whose book the fixture is: the advisor's email at the firm (the deployment's
+# WORKSPACE_BOOK_OWNER), matched against the token's email
+OWNER = os.environ.get("WORKSPACE_BOOK_OWNER", BOOK["owner"]).lower()
+
+
 def _book_for(claims: dict) -> dict:
     """The acting user's own book. Only Bob has one in this fixture."""
-    if claims.get("preferred_username") != BOOK["owner"]:
-        return {"owner": claims.get("preferred_username"), "clients": [], "notes": {}}
-    return BOOK
+    who = (claims.get("email") or claims.get("preferred_username") or "").lower()
+    if who != OWNER:
+        return {"owner": who, "clients": [], "notes": {}}
+    return {**BOOK, "owner": OWNER}
 
 
 def _find(book: dict, name: str) -> dict:

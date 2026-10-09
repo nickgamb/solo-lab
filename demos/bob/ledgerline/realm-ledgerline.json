@@ -50,14 +50,7 @@
       "firstName": "Bob",
       "lastName": "Reyes",
       "enabled": true,
-      "emailVerified": true,
-      "federatedIdentities": [
-        {
-          "identityProvider": "sterling-vance",
-          "userId": "5b0b0000-0000-4000-8000-000000000b0b",
-          "userName": "bob"
-        }
-      ]
+      "emailVerified": true
     }
   ],
   "clients": [

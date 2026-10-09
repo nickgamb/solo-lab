@@ -239,6 +239,28 @@ spec:
                     x-kubernetes-list-map-keys:
                     - name
                     x-kubernetes-list-type: map
+                  domains:
+                    description: |-
+                      The workforce's email domains (e.g. sterling.lab). The directory sync
+                      gives the broker an account for each user of the primary IdP whose
+                      verified email is under one of them; empty, it creates none.
+                    items:
+                      type: string
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-type: set
+                  groups:
+                    description: |-
+                      The groups in the shape: the broker keeps them, and each IdP's own
+                      groups (or roles) map into them by name (tiers[].groups). Membership
+                      always comes from an IdP, never from the broker: at sign-in from the
+                      IdP's groups claim, and in the directory sync from the primary.
+                    items:
+                      pattern: ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$
+                      type: string
+                    maxItems: 64
+                    type: array
+                    x-kubernetes-list-type: set
                 type: object
               sync:
                 description: |-
@@ -445,6 +467,21 @@ spec:
                           default: true
                           type: boolean
                       type: object
+                    groups:
+                      description: |-
+                        How this IdP's groups (or roles) map into the shape's groups
+                        (spec.profile.groups), by name. oidc tiers only.
+                      properties:
+                        claim:
+                          description: |-
+                            The ID token claim listing the user's groups or roles (e.g. groups, or
+                            a namespaced claim such as https://example.com/groups). At sign-in the
+                            broker sets the user's shape groups from it, every time.
+                          minLength: 1
+                          type: string
+                      required:
+                      - claim
+                      type: object
                     name:
                       description: Also the Keycloak identity provider alias.
                       maxLength: 40
@@ -647,6 +684,9 @@ spec:
                     type: string
                   message:
                     type: string
+                  provisioned:
+                    format: int32
+                    type: integer
                   schemas:
                     additionalProperties:
                       items:
@@ -662,7 +702,8 @@ spec:
                   users:
                     description: |-
                       In the last run: users read, users whose broker profile changed,
-                      failover accounts written and created, and failures.
+                      failover accounts written and created, broker accounts provisioned
+                      from the primary, and failures.
                     format: int32
                     type: integer
                   written:

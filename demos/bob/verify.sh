@@ -44,7 +44,7 @@ check() {  # check <expect-regex> <label> <ns>[/<pod>] <probe args...>
 }
 step "Allowed: an S&V agent workload acting for Bob"
 check '"whoami"'                                "agent lists Bob's tools (as Bob)"            $AGENT $GW list --token "$BOB"
-check '\\"acting_for\\": \\"bob\\".*\\"audience\\": \\"bob-workspace\\"' \
+check '\\"acting_for\\": \\"bob@.*\\"audience\\": \\"bob-workspace\\"' \
                                                 "whoami: acts as bob, token aud=bob-workspace" $AGENT $GW call whoami '{}' --token "$BOB"
 check 'Alice Chen'                              "list_clients returns Bob's book"             $AGENT $GW call list_clients '{}' --token "$BOB"
 check 'account_number\\": \\"(\\u2022){4}8265\\"' \

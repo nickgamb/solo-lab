@@ -89,6 +89,20 @@ type Profile struct {
 	// +listMapKey=name
 	// +kubebuilder:validation:MaxItems=64
 	Attributes []ProfileAttribute `json:"attributes,omitempty"`
+	// The groups in the shape: the broker keeps them, and each IdP's own
+	// groups (or roles) map into them by name (tiers[].groups). Membership
+	// always comes from an IdP, never from the broker: at sign-in from the
+	// IdP's groups claim, and in the directory sync from the primary.
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:Pattern=`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`
+	Groups []string `json:"groups,omitempty"`
+	// The workforce's email domains (e.g. sterling.lab). The directory sync
+	// gives the broker an account for each user of the primary IdP whose
+	// verified email is under one of them; empty, it creates none.
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=16
+	Domains []string `json:"domains,omitempty"`
 }
 
 type ProfileAttribute struct {
@@ -226,12 +240,25 @@ type Tier struct {
 	// Where the directory sync reads and writes this IdP's users. oidc
 	// tiers only.
 	Directory *Directory `json:"directory,omitempty"`
+	// How this IdP's groups (or roles) map into the shape's groups
+	// (spec.profile.groups), by name. oidc tiers only.
+	// +optional
+	Groups *TierGroups `json:"groups,omitempty"`
 	// +kubebuilder:default={}
 	FailoverWhen FailoverRules `json:"failoverWhen,omitempty"`
 	// What a sign-in through this IdP proves, for workload profiles that
 	// require an assurance level. Unset: every sign-in counts as AAL1.
 	// +optional
 	Assurance *TierAssurance `json:"assurance,omitempty"`
+}
+
+// TierGroups is where an IdP says which groups a user is in.
+type TierGroups struct {
+	// The ID token claim listing the user's groups or roles (e.g. groups, or
+	// a namespaced claim such as https://example.com/groups). At sign-in the
+	// broker sets the user's shape groups from it, every time.
+	// +kubebuilder:validation:MinLength=1
+	Claim string `json:"claim"`
 }
 
 // TierAssurance maps what an IdP asserts about a sign-in (its acr, or one of
@@ -434,13 +461,15 @@ type SyncStatus struct {
 	LastRun     *metav1.Time `json:"lastRun,omitempty"`
 	LastSuccess *metav1.Time `json:"lastSuccess,omitempty"`
 	// In the last run: users read, users whose broker profile changed,
-	// failover accounts written and created, and failures.
-	Users   int32  `json:"users,omitempty"`
-	Updated int32  `json:"updated,omitempty"`
-	Written int32  `json:"written,omitempty"`
-	Created int32  `json:"created,omitempty"`
-	Failed  int32  `json:"failed,omitempty"`
-	Message string `json:"message,omitempty"`
+	// failover accounts written and created, broker accounts provisioned
+	// from the primary, and failures.
+	Users       int32  `json:"users,omitempty"`
+	Provisioned int32  `json:"provisioned,omitempty"`
+	Updated     int32  `json:"updated,omitempty"`
+	Written     int32  `json:"written,omitempty"`
+	Created     int32  `json:"created,omitempty"`
+	Failed      int32  `json:"failed,omitempty"`
+	Message     string `json:"message,omitempty"`
 	// The attribute paths each IdP's directory has, as last read (names
 	// only, never values).
 	Schemas map[string][]string `json:"schemas,omitempty"`

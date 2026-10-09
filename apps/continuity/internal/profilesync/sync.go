@@ -21,6 +21,18 @@ type Broker interface {
 	// UpdateUser reads the user afresh, has apply change it, and writes it
 	// back if apply reports a change.
 	UpdateUser(ctx context.Context, id string, apply func(keycloak.User) bool) (bool, error)
+	FindUserByEmail(ctx context.Context, email string) (string, error)
+	CreateUser(ctx context.Context, email string, verified bool) (string, error)
+	EnsureGroup(ctx context.Context, name string) (string, error)
+	UserGroups(ctx context.Context, userID string) ([]string, error)
+	SetUserGroups(ctx context.Context, userID string, want []string, managed map[string]string) (bool, error)
+}
+
+// Shape is what the sync maps beyond attributes: the shape's groups
+// (spec.profile.groups) and the workforce's email domains, which the broker
+// gives an account to (spec.profile.domains).
+type Shape struct {
+	Groups, Domains []string
 }
 
 // IdP is one IdP in the chain with a directory, and its attribute mapping.
@@ -33,8 +45,9 @@ type IdP struct {
 // Result counts one run. Errors and notes name users by id and IdPs and
 // attributes by name, never values.
 type Result struct {
-	Users, Updated, Written, Created, Failed int
-	Errors                                   []string
+	// Provisioned: broker accounts created for the primary's workforce users.
+	Users, Updated, Written, Created, Failed, Provisioned int
+	Errors                                                []string
 	// Notes: users with no way to sign in at a failover yet: created there
 	// without a credential enrollment sent, or not there and the directory
 	// can't create them without a password.
@@ -54,8 +67,21 @@ const (
 // to each failover, creating the user there if the primary has them and the
 // failover doesn't. writable are the broker attributes a mapping may carry;
 // keycloak.NeverSynced never are.
-func Run(ctx context.Context, b Broker, primary *IdP, failovers []IdP, writable, lists []string, logf func(string, ...any)) Result {
+func Run(ctx context.Context, b Broker, primary *IdP, failovers []IdP, writable, lists []string, shape Shape, logf func(string, ...any)) Result {
 	var res Result
+	// the shape's groups at the broker, by name -> id
+	groups := map[string]string{}
+	for _, g := range shape.Groups {
+		id, err := b.EnsureGroup(ctx, g)
+		if err != nil {
+			res.Errors = append(res.Errors, fmt.Sprintf("group %s at the broker: %v", g, err))
+			return res
+		}
+		groups[g] = id
+	}
+	if primary != nil {
+		provision(ctx, b, *primary, shape.Domains, logf, &res)
+	}
 	seen := map[string]bool{} // a user moved between pages is synced once
 	for n, first := 0, 0; ; n, first = n+1, first+pageSize {
 		if n == maxPages {
@@ -74,7 +100,7 @@ func Run(ctx context.Context, b Broker, primary *IdP, failovers []IdP, writable,
 				}
 				seen[id] = true
 			}
-			syncUser(ctx, b, u, primary, failovers, writable, lists, logf, &res)
+			syncUser(ctx, b, u, primary, failovers, writable, lists, groups, logf, &res)
 		}
 		if len(page) < pageSize {
 			return res
@@ -82,7 +108,49 @@ func Run(ctx context.Context, b Broker, primary *IdP, failovers []IdP, writable,
 	}
 }
 
-func syncUser(ctx context.Context, b Broker, u keycloak.User, primary *IdP, failovers []IdP, writable, lists []string, logf func(string, ...any), res *Result) {
+// provision gives the broker an account for each of the primary's users
+// whose verified email is in the workforce's domains, so that who exists is
+// the primary's to say. The account has no credential: its owner signs in
+// through an IdP, which the broker links to it by that email.
+func provision(ctx context.Context, b Broker, primary IdP, domains []string, logf func(string, ...any), res *Result) {
+	l, ok := primary.Dir.(Lister)
+	if !ok || len(domains) == 0 {
+		return
+	}
+	for n, first := 0, 0; n < maxPages; n, first = n+1, first+pageSize {
+		page, err := l.List(ctx, first, pageSize)
+		if err != nil {
+			res.Errors = append(res.Errors, fmt.Sprintf("listing %s's users: %v", primary.Name, err))
+			return
+		}
+		for _, e := range page {
+			if e.Verified == nil || !*e.Verified || !inDomains(e.Email, domains) {
+				continue
+			}
+			mail := normalEmail(e.Email)
+			_, err := b.FindUserByEmail(ctx, mail)
+			if err == nil {
+				continue
+			}
+			if !errors.Is(err, keycloak.ErrNotFound) {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s user %s: broker lookup: %v", primary.Name, e.ID, err))
+				continue
+			}
+			id, err := b.CreateUser(ctx, mail, true)
+			if err != nil {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s user %s: broker account: %v", primary.Name, e.ID, err))
+				continue
+			}
+			res.Provisioned++
+			logf("broker account provisioned", "user", id, "from", primary.Name)
+		}
+		if len(page) < pageSize {
+			return
+		}
+	}
+}
+
+func syncUser(ctx context.Context, b Broker, u keycloak.User, primary *IdP, failovers []IdP, writable, lists []string, groups map[string]string, logf func(string, ...any), res *Result) {
 	// one value, unless the profile attribute holds a list
 	fit := func(attr string, v []string) []string {
 		if slices.Contains(lists, attr) {
@@ -141,6 +209,32 @@ func syncUser(ctx context.Context, b Broker, u keycloak.User, primary *IdP, fail
 		}
 	}
 
+	// the primary's groups (or roles), into the broker's shape groups
+	shapeNames := slices.Sorted(maps.Keys(groups))
+	if primary != nil && inPrimary && len(groups) > 0 {
+		if gr, ok := primary.Dir.(GroupReader); ok {
+			if pid, err := locate(ctx, b, id, email(u), *primary); err == nil {
+				have, err := gr.Groups(ctx, pid)
+				if err != nil {
+					fail("%s: groups: %v", primary.Name, err)
+				} else if changed, err := b.SetUserGroups(ctx, id, intersect(have, shapeNames), groups); err != nil {
+					fail("broker groups: %v", err)
+				} else if changed {
+					res.Updated++
+					logf("broker groups updated", "user", id)
+				}
+			}
+		}
+	}
+	var brokerGroups []string
+	if len(groups) > 0 {
+		have, err := b.UserGroups(ctx, id)
+		if err != nil {
+			fail("broker groups: %v", err)
+		}
+		brokerGroups = intersect(have, shapeNames)
+	}
+
 	// 2. the broker, out to each failover
 	mail, verified := email(u), emailVerified(u)
 	for _, f := range failovers {
@@ -168,6 +262,7 @@ func syncUser(ctx context.Context, b Broker, u keycloak.User, primary *IdP, fail
 			res.Created++
 			logf("created at failover", "user", id, "idp", f.Name)
 			verify(ctx, f, fid, want, fail)
+			writeGroups(ctx, f, fid, brokerGroups, shapeNames, fail)
 			if err := f.Dir.Enroll(ctx, fid); err != nil {
 				res.Notes = append(res.Notes, fmt.Sprintf("user %s: created at %s, no credential enrollment sent: %v", id, f.Name, err))
 			}
@@ -178,6 +273,7 @@ func syncUser(ctx context.Context, b Broker, u keycloak.User, primary *IdP, fail
 			fail("%s: %v", f.Name, err)
 			continue
 		}
+		writeGroups(ctx, f, fid, brokerGroups, shapeNames, fail)
 		rec, err := f.Dir.User(ctx, fid)
 		if err != nil {
 			fail("%s: %v", f.Name, err)
@@ -200,6 +296,29 @@ func syncUser(ctx context.Context, b Broker, u keycloak.User, primary *IdP, fail
 		logf("failover written", "user", id, "idp", f.Name, "attributes", sortedKeys(set))
 		verify(ctx, f, fid, set, fail)
 	}
+}
+
+// writeGroups puts the failover's user in the broker's shape groups, where
+// the failover's directory can write them.
+func writeGroups(ctx context.Context, f IdP, fid string, want, managed []string, fail func(string, ...any)) {
+	gw, ok := f.Dir.(GroupWriter)
+	if !ok || len(managed) == 0 {
+		return
+	}
+	if err := gw.SetGroups(ctx, fid, want, managed); err != nil {
+		fail("%s: groups: %v", f.Name, err)
+	}
+}
+
+// intersect is the names of have that are in shape.
+func intersect(have, shape []string) []string {
+	var out []string
+	for _, g := range have {
+		if slices.Contains(shape, g) {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 // locate is the user's id at an IdP: the broker's link to it, else the one

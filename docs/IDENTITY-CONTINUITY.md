@@ -55,8 +55,11 @@ Keycloak, then its contingency IdP. Failback is automatic
 
 Every IdP in the chain is trusted for S&V's workforce: a user who signs in
 through it is linked to the S&V account with the same verified email. The
-broker has an account for each employee, without a password, and never
-creates one at sign-in. Chain
+broker is the shape every IdP maps into, not a directory of its own: the
+directory sync gives it an account for each of the primary's users under the
+workforce's email domains (`spec.profile.domains`), without a password, and
+it never creates one at sign-in. Their groups come from the IdPs too
+([Groups](#groups)). Chain
 only IdPs that are authoritative for S&V's users. Accounts with role
 `local-only` (the `platform-admins` group: break-glass and platform admins)
 are never linked to an upstream; with every IdP down they are the only ones
@@ -246,16 +249,21 @@ profile says, so that whichever one is active signs them in with the same
 details. The directory sync keeps them in step with the primary, on a
 schedule (`spec.sync`), through S&V's profile on the broker:
 
-1. **Primary → S&V's profile.** The chain's first IdP is the primary. For
-   each employee the broker has, the sync reads their record from the
-   primary's directory and writes the mapped attributes into S&V's profile,
-   the standard every IdP maps to.
+1. **Primary → S&V's profile.** The chain's first IdP is the primary, and
+   says who exists. The sync first gives the broker an account for each of
+   its users whose verified email is under one of `spec.profile.domains`
+   (`status.sync.provisioned`). Then, for each employee, it reads their
+   record from the primary's directory and writes the mapped attributes, and
+   their groups ([Groups](#groups)), into S&V's profile, the standard every
+   IdP maps to.
 2. **S&V's profile → each failover.** It then writes S&V's profile to every
    other IdP with a directory, through that IdP's mapping. A user the
    primary has and a failover doesn't is created there, and the failover
    emails them to set their own password (Keycloak's "execute actions"
    email; the realm needs its SMTP settings). A directory that can't create
-   a user without a password (Auth0) reports them instead.
+   a user without a password (Auth0) reports them instead. The user's
+   groups go out too, where the directory can write them (Keycloak groups,
+   Auth0 roles).
 
 The lab's workforce realm has no SMTP server: a user the sync creates there
 is listed in the run's message until the realm has one, and can't sign in
@@ -310,6 +318,29 @@ The sync runs as ServiceAccount `continuity-sync`: `get` on its instance,
 Secrets by name (Role `continuity-sync-secrets`). It reaches the broker and
 the directories under the same mesh policy as the controller; directory
 hosts get ServiceEntries on the IdP's egress path.
+
+### Groups
+
+The shape has groups as well as attributes (`spec.profile.groups`; the lab's
+from `SV_GROUPS` in `config/lab.env`: `advisors`, `platform-engineers`,
+`compliance`). Policies and roles name them (an agent workload acting for an
+advisor; the Solo UI's administrators), and membership always comes from an
+IdP:
+
+- **At sign-in.** Each IdP says which groups the user is in, in its ID token
+  (`tiers[].groups.claim`, `<NAME>_GROUPS_CLAIM` in `.env`, `groups` unless
+  set). The controller keeps one of Keycloak's own *Advanced Claim to Group*
+  mappers per shape group on that IdP, in sync mode *Force*: every sign-in
+  sets the user's groups from the claim, so a group the IdP takes away is
+  gone at the next sign-in. A namespaced claim (Auth0's) is read whole.
+- **In the directory sync.** The primary's groups (or roles) are read into
+  the broker, by name, and written out to each failover, so that the next
+  IdP in the chain asserts the same groups after a failover.
+
+The broker's own groups beyond the shape are left alone: `platform-admins`,
+its break-glass accounts, never comes from an IdP. The sync creates the
+shape's groups at the broker (it holds `manage-users`); the controller only
+manages the mappers.
 
 ### Keeping a lab's profile and mappings
 
@@ -659,12 +690,30 @@ slash (`https://<tenant>.us.auth0.com/`). Unset, auth0 is left out of the chain.
    Authentication → Database → Username-Password-Authentication, turn on
    **Disable Sign Ups**.
 
-3. **Create the user** `bob@sterling.lab` with a password of your choice, and
-   **mark the email verified** (edit the email on the user's page, or
-   `PATCH /api/v2/users/{id}` with `{"email_verified": true}` from the
-   Management API Explorer). Unverified emails are refused at Keycloak.
+3. **Create the users** `bob@sterling.lab`, `carol@sterling.lab` and
+   `dana@sterling.lab` with passwords of your choice, and **mark their emails
+   verified** (edit the email on the user's page, or `PATCH
+   /api/v2/users/{id}` with `{"email_verified": true}` from the Management
+   API Explorer). The directory sync gives S&V an account for each verified
+   user under `sterling.lab`; unverified emails are refused.
 
-4. **Give the lab the tenant and credentials** in `.env` (`auth0` is in the
+4. **Roles, and the claim that carries them.** User Management → Roles:
+   `advisors` (Bob), `platform-engineers` (Dana) and `compliance` (nobody, for
+   the compliance-only tool), with those names. Auth0 puts roles in no token
+   by itself: Actions → Library → Build Custom, trigger Login / Post Login,
+   deployed into the Login flow:
+
+   ```javascript
+   exports.onExecutePostLogin = async (event, api) => {
+     const roles = (event.authorization && event.authorization.roles) || [];
+     api.idToken.setCustomClaim('https://sterling.lab/groups', roles);
+   };
+   ```
+
+   The claim is namespaced because Auth0 drops custom claims that aren't
+   (`AUTH0_GROUPS_CLAIM`, this one unless set).
+
+5. **Give the lab the tenant and credentials** in `.env` (`auth0` is in the
    default `ENTERPRISE_IDP`), then install the layer again:
 
    ```
@@ -684,7 +733,8 @@ slash (`https://<tenant>.us.auth0.com/`). Unset, auth0 is left out of the chain.
    kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}'
    ```
 
-Bob's groups come from his S&V account, not from Auth0.
+Bob's groups come from his Auth0 roles: at each sign-in from the claim, and
+in the directory sync from the Management API.
 
 **Assurance:** Auth0 puts `amr: ["mfa"]` in the ID token when the sign-in
 took a second factor, which maps to AAL2. Without multi-factor
@@ -696,7 +746,10 @@ example file shows it).
 
 **Auth0 as a directory** (the directory sync): **Applications → Create
 Application → Machine to Machine Applications**, authorized for the **Auth0
-Management API** with `read:users` and `update:users`. Its credentials in
+Management API** with `read:users`, `update:users`, `read:roles`,
+`read:role_members` and, to write roles to Auth0 as a failover,
+`create:roles` and `create:role_members`, `delete:role_members`. Nothing
+more: the sync never needs the tenant's settings. Its credentials in
 `.env`, then `make layer-47`:
 
 ```

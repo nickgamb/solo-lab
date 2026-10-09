@@ -672,6 +672,9 @@ func (r *Reconciler) reconcileKeycloak(ctx context.Context, ic *v1.IdentityConti
 		if err := kc.EnsureMapper(ctx, t.Name, keycloak.AssuranceMapper); err != nil {
 			errs = append(errs, fmt.Errorf("identity provider %s: assurance mapper: %w", t.Name, err))
 		}
+		if err := ensureGroupMappers(ctx, kc, ic, t); err != nil {
+			errs = append(errs, fmt.Errorf("identity provider %s: group mappers: %w", t.Name, err))
+		}
 	}
 	flow := ic.Spec.Broker.Keycloak.BrowserFlow
 	changed, rerr := kc.SetRedirector(ctx, flow, redirect)
@@ -996,4 +999,23 @@ func egressNamespace(ic *v1.IdentityContinuity) string {
 		return ""
 	}
 	return ic.Spec.Egress.Namespace
+}
+
+// ensureGroupMappers keeps one mapper per shape group on the tier's IdP, from
+// its groups claim (tiers[].groups), and removes the rest: membership of the
+// shape's groups always comes from the IdP a user signs in through. The
+// groups themselves are the directory sync's to create (it holds
+// manage-users); a mapper whose group isn't there yet maps nothing.
+func ensureGroupMappers(ctx context.Context, kc *keycloak.Client, ic *v1.IdentityContinuity, t v1.Tier) error {
+	keep := map[string]bool{}
+	var errs []error
+	if t.Groups != nil && ic.Spec.Profile != nil {
+		for _, g := range ic.Spec.Profile.Groups {
+			m := keycloak.GroupMapper(t.Groups.Claim, g)
+			keep[m.Name] = true
+			errs = append(errs, kc.EnsureMapper(ctx, t.Name, m))
+		}
+	}
+	errs = append(errs, kc.PruneMappers(ctx, t.Name, keycloak.GroupMapperPrefix, keep))
+	return errors.Join(errs...)
 }

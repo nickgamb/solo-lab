@@ -46,6 +46,22 @@ K delete requestauthentication ledgerline-tokens -n ledgerline --ignore-not-foun
 K delete authorizationpolicy research-access pods-only-from-waypoint -n ledgerline --ignore-not-found >/dev/null
 ok "https://mcp.$LEDGERLINE_DOMAIN  authorization server: ${RESOURCE_AS} ($LEDGERLINE_AS_ISSUER)"
 
+# Ledgerline onboards S&V's people: its Bob is S&V's Bob, by the broker
+# account the directory sync made for him from S&V's primary IdP (the subject
+# of the ID-JAGs S&V's broker vouches with). His links to the IdPs that vouch
+# themselves come from his first sign-in to Ledgerline through each.
+bid=$(kc_admin sv-identity SV_KC_ADMIN_PASSWORD sterling-vance GET "/users?exact=true&briefRepresentation=true&email=bob%40$SV_DOMAIN" | jq -r '.[0].id // empty')
+lid=$(kc_admin ledgerline-identity LL_KC_ADMIN_PASSWORD ledgerline GET "/users?exact=true&briefRepresentation=true&email=bob%40$SV_DOMAIN" | jq -r '.[0].id // empty')
+if [ -n "$bid" ] && [ -n "$lid" ]; then
+  kc_admin ledgerline-identity LL_KC_ADMIN_PASSWORD ledgerline DELETE "/users/$lid/federated-identity/sterling-vance" -o /dev/null
+  jq -nc --arg u "$bid" --arg n "bob@$SV_DOMAIN" '{identityProvider: "sterling-vance", userId: $u, userName: $n}' \
+    | kc_admin ledgerline-identity LL_KC_ADMIN_PASSWORD ledgerline POST "/users/$lid/federated-identity/sterling-vance" \
+        -H 'content-type: application/json' --data @- -o /dev/null
+  ok "Ledgerline's Bob linked to S&V's broker account for bob@$SV_DOMAIN"
+else
+  warn "no S&V broker account for bob@$SV_DOMAIN yet (the directory sync makes it from S&V's primary IdP): Ledgerline can't link him"
+fi
+
 step "Sterling & Vance: workspace, waypoint, agent, Cross App Access"
 # S&V's keys (or a client secret) for each upstream that vouches for Bob and
 # for Ledgerline, kept with its egress gateway

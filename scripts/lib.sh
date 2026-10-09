@@ -518,6 +518,18 @@ kc_token() {
      + (if $ENV._S == "" then {} else {client_secret: $ENV._S} end) | to_entries | map("\(.key)=\(.value | @uri)") | join("&")' \
     | curl -s "http://127.0.0.1:$lp/realms/$2/protocol/openid-connect/token" --data @-
 }
+# kc_admin <ns> <admin password secret> <realm> <method> <path> [curl args]: a
+# party's Keycloak admin API as its bootstrap admin, over a localhost
+# port-forward; the password and the token never sit on a command line
+kc_admin() {
+  local ns=$1 sec=$2 realm=$3 m=$4 p=$5 lp t; shift 5
+  lp=$(free_port); port_forward "$ns" keycloak "$lp" 80
+  t=$(_P=$(lab_secret_get "$sec") jq -rn '{grant_type: "password", client_id: "admin-cli", username: "admin", password: $ENV._P}
+      | to_entries | map("\(.key)=\(.value | @uri)") | join("&")' \
+    | curl -s "http://127.0.0.1:$lp/realms/master/protocol/openid-connect/token" --data @- | jq -r '.access_token // empty')
+  [ -n "$t" ] || { echo "kc_admin: no admin token at $ns" >&2; return 1; }
+  with_bearer "$t" curl -s -X "$m" "http://127.0.0.1:$lp/admin/realms/$realm$p" "$@"
+}
 # user_token: kc_token's access token alone
 user_token() { kc_token "$@" | jq -r '.access_token // empty'; }
 
