@@ -29,6 +29,20 @@ metadata:
 spec:
   targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: llm}]
   traffic:
+    # whose turn a call serves: the user's S&V token, which kagent passes on
+    # as the API key (apiKeyPassthrough). Verified and logged when valid;
+    # Permissive, so a long turn whose token expired mid-way still finishes,
+    # and the pool's identity below still decides who may call.
+    jwtAuthentication:
+      mode: Permissive
+      providers:
+      - issuer: https://idp.${SV_DOMAIN}/realms/sterling-vance
+        audiences: [ai-gateway]
+        jwks:
+          remote:
+            backendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}
+            jwksPath: /realms/sterling-vance/protocol/openid-connect/certs
+            cacheDuration: 5m
     authorization:
       action: Allow
       policy:

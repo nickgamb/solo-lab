@@ -596,6 +596,27 @@ spec:
                   issuer:
                     description: The realm's public issuer, from its discovery document.
                     type: string
+                  signIn:
+                    description: |-
+                      The broker's clients that sign people in through a browser
+                      (authorization code), and where they send people back: the apps that
+                      sign in through this broker, whether the edge or the app itself runs
+                      the sign-in.
+                    items:
+                      properties:
+                        clientID:
+                          type: string
+                        redirectURIs:
+                          items:
+                            type: string
+                          type: array
+                      required:
+                      - clientID
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - clientID
+                    x-kubernetes-list-type: map
                 type: object
               conditions:
                 items:

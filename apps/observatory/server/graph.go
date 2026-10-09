@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -93,6 +94,7 @@ func Build(k *Kube, observed []Observed) (Graph, *Index) {
 	b.agents()
 	b.waypoints()
 	b.identityEdges()
+	b.brokerSignIns()
 	b.envEdges()
 	b.substrate()
 	b.observed(observed)
@@ -967,6 +969,54 @@ func (b *builder) edgeHost(h string) bool {
 		}
 	}
 	return false
+}
+
+// brokerSignIns: the apps that sign people in through a continuity broker
+// themselves (their own OIDC client, not the edge's sign-in), from the
+// broker's sign-in clients and where they send people back
+// (status.broker.signIn): each redirect host, through the edge's routes, to
+// the app that answers it. Hosts the edge's own sign-in already covers keep
+// that entry.
+func (b *builder) brokerSignIns() {
+	covered := map[string]bool{}
+	for _, s := range b.sso {
+		for _, h := range s.Hosts {
+			covered[h] = true
+		}
+	}
+	for _, ic := range b.k.List("identitycontinuities") {
+		issuer := str(ic.Object, "status", "broker", "issuer")
+		broker := b.resolveURL(str(ic.Object, "spec", "broker", "keycloak", "url"), ic.GetNamespace())
+		if issuer == "" || len(broker) == 0 {
+			continue
+		}
+		for _, c := range slice(ic.Object, "status", "broker", "signIn") {
+			cm, _ := c.(map[string]any)
+			sso := SSO{Name: ic.GetNamespace() + "/" + ic.GetName() + "/" + str(cm, "clientID"), Issuer: issuer, IdP: broker}
+			for _, ru := range slice(cm, "redirectURIs") {
+				u, err := url.Parse(strings.ReplaceAll(fmt.Sprint(ru), "*", "x"))
+				if err != nil || u.Hostname() == "" || covered[u.Hostname()] {
+					continue
+				}
+				h := u.Hostname()
+				for _, app := range b.hosts[h] {
+					if !slices.Contains(broker, app) {
+						sso.Apps = appendUniq(sso.Apps, app)
+						sso.Hosts = appendUniq(sso.Hosts, h)
+					}
+				}
+			}
+			if len(sso.Apps) == 0 {
+				continue
+			}
+			b.sso = append(b.sso, sso)
+			for _, app := range sso.Apps {
+				if n := b.nodes[app]; n != nil {
+					n.Summary["sso"] = issuer
+				}
+			}
+		}
+	}
 }
 
 // resolveURL maps a URL to the node(s) that answer it.

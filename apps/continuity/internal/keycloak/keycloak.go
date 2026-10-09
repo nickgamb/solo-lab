@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -297,6 +298,45 @@ type Registration struct {
 	RedirectURIs  []string
 	Audiences     []string
 	DefaultScopes []string
+}
+
+// SignInClient is a client that signs people in through a browser.
+type SignInClient struct {
+	ClientID     string
+	RedirectURIs []string
+}
+
+// SignInClients lists the realm's enabled clients that sign people in through
+// a browser (standard flow) back to an absolute URL; Keycloak's own consoles,
+// which name theirs relative to the realm, are left out.
+func (c *Client) SignInClients(ctx context.Context) ([]SignInClient, error) {
+	var list []struct {
+		ClientID     string   `json:"clientId"`
+		Enabled      bool     `json:"enabled"`
+		StandardFlow bool     `json:"standardFlowEnabled"`
+		RedirectURIs []string `json:"redirectUris"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/clients?max=1000", nil, &list); err != nil {
+		return nil, err
+	}
+	var out []SignInClient
+	for _, cl := range list {
+		if !cl.Enabled || !cl.StandardFlow {
+			continue
+		}
+		var abs []string
+		for _, u := range cl.RedirectURIs {
+			if strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "http://") {
+				abs = append(abs, u)
+			}
+		}
+		if len(abs) > 0 {
+			slices.Sort(abs)
+			out = append(out, SignInClient{ClientID: cl.ClientID, RedirectURIs: abs})
+		}
+	}
+	slices.SortFunc(out, func(a, b SignInClient) int { return strings.Compare(a.ClientID, b.ClientID) })
+	return out, nil
 }
 
 // ClientRegistration reads one client by its client ID (realm-management

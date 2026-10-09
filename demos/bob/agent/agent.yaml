@@ -8,15 +8,8 @@
 #
 # The agent holds no credentials of its own: no provider key (the firm's
 # ai-gateway injects it) and no tool token (the tools' waypoint mints a
-# delegated one per call).
-apiVersion: v1
-kind: Secret
-metadata:
-  name: llm-via-gateway
-  namespace: sv-agents
-stringData:
-  API_KEY: via-agentgateway      # placeholder; the gateway holds the real credential
----
+# delegated one per call). Its model calls carry the user's own token
+# (apiKeyPassthrough), so the gateway knows whose turn each call serves.
 apiVersion: kagent.dev/v1alpha2
 kind: ModelConfig
 metadata:
@@ -25,8 +18,7 @@ metadata:
 spec:
   provider: OpenAI
   model: lab-default             # overridden by the gateway (make llm)
-  apiKeySecret: llm-via-gateway
-  apiKeySecretKey: API_KEY
+  apiKeyPassthrough: true
   openAI:
     baseUrl: http://ai-gateway.agentgateway-system/v1
 ---

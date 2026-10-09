@@ -393,6 +393,18 @@ type IdentityContinuityStatus struct {
 type BrokerStatus struct {
 	// The realm's public issuer, from its discovery document.
 	Issuer string `json:"issuer,omitempty"`
+	// The broker's clients that sign people in through a browser
+	// (authorization code), and where they send people back: the apps that
+	// sign in through this broker, whether the edge or the app itself runs
+	// the sign-in.
+	// +listType=map
+	// +listMapKey=clientID
+	SignIn []SignInClient `json:"signIn,omitempty"`
+}
+
+type SignInClient struct {
+	ClientID     string   `json:"clientID"`
+	RedirectURIs []string `json:"redirectURIs,omitempty"`
 }
 
 type TierStatus struct {

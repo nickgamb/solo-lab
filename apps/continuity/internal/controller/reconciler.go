@@ -78,12 +78,19 @@ type Reconciler struct {
 	brokers   map[types.NamespacedName]*keycloak.Client
 	discovery map[string]*probe.Discovery // last good discovery per instance/tier
 	profiles  map[types.NamespacedName]profileMark
+	signIn    map[types.NamespacedName]signInMark // when each broker's sign-in clients were last read
+}
+
+type signInMark struct {
+	at         time.Time
+	generation int64
 }
 
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.brokers = map[types.NamespacedName]*keycloak.Client{}
 	r.discovery = map[string]*probe.Discovery{}
 	r.profiles = map[types.NamespacedName]profileMark{}
+	r.signIn = map[types.NamespacedName]signInMark{}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1.IdentityContinuity{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		// Secrets are not watched: listing or watching them would mean reading
@@ -123,6 +130,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	egressErr := r.reconcileEgress(ctx, &ic, ic.Spec.Tiers)
 	r.markPartitions(ctx, &ic)
 	r.checkTrust(ctx, &ic, creds)
+	r.refreshSignIn(ctx, &ic, kc)
 
 	byName := map[string]*v1.TierStatus{}
 	for i := range ic.Status.Tiers {
@@ -264,7 +272,11 @@ func (r *Reconciler) probeAll(ctx context.Context, ic *v1.IdentityContinuity, cr
 		broker = tiers.Result{Kind: tiers.NotConfigured, Message: "broker credentials missing", Latency: broker.Latency}
 	}
 	if issuer != "" {
-		ic.Status.Broker = &v1.BrokerStatus{Issuer: issuer}
+		var signIn []v1.SignInClient
+		if ic.Status.Broker != nil {
+			signIn = ic.Status.Broker.SignIn // read with the trust checks' cadence (refreshSignIn)
+		}
+		ic.Status.Broker = &v1.BrokerStatus{Issuer: issuer, SignIn: signIn}
 	}
 	results := make([]tiers.Result, len(ic.Spec.Tiers))
 	var wg sync.WaitGroup
@@ -340,6 +352,35 @@ func (r *Reconciler) probeAll(ctx context.Context, ic *v1.IdentityContinuity, cr
 	}
 	ic.Status.Tiers = out
 	return broker
+}
+
+// refreshSignIn reads the broker's sign-in clients when the spec changed or
+// trustEvery passed: the apps that sign people in through it, for whoever
+// draws the sign-in paths (status.broker.signIn). A failed read keeps the last.
+func (r *Reconciler) refreshSignIn(ctx context.Context, ic *v1.IdentityContinuity, kc *keycloak.Client) {
+	if kc == nil || ic.Status.Broker == nil {
+		return
+	}
+	key := client.ObjectKeyFromObject(ic)
+	r.mu.Lock()
+	m := r.signIn[key]
+	r.mu.Unlock()
+	if m.generation == ic.Generation && time.Since(m.at) < trustEvery && ic.Status.Broker.SignIn != nil {
+		return
+	}
+	cl, err := kc.SignInClients(ctx)
+	if err != nil {
+		log.FromContext(ctx).Info("broker sign-in clients unread", "err", err.Error())
+		return
+	}
+	out := make([]v1.SignInClient, 0, len(cl))
+	for _, c := range cl {
+		out = append(out, v1.SignInClient{ClientID: c.ClientID, RedirectURIs: c.RedirectURIs})
+	}
+	ic.Status.Broker.SignIn = out
+	r.mu.Lock()
+	r.signIn[key] = signInMark{at: time.Now(), generation: ic.Generation}
+	r.mu.Unlock()
 }
 
 // checkTrust runs each oidc tier's trust checks when due: never checked, the

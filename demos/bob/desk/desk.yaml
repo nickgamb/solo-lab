@@ -28,7 +28,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata: {name: substrate-env-sources-desk, namespace: sv-agents}
 rules:
-- {apiGroups: [""], resources: [secrets], resourceNames: [meeting-prep, market-brief, compliance-check, llm-via-gateway], verbs: [get]}
+- {apiGroups: [""], resources: [secrets], resourceNames: [meeting-prep, market-brief, compliance-check], verbs: [get]}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
