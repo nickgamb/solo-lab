@@ -142,7 +142,7 @@ Open it in a browser (`open docs/cards/<card>.html` on macOS, `xdg-open` on Linu
 | [Identity continuity](docs/cards/identity-continuity.html) | a real network outage of the active IdP, automatic failover to the next one, and failback, live in the Observatory | `make continuity-verify` |
 | [Assurance rules](docs/cards/assurance.html) | what each workload needs a sign-in to prove, through failover to an IdP that proves less: the rules, what-if, report-only, and failing closed | `make bob-verify` |
 | [Commands](docs/cards/commands.html) | kubectl, istioctl and curl commands for the running lab, grouped by Observatory screen | `make status` |
-| [Gluu](docs/cards/gluu.html) (experimental) | Bob signs in with a passkey at Gluu, his agent reaches Ledgerline as him: Gluu vouches (ID-JAG), Ledgerline's Gluu redeems it, every hop checked and logged | `make bob-verify` |
+| [Gluu](docs/cards/gluu.html) (experimental) | Bob signs in with a passkey at Gluu, his agent reaches Ledgerline as him: S&V's broker vouches (ID-JAG), Ledgerline's Gluu redeems it, every hop checked and logged | `make bob-verify` |
 
 `make reset` rewinds every demo without a rebuild. The identity continuity
 demo runs on S&V's own two IdPs; to add Auth0, Gluu, Okta, Ping or another
@@ -201,7 +201,7 @@ See [docs/OBSERVATORY.md](docs/OBSERVATORY.md).
 | `LLM_FALLBACK`, `LLM_FALLBACK_MODEL` | a second provider (and model) the gateway fails over to; apply with `make llm` |
 | `OLLAMA_MODEL`, `OLLAMA_URL` | the local model and where the cluster reaches it |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL` | hosted models (held by agentgateway only) |
-| `ENTERPRISE_IDP` | S&V's IdPs in failover order, by name (default `auth0,keycloak,contingency`; an IdP without an issuer is left out): who signs Bob in and, for an IdP that issues ID-JAGs, who vouches for him to Ledgerline; the broker vouches otherwise |
+| `ENTERPRISE_IDP` | S&V's IdPs in failover order, by name (default `auth0,keycloak,contingency`; an IdP without an issuer is left out): who signs Bob in. S&V's broker vouches for him to Ledgerline, whichever IdP signed him in |
 | `<NAME>_ISSUER`, `<NAME>_CLIENT_ID`, `<NAME>_CLIENT_SECRET` | each IdP in the chain (`auth0`, `gluu`, `okta`, `ping`, any other); without a secret S&V authenticates with its keys (`make xaa-keys`). `keycloak` and `contingency` default to S&V's own at `login.sterling.lab` and `login-dr.sterling.lab` |
 | `<NAME>_DIRECTORY_*`, `<NAME>_GROUPS_CLAIM`, `<NAME>_ASSURANCE`, ... | the rest of an IdP's settings ([IDPS.md](docs/IDPS.md#settings)) |
 | `RESOURCE_AS`, `LEDGERLINE_<NAME>_ISSUER`, `LEDGERLINE_<NAME>_CLIENT_ID` | Ledgerline's authorization server, by name: `keycloak` (default, its own) or any other ([IDPS.md](docs/IDPS.md#ledgerlines-authorization-server)) |
@@ -234,7 +234,7 @@ count, host ports, party domains, registry port; `config/oss.env` and
 | `reset` | rewind the demos (grants, terms, agent key, follow-ups) |
 | `llm` | switch the model: `make llm LLM_PROVIDER=anthropic` |
 | `xaa-logs` | the Cross App Access trail (both token requests, claims, checks), tokens redacted: `make xaa-logs SINCE=2h` |
-| `xaa-keys` | the public keys other parties register, in `.lab/xaa/keys/`: S&V's clients at upstream IdPs and at Ledgerline, S&V's broker (`sv-idp.jwks.json`) and own Keycloak (`sv-workforce.jwks.json`), Ledgerline's SSO client |
+| `xaa-keys` | the public keys other parties register, in `.lab/xaa/keys/`: S&V's clients at upstream IdPs and at Ledgerline, S&V's broker (`sv-idp.jwks.json`, for an AS outside the lab), Ledgerline's SSO client at S&V's broker |
 | `status` | pods, the active IdP, URLs |
 | `preflight` | tools, Docker resources, free ports, `*.lab` DNS, Ollama and its model |
 | `help` | every target, with its one-line description |
@@ -253,7 +253,7 @@ demos/           each story: install.sh, verify.sh, manifests, agents, tools
 apps/observatory Observatory: Go server (server/) and React UI (web/)
 apps/continuity  IdentityContinuity and WorkloadProfile CRDs, controller, directory sync, assurance gate
 apps/idtoken-exchange
-                 Cross App Access at S&V's egress: the user's ID token from the IdP that vouches
+                 Cross App Access at S&V's egress: the user's ID token from S&V's broker
 tools/           patched upstream builds (kagent, Substrate, Keycloak), the probe
                  toolbox image and mcp-probe.py (MCP calls from a pod, for the checks)
 docs/            architecture, per-app docs, commands, demo cards, images and videos

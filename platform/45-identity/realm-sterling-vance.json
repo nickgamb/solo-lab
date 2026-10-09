@@ -97,7 +97,8 @@
       "attributes": {
         "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "https://kagent.${SV_DOMAIN}/*",
-        "standard.token.exchange.enabled": "true"
+        "standard.token.exchange.enabled": "true",
+        "standard.token.exchange.enableRefreshRequestedTokenType": "SAME_SESSION"
       },
       "protocolMappers": [
         {
@@ -128,16 +129,6 @@
           "protocolMapper": "oidc-audience-mapper",
           "config": {
             "included.client.audience": "mcp-waypoint",
-            "access.token.claim": "true",
-            "id.token.claim": "false"
-          }
-        },
-        {
-          "name": "aud-xaa-egress",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-audience-mapper",
-          "config": {
-            "included.client.audience": "xaa-egress",
             "access.token.claim": "true",
             "id.token.claim": "false"
           }
@@ -178,31 +169,6 @@
         "research:read"
       ],
       "fullScopeAllowed": false
-    },
-    {
-      "clientId": "xaa-egress",
-      "name": "S&V egress: stored upstream tokens",
-      "description": "Reads users' stored upstream tokens (Identity Brokering API v2) for the IdPs that vouch for them, and nothing else. Authenticates with the egress's own key (private_key_jwt).",
-      "enabled": true,
-      "publicClient": false,
-      "clientAuthenticatorType": "client-jwt",
-      "standardFlowEnabled": false,
-      "implicitFlowEnabled": false,
-      "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": false,
-      "fullScopeAllowed": false,
-      "attributes": {
-        "external.token.enabled": "true",
-        "external.token.idp": "${XAA_UPSTREAMS}",
-        "use.jwks.url": "false",
-        "jwt.credential.certificate": "${SV_EGRESS_CLIENT_CERT}",
-        "jwt.credential.kid": "${SV_EGRESS_CLIENT_KID}",
-        "token.endpoint.auth.signing.alg": "RS256"
-      },
-      "defaultClientScopes": [
-        "basic"
-      ],
-      "optionalClientScopes": []
     },
     {
       "clientId": "ai-gateway",
@@ -406,16 +372,6 @@
           "protocolMapper": "oidc-audience-mapper",
           "config": {
             "included.client.audience": "mcp-waypoint",
-            "access.token.claim": "true",
-            "id.token.claim": "false"
-          }
-        },
-        {
-          "name": "aud-xaa-egress",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-audience-mapper",
-          "config": {
-            "included.client.audience": "xaa-egress",
             "access.token.claim": "true",
             "id.token.claim": "false"
           }

@@ -2,19 +2,13 @@ package main
 
 import (
 	"context"
-	"crypto"
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -32,30 +26,32 @@ func jwtWithExp(exp time.Time) string {
 	return "h." + base64.RawURLEncoding.EncodeToString(p) + ".s"
 }
 
-// session is Bob's S&V access token for a session from idp ("" for S&V's own login)
-func session(idp string, exp time.Time) string {
-	p, _ := json.Marshal(map[string]any{"exp": exp.Unix(), "idp": idp})
-	return "h." + base64.RawURLEncoding.EncodeToString(p) + ".s"
-}
-
 func jwtFor(iss, sub string, exp time.Time) string {
 	p, _ := json.Marshal(map[string]any{"iss": iss, "sub": sub, "exp": exp.Unix()})
 	return "h." + base64.RawURLEncoding.EncodeToString(p) + ".s"
 }
 
-// idp fakes S&V's Keycloak token endpoint: it checks the exchange request
-// and answers with status and body.
-func idp(t *testing.T, calls *int32, status int, body string) *httptest.Server {
+// idp fakes S&V's broker token endpoint. The exchange (counted in calls) is
+// checked and answered with status and body; a refresh grant for the refresh
+// token "rt-1" answers with idToken.
+func idp(t *testing.T, calls *int32, status int, body, idToken string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(calls, 1)
 		if id, secret, ok := r.BasicAuth(); !ok || id != "kagent" || secret != "s3cret" {
 			t.Errorf("client auth = %q/%q/%v", id, secret, ok)
 		}
 		r.ParseForm()
+		if r.PostForm.Get("grant_type") == "refresh_token" {
+			if r.PostForm.Get("refresh_token") != "rt-1" || r.PostForm.Get("scope") != "openid" {
+				t.Errorf("refresh grant = %v", r.PostForm)
+			}
+			json.NewEncoder(w).Encode(map[string]string{"id_token": idToken, "access_token": "at-2", "refresh_token": "rt-2"})
+			return
+		}
+		atomic.AddInt32(calls, 1)
 		for k, want := range map[string]string{
 			"grant_type": tokenExchange, "subject_token_type": typeAccessToken,
-			"requested_token_type": typeIDToken, "scope": "openid",
+			"requested_token_type": typeRefreshToken, "scope": "openid",
 		} {
 			if got := r.PostForm.Get(k); got != want {
 				t.Errorf("%s = %q, want %q", k, got, want)
@@ -68,17 +64,19 @@ func idp(t *testing.T, calls *int32, status int, body string) *httptest.Server {
 	return srv
 }
 
+// refreshIssued is the exchange's answer: a refresh token in the user's session
+var refreshIssued = fmt.Sprintf(`{"refresh_token":"rt-1","issued_token_type":%q,"token_type":"Bearer"}`, typeRefreshToken)
+
 // keycloakIDToken is what the fake Keycloak issues for the exchange
 var keycloakIDToken = jwtFor("https://idp.sterling.lab/realms/sterling-vance", "bob-kc", time.Now().Add(5*time.Minute))
 
 func keycloakOK(t *testing.T, calls *int32) *httptest.Server {
-	return idp(t, calls, 200, fmt.Sprintf(`{"access_token":%q,"issued_token_type":%q,"token_type":"N_A"}`, keycloakIDToken, typeIDToken))
+	return idp(t, calls, 200, refreshIssued, keycloakIDToken)
 }
 
-func newExchanger(keycloakURL string, upstreams ...op) *exchanger {
-	return &exchanger{keycloak: op{Name: "keycloak", TokenURL: keycloakURL, ClientID: "kagent", secret: "s3cret"},
-		upstreams: upstreams, hc: http.DefaultClient, now: time.Now, cache: map[[32]byte]cached{},
-		staleAfter: defaultStaleAfter, known: true, active: "keycloak"}
+func newExchanger(brokerURL string) *exchanger {
+	return &exchanger{broker: op{Name: "sterling-vance", TokenURL: brokerURL, ClientID: "kagent", secret: "s3cret"},
+		hc: http.DefaultClient, now: time.Now, cache: map[[32]byte]cached{}}
 }
 
 // result is what the gateway gets back for one request's headers.
@@ -137,12 +135,12 @@ func TestRefusals(t *testing.T) {
 		body   string
 		want   int
 	}{
-		"idp refuses":     {400, `{"error":"invalid_token"}`, 403},
-		"idp unavailable": {503, ``, 503},
-		"not an id token": {200, fmt.Sprintf(`{"access_token":"x","issued_token_type":%q}`, typeAccessToken), 503},
+		"idp refuses":         {400, `{"error":"invalid_token"}`, 403},
+		"idp unavailable":     {503, ``, 503},
+		"not a refresh token": {200, fmt.Sprintf(`{"access_token":"x","issued_token_type":%q}`, typeAccessToken), 503},
 	} {
 		t.Run(name, func(t *testing.T) {
-			w := check(newExchanger(idp(t, &calls, tc.status, tc.body).URL), jwtWithExp(time.Now().Add(time.Minute)))
+			w := check(newExchanger(idp(t, &calls, tc.status, tc.body, keycloakIDToken).URL), jwtWithExp(time.Now().Add(time.Minute)))
 			if w.Code != tc.want || w.Header().Get("x-id-token") != "" {
 				t.Fatalf("got %d %q, want %d and no token", w.Code, w.Header().Get("x-id-token"), tc.want)
 			}
@@ -155,308 +153,13 @@ func TestRefusals(t *testing.T) {
 
 func TestCacheExpiresWithTheEarlierToken(t *testing.T) {
 	var calls int32
-	x := newExchanger(idp(t, &calls, 200, fmt.Sprintf(`{"access_token":%q,"issued_token_type":%q}`,
-		jwtWithExp(time.Now().Add(time.Hour)), typeIDToken)).URL)
+	x := newExchanger(idp(t, &calls, 200, refreshIssued, jwtWithExp(time.Now().Add(time.Hour))).URL)
 	at := jwtWithExp(time.Now().Add(30 * time.Second)) // the access token expires first
 	check(x, at)
 	x.now = func() time.Time { return time.Now().Add(25 * time.Second) } // past exp - 10s
 	check(x, at)
 	if calls != 2 {
 		t.Fatalf("token endpoint called %d times, want 2 (cache ends with the access token)", calls)
-	}
-}
-
-// ---- upstreams ---------------------------------------------------------------
-
-const gluuIss = "https://gluu.example"
-
-// broker fakes Keycloak's Identity Brokering API v2 for upstream gluu: it
-// checks the requesting app and the user's token, and answers with status
-// and the stored tokens.
-func broker(t *testing.T, calls *int32, status int, stored map[string]string) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(calls, 1)
-		if r.Method != http.MethodPost || r.URL.Path != "/gluu/token" {
-			t.Errorf("broker request %s %s", r.Method, r.URL.Path)
-		}
-		if id, secret, ok := r.BasicAuth(); !ok || id != "xaa-egress" || secret != "e-secret" {
-			t.Errorf("broker client auth = %q/%q/%v", id, secret, ok)
-		}
-		r.ParseForm()
-		if r.PostForm.Get("token") == "" {
-			t.Error("broker: no user token")
-		}
-		w.WriteHeader(status)
-		if status == 200 {
-			json.NewEncoder(w).Encode(stored)
-		} else {
-			fmt.Fprint(w, `{"error":"invalid_request","error_description":"User not associated to identity provider"}`)
-		}
-	}))
-	t.Cleanup(srv.Close)
-	return srv
-}
-
-// gluu fakes the upstream token endpoint: an RFC 8693 exchange of the user's
-// upstream access token for their ID token, as S&V's client there (auth checks
-// it), answered with status; on 200 a fresh ID token. seen collects the
-// subject tokens presented.
-func gluu(t *testing.T, calls *int32, status int, auth func(*http.Request) error, seen *[]string) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(calls, 1)
-		r.ParseForm()
-		if auth == nil {
-			auth = basicAuth("sv-at-gluu", "g-secret")
-		}
-		if err := auth(r); err != nil {
-			t.Errorf("upstream client auth: %v", err)
-		}
-		if r.PostForm.Get("grant_type") != tokenExchange || r.PostForm.Get("subject_token_type") != typeAccessToken ||
-			r.PostForm.Get("requested_token_type") != typeIDToken {
-			t.Errorf("not an access token -> ID token exchange: %v", r.PostForm)
-		}
-		if seen != nil {
-			*seen = append(*seen, r.PostForm.Get("subject_token"))
-		}
-		w.WriteHeader(status)
-		switch status {
-		case 200:
-			json.NewEncoder(w).Encode(map[string]string{"access_token": jwtFor(gluuIss, "bob-gluu", time.Now().Add(5*time.Minute)),
-				"issued_token_type": typeIDToken, "token_type": "N_A"})
-		case 400:
-			fmt.Fprint(w, `{"error":"invalid_grant"}`)
-		}
-	}))
-	t.Cleanup(srv.Close)
-	return srv
-}
-
-func basicAuth(id, secret string) func(*http.Request) error {
-	return func(r *http.Request) error {
-		if u, p, ok := r.BasicAuth(); !ok || u != id || p != secret {
-			return fmt.Errorf("basic = %q/%q/%v", u, p, ok)
-		}
-		return nil
-	}
-}
-
-func withUpstream(keycloakURL, brokerURL, gluuURL string) *exchanger {
-	x := newExchanger(keycloakURL, op{Name: "gluu", TokenURL: gluuURL, ClientID: "sv-at-gluu", secret: "g-secret"})
-	x.brokerURL = brokerURL
-	x.broker = op{Name: "broker", TokenURL: keycloakURL, ClientID: "xaa-egress", secret: "e-secret"}
-	x.active = "gluu"
-	return x
-}
-
-// what the broker's Identity Brokering API v2 returns: the upstream access
-// token it keeps fresh, never the refresh token
-var stored = map[string]string{"access_token": "at-gluu-0", "issued_token_type": typeAccessToken}
-
-func TestUpstreamVouchesForItsSession(t *testing.T) {
-	var kc, b, g int32
-	x := withUpstream(keycloakOK(t, &kc).URL, broker(t, &b, 200, stored).URL, gluu(t, &g, 200, nil, nil).URL)
-	w := check(x, session("gluu", time.Now().Add(5*time.Minute)))
-	if w.Code != 200 || payload(w.Header().Get("x-id-token")).Iss != gluuIss {
-		t.Fatalf("got %d iss %q, want Gluu's ID token", w.Code, payload(w.Header().Get("x-id-token")).Iss)
-	}
-	if kc != 0 || b != 1 || g != 1 {
-		t.Fatalf("calls keycloak=%d broker=%d gluu=%d, want 0 1 1 (renewed at the upstream)", kc, b, g)
-	}
-}
-
-func TestLocalSessionKeycloakVouches(t *testing.T) {
-	// S&V's own login, even while Gluu is active: S&V's Keycloak, Gluu untouched
-	var kc, b, g int32
-	x := withUpstream(keycloakOK(t, &kc).URL, broker(t, &b, 200, stored).URL, gluu(t, &g, 200, nil, nil).URL)
-	w := check(x, session("", time.Now().Add(5*time.Minute)))
-	if w.Code != 200 || w.Header().Get("x-id-token") != keycloakIDToken || b+g != 0 {
-		t.Fatalf("got %d, broker %d, gluu %d; want Keycloak's ID token only", w.Code, b, g)
-	}
-}
-
-func TestNonIssuingUpstreamSessionKeycloakVouches(t *testing.T) {
-	// Auth0 doesn't issue ID-JAGs: the broker vouches for its sessions while it is active
-	var kc, b, g int32
-	x := withUpstream(keycloakOK(t, &kc).URL, broker(t, &b, 200, stored).URL, gluu(t, &g, 200, nil, nil).URL)
-	x.setActive("auth0")
-	if w := check(x, session("auth0", time.Now().Add(5*time.Minute))); w.Code != 200 || w.Header().Get("x-id-token") != keycloakIDToken || b+g != 0 {
-		t.Fatalf("got %d, broker %d, gluu %d; want Keycloak's ID token only", w.Code, b, g)
-	}
-}
-
-func TestNoStoredTokensFailsClosed(t *testing.T) {
-	// a Gluu session with nothing at the broker is a fault, not a reason for Keycloak to vouch
-	var kc, b, g int32
-	x := withUpstream(keycloakOK(t, &kc).URL, broker(t, &b, 400, nil).URL, gluu(t, &g, 200, nil, nil).URL)
-	if w := check(x, session("gluu", time.Now().Add(5*time.Minute))); w.Code != 503 || kc+g != 0 {
-		t.Fatalf("got %d, keycloak %d, gluu %d; want 503 and nothing else called", w.Code, kc, g)
-	}
-}
-
-func TestActiveUpstreamUnavailableFailsUntilFailover(t *testing.T) {
-	var kc, b, g int32
-	x := withUpstream(keycloakOK(t, &kc).URL, broker(t, &b, 200, stored).URL, gluu(t, &g, 503, nil, nil).URL)
-	at := session("gluu", time.Now().Add(5*time.Minute))
-	if w := check(x, at); w.Code != 503 || kc != 0 {
-		t.Fatalf("503 upstream: got %d, keycloak calls %d; want 503 and no fallback", w.Code, kc)
-	}
-	x.setActive("keycloak")
-	b, g = 0, 0
-	// the Gluu session can't be vouched for any more; a new local sign-in can
-	if w := check(x, at); w.Code != 403 || b+g+kc != 0 {
-		t.Fatalf("Gluu session after failover: %d (broker %d gluu %d keycloak %d); want 403, nothing called", w.Code, b, g, kc)
-	}
-	if w := check(x, session("", time.Now().Add(5*time.Minute))); w.Code != 200 || w.Header().Get("x-id-token") != keycloakIDToken || b+g != 0 {
-		t.Fatalf("local session after failover: %d; want Keycloak's ID token, Gluu untouched", w.Code)
-	}
-}
-
-func TestFailoverDropsCachedUpstreamTokens(t *testing.T) {
-	var kc, b, g int32
-	x := withUpstream(keycloakOK(t, &kc).URL, broker(t, &b, 200, stored).URL, gluu(t, &g, 200, nil, nil).URL)
-	at := session("gluu", time.Now().Add(5*time.Minute))
-	if w := check(x, at); payload(w.Header().Get("x-id-token")).Iss != gluuIss {
-		t.Fatal("want Gluu's ID token while gluu is active")
-	}
-	x.setActive("keycloak")
-	if w := check(x, at); w.Code != 403 || w.id != "" {
-		t.Fatalf("after failover got %d with a token: the cached Gluu ID token must not be handed out", w.Code)
-	}
-}
-
-func TestUnknownActiveTierFailsClosed(t *testing.T) {
-	var kc int32
-	x := newExchanger(keycloakOK(t, &kc).URL)
-	x.known, x.active = false, ""
-	if w := check(x, jwtWithExp(time.Now().Add(time.Minute))); w.Code != 503 || kc != 0 {
-		t.Fatalf("got %d, keycloak calls %d; want 503", w.Code, kc)
-	}
-}
-
-func TestWatchActiveReadsTheControllersDecision(t *testing.T) {
-	var active atomic.Value
-	active.Store("gluu")
-	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/apis/continuity.lab.solo.io/v1alpha1/namespaces/sv-identity/identitycontinuities/sterling-vance" ||
-			r.Header.Get("Authorization") != "Bearer sa-token" {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-		fmt.Fprintf(w, `{"status":{"active":%q}}`, active.Load())
-	}))
-	defer api.Close()
-	tok := t.TempDir() + "/token"
-	if err := writeFile(tok, "sa-token\n"); err != nil {
-		t.Fatal(err)
-	}
-	x := newExchanger("http://unused")
-	x.known, x.active = false, ""
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go x.watchActive(ctx, api.Client(), api.URL, tok, "sv-identity/sterling-vance", 10*time.Millisecond)
-	waitFor := func(want string) {
-		for i := 0; i < 200; i++ {
-			x.mu.Lock()
-			got := x.active
-			x.mu.Unlock()
-			if got == want {
-				return
-			}
-			time.Sleep(5 * time.Millisecond)
-		}
-		t.Fatalf("active never became %q", want)
-	}
-	waitFor("gluu")
-	active.Store("keycloak")
-	waitFor("keycloak")
-}
-
-func TestUpstreamRefusalIsFinal(t *testing.T) {
-	// revoked or disabled at the upstream: no falling back to Keycloak
-	var kc, b, g int32
-	x := withUpstream(keycloakOK(t, &kc).URL, broker(t, &b, 200, stored).URL, gluu(t, &g, 400, nil, nil).URL)
-	w := check(x, session("gluu", time.Now().Add(5*time.Minute)))
-	if w.Code != 403 || w.Header().Get("x-id-token") != "" || kc != 0 {
-		t.Fatalf("got %d, keycloak calls %d; want 403 and no fallback", w.Code, kc)
-	}
-	// no upstream token for the session: the upstream can't be asked, so refused too
-	x = withUpstream(keycloakOK(t, &kc).URL, broker(t, &b, 200, map[string]string{}).URL, gluu(t, &g, 200, nil, nil).URL)
-	if w := check(x, session("gluu", time.Now().Add(5*time.Minute))); w.Code != 403 || kc != 0 {
-		t.Fatalf("no upstream token: got %d, keycloak calls %d; want 403", w.Code, kc)
-	}
-}
-
-func TestBrokerErrorFailsClosed(t *testing.T) {
-	// kagent not allowed for the upstream (403) is a misconfiguration, not a reason to fall back
-	var kc, b, g int32
-	x := withUpstream(keycloakOK(t, &kc).URL, broker(t, &b, 403, nil).URL, gluu(t, &g, 200, nil, nil).URL)
-	if w := check(x, session("gluu", time.Now().Add(5*time.Minute))); w.Code != 503 || kc != 0 {
-		t.Fatalf("got %d, keycloak calls %d; want 503 and no fallback", w.Code, kc)
-	}
-}
-
-func TestUpstreamAskedAgainAfterTTL(t *testing.T) {
-	var kc, b, g int32
-	var seen []string
-	x := withUpstream(keycloakOK(t, &kc).URL, broker(t, &b, 200, stored).URL, gluu(t, &g, 200, nil, &seen).URL)
-	at := session("gluu", time.Now().Add(10*time.Minute))
-	check(x, at)
-	check(x, at) // cached
-	if g != 1 {
-		t.Fatalf("upstream called %d times within the TTL, want 1", g)
-	}
-	x.now = func() time.Time { return time.Now().Add(upstreamTTL + time.Second) }
-	if w := check(x, at); w.Code != 200 {
-		t.Fatalf("after the TTL: %d", w.Code)
-	}
-	if len(seen) != 2 || seen[0] != "at-gluu-0" || seen[1] != "at-gluu-0" {
-		t.Fatalf("subject tokens %v, want the broker's upstream access token each time", seen)
-	}
-}
-
-func TestPrivateKeyJWTAtTheUpstream(t *testing.T) {
-	k, _ := rsa.GenerateKey(rand.Reader, 2048)
-	ck := &clientKey{key: k, kid: thumbprint(&k.PublicKey)}
-	var kc, b, g int32
-	verify := func(r *http.Request) error {
-		if _, _, ok := r.BasicAuth(); ok {
-			return errors.New("basic auth sent with private_key_jwt")
-		}
-		if r.PostForm.Get("client_assertion_type") != assertionType || r.PostForm.Get("client_id") != "sv-at-gluu" {
-			return fmt.Errorf("form %v", r.PostForm)
-		}
-		parts := strings.Split(r.PostForm.Get("client_assertion"), ".")
-		if len(parts) != 3 {
-			return errors.New("not a JWT")
-		}
-		d := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
-		sig, _ := base64.RawURLEncoding.DecodeString(parts[2])
-		if err := rsa.VerifyPKCS1v15(&k.PublicKey, crypto.SHA256, d[:], sig); err != nil {
-			return err
-		}
-		var h map[string]string
-		hb, _ := base64.RawURLEncoding.DecodeString(parts[0])
-		json.Unmarshal(hb, &h)
-		var c map[string]any
-		cb, _ := base64.RawURLEncoding.DecodeString(parts[1])
-		json.Unmarshal(cb, &c)
-		if h["kid"] != ck.kid || c["iss"] != "sv-at-gluu" || c["sub"] != "sv-at-gluu" || c["aud"] != gluuIss || c["jti"] == "" {
-			return fmt.Errorf("header %v claims %v", h, c)
-		}
-		if exp := int64(c["exp"].(float64)); exp-time.Now().Unix() > 61 {
-			return fmt.Errorf("assertion lives %ds", exp-time.Now().Unix())
-		}
-		return nil
-	}
-	up := gluu(t, &g, 200, verify, nil)
-	x := newExchanger(keycloakOK(t, &kc).URL, op{Name: "gluu", Issuer: gluuIss, TokenURL: up.URL, ClientID: "sv-at-gluu", Auth: "private_key_jwt", key: ck})
-	x.brokerURL = broker(t, &b, 200, stored).URL
-	x.broker = op{Name: "broker", ClientID: "xaa-egress", secret: "e-secret"}
-	x.active = "gluu"
-	if w := check(x, session("gluu", time.Now().Add(5*time.Minute))); w.Code != 200 || payload(w.id).Iss != gluuIss {
-		t.Fatalf("got %d", w.Code)
 	}
 }
 
@@ -509,110 +212,6 @@ func TestNoMetadataTokenIsRefused(t *testing.T) {
 	// a token in a header the caller controls is never read
 	if w := check(newExchanger("http://unused"), ""); w.Code != 403 {
 		t.Fatalf("got %d, want 403", w.Code)
-	}
-}
-
-func TestLoadOPs(t *testing.T) {
-	dir := t.TempDir()
-	for name, s := range map[string]string{"gluu": "g\n", "keycloak": "k"} {
-		if err := writeFile(dir+"/"+name, s); err != nil {
-			t.Fatal(err)
-		}
-	}
-	kc, ups, err := loadOPs(`[{"name":"gluu","token_url":"https://g/token","client_id":"sv"},{"name":"keycloak","token_url":"http://kc/token","client_id":"kagent"}]`, dir)
-	if err != nil || kc.Name != "keycloak" || kc.secret != "k" || len(ups) != 1 || ups[0].secret != "g" {
-		t.Fatalf("got %+v %+v %v", kc, ups, err)
-	}
-	if _, _, err := loadOPs(`[]`, dir); err == nil {
-		t.Fatal("empty OPS accepted")
-	}
-	if _, _, err := loadOPs(`[{"name":"okta","token_url":"x","client_id":"y"}]`, dir); err == nil {
-		t.Fatal("missing secret accepted")
-	}
-	if _, _, err := loadOPs(`[{"name":"gluu","token_url":"x","client_id":"y","auth":"private_key_jwt"},{"name":"keycloak","token_url":"x","client_id":"k"}]`, dir); err == nil {
-		t.Fatal("private_key_jwt without a key accepted")
-	}
-	if _, _, err := loadOPs(`[{"name":"keycloak","token_url":"x","client_id":"k","auth":"tls_client_auth"}]`, dir); err == nil {
-		t.Fatal("unknown auth method accepted")
-	}
-}
-
-func writeFile(path, s string) error { return os.WriteFile(path, []byte(s), 0o600) }
-
-func TestStaleContinuityStateStopsAnswers(t *testing.T) {
-	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	defer api.Close()
-	tok := t.TempDir() + "/token"
-	if err := writeFile(tok, "sa-token"); err != nil {
-		t.Fatal(err)
-	}
-	x := newExchanger("http://unused") // active "keycloak", from an earlier read
-	x.staleAfter = 20 * time.Millisecond
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		x.watchActive(ctx, api.Client(), api.URL, tok, "sv-identity/sterling-vance", 5*time.Millisecond)
-	}()
-	defer func() { cancel(); <-done }()
-	for i := 0; i < 200; i++ {
-		if !x.ready() {
-			if w := check(x, jwtWithExp(time.Now().Add(time.Minute))); w.Code != 503 {
-				t.Fatalf("stale state: got %d, want 503", w.Code)
-			}
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatal("active tier kept after the continuity state went stale")
-}
-
-func TestNoActiveUpstreamRefusesUpstreamSessions(t *testing.T) {
-	// status.active "" read successfully: known, and no upstream vouches
-	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"status":{"active":""}}`)
-	}))
-	defer api.Close()
-	tok := t.TempDir() + "/token"
-	if err := writeFile(tok, "sa-token"); err != nil {
-		t.Fatal(err)
-	}
-	var kc, b, g int32
-	x := withUpstream(keycloakOK(t, &kc).URL, broker(t, &b, 200, stored).URL, gluu(t, &g, 200, nil, nil).URL)
-	at := session("gluu", time.Now().Add(5*time.Minute))
-	if w := check(x, at); w.Code != 200 {
-		t.Fatalf("while gluu is active: %d", w.Code)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		x.watchActive(ctx, api.Client(), api.URL, tok, "sv-identity/sterling-vance", 5*time.Millisecond)
-	}()
-	defer func() { cancel(); <-done }()
-	for i := 0; ; i++ {
-		x.mu.Lock()
-		a := x.active
-		x.mu.Unlock()
-		if a == "" {
-			break
-		}
-		if i == 200 {
-			t.Fatal("active tier kept after status.active was read as empty")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if !x.ready() {
-		t.Fatal("not ready after a successful read")
-	}
-	b, g = 0, 0
-	if w := check(x, at); w.Code != 403 || w.id != "" || b+g != 0 {
-		t.Fatalf("Gluu session with no active upstream: %d (broker %d gluu %d); want 403, nothing called", w.Code, b, g)
-	}
-	if w := check(x, session("", time.Now().Add(5*time.Minute))); w.Code != 200 || w.id != keycloakIDToken {
-		t.Fatalf("local session with no active upstream: %d; want Keycloak's ID token", w.Code)
 	}
 }
 

@@ -7,9 +7,9 @@ its password-only contingency IdP) and maps each into one profile. The broker is
 it holds no employee passwords, only break-glass accounts for platform admins.
 S&V's own services trust only the broker. When an IdP goes down, new sign-ins
 move to the next healthy one and nothing downstream changes: same issuer,
-same `sub`, same groups. An IdP that issues ID-JAGs (Gluu, S&V's own Keycloak)
-also vouches for its users to other companies (Cross App Access),
-with the same failover
+same `sub`, same groups. The broker also vouches for S&V's users to other
+companies (Cross App Access), whichever IdP signed them in, so partners
+trust one issuer and never see the chain or its failover
 ([IDENTITY-FLOWS.md](IDENTITY-FLOWS.md#2-cross-app-access-id-jag-to-a-saas)).
 
 Failover keeps people signed in; it must not lower what a sign-in proves.
@@ -70,11 +70,11 @@ public half is in the realm's JWKS and in `make xaa-keys`
 (`sv-upstream-client.jwks.json`). An upstream given `<NAME>_CLIENT_SECRET` in
 `.env` uses `client_secret_post` instead ([Auth0](IDPS.md#auth0-auth0)).
 
-Each upstream's ServiceEntry is exported to `sv-identity` and to the
-namespaces in `spec.egress.exportTo` (`agentgateway-system`, where S&V's
-egress has upstreams vouch for users), so every S&V call to an upstream
-leaves through `sv-egress/egress-waypoint`, and a partition there cuts all
-of them. Cross App Access follows `status.active` the same way sign-in does.
+Each upstream's ServiceEntry is exported to `sv-identity`, so every S&V
+call to an upstream leaves through `sv-egress/egress-waypoint`, and a
+partition there cuts all of them. Cross App Access calls no upstream: the
+broker vouches, and the assurance gate refuses a session from an IdP that is
+no longer active.
 
 Re-running the layer sets the chain to `ENTERPRISE_IDP`: an IdP added in
 the rule builder or by hand is removed. For each IdP it keeps what operators
@@ -134,7 +134,7 @@ doesn't create flows or roles, so the realm needs them first
 | `broker.keycloak.firstBrokerLoginFlow` | first-broker-login flow for every upstream (`continuity-first-broker-login`: link to the existing user) |
 | `egress.namespace`, `egress.waypoint` | route back-channel calls to external upstreams through this waypoint (one ServiceEntry per external IdP) |
 | `egress.internalDomains` | hosts under these domains are in-cluster and get no ServiceEntry |
-| `egress.exportTo` | other namespaces that call upstreams for the broker (`agentgateway-system`): the ServiceEntries are exported there too |
+| `egress.exportTo` | other namespaces that call upstreams for the broker: the ServiceEntries are exported there too |
 | `tiers[]` | ordered; the first eligible, healthy tier is active |
 | `tiers[].name` | also the Keycloak IdP alias |
 | `tiers[].displayName` | shown on the login page and in the Observatory |
@@ -147,7 +147,7 @@ doesn't create flows or roles, so the realm needs them first
 | `tiers[].oidc.clientAssertionSigningAlg` | `PS256`: the realm key kept for client assertions |
 | `tiers[].oidc.clientSecretRef` | Secret and key (default `client-secret`); required unless `clientAuth` is `private_key_jwt`; missing means `NotConfigured` |
 | `tiers[].oidc.scopes` | default `openid email profile` |
-| `tiers[].oidc.storeTokens` | keep the IdP's tokens on each user's link, for Cross App Access |
+| `tiers[].oidc.storeTokens` | keep the IdP's tokens on each user's link |
 | `tiers[].attributes[]` | the IdP's attributes paired with S&V's profile for the directory sync: `attribute` (built-in or `profile.attributes`) and `path` (the attribute in the IdP's user record) |
 | `tiers[].directory` | where the sync reads and writes this IdP's users: `type` (`scim`, `auth0`, `keycloak`), `url`, `credentialsRef` (`client-secret`, and `client-id` unless `clientID` is set), `scopes`, `audience` (Auth0) |
 | `tiers[].directory.clientID` | the directory client's ID; falls back to the Secret's `client-id` key |

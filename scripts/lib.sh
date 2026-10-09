@@ -520,7 +520,8 @@ kc_token() {
 }
 # kc_admin <ns> <admin password secret> <realm> <method> <path> [curl args]: a
 # party's Keycloak admin API as its bootstrap admin, over a localhost
-# port-forward; the password and the token never sit on a command line
+# port-forward; the password and the token never sit on a command line. The
+# token travels on stdin, so a request body goes in --data, never @-
 kc_admin() {
   local ns=$1 sec=$2 realm=$3 m=$4 p=$5 lp t; shift 5
   lp=$(free_port); port_forward "$ns" keycloak "$lp" 80

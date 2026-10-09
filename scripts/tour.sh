@@ -88,7 +88,7 @@ if scene 2 "Cross App Access to Ledgerline (ID-JAG)"; then
   look "Topology: ai-gateway → ledgerline-research, badged kgateway edge and Ledgerline's waypoint"
   ask "What is Ledgerline's view on technology, and which Ledgerline account am I using?"
   look "Traffic: the call to mcp.ledgerline.lab. The agent held only Bob's S&V access token:"
-  look "ai-gateway got Bob's ID token from S&V's IdP, traded it for an ID-JAG, and Ledgerline issued its own token."
+  look "ai-gateway got Bob's ID token from S&V's broker, traded it there for an ID-JAG, and Ledgerline issued its own token."
   next
 fi
 

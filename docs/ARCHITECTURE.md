@@ -41,12 +41,12 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | `sv-identity` | `assurance-gate` (3 replicas: decides each request a gateway policy asks it about) | `assurance-gate` | S&V | the gateways whose policies ask it, on its gRPC port; the Observatory, on its evaluate port |
 | `sv-workforce` | Keycloak `workforce` (S&V's own IdP, `login.sterling.lab`; password and a one-time code) | `keycloak` | S&V | edge (browsers, and in-lab callers of `login.sterling.lab`); continuity-sync (admin API) |
 | `sv-contingency` | Keycloak `contingency` (S&V's contingency IdP, `login-dr.sterling.lab`; password only) | `keycloak` | S&V | edge only |
-| `sv-egress` | `egress-waypoint` (Istio waypoint for external upstream IdPs) | `egress-waypoint` | S&V | the broker's Keycloak, continuity-controller, continuity-sync, idtoken-exchange, ai-gateway (Cross App Access at the vouching IdP), observatory |
+| `sv-egress` | `egress-waypoint` (Istio waypoint for external upstream IdPs) | `egress-waypoint` | S&V | the broker's Keycloak, continuity-controller, continuity-sync, observatory |
 | `kagent` | controller, UI, tools | `kagent-*` | S&V | UI: edge (after sign-in); controller: the UI, the agents' worker pools, the Observatory, and on Enterprise agentregistry (its kagent runtime); tools: the ops agents. The controller's RBAC covers only `kagent`, `sv-agents` and `sv-mcp` |
 | `kagent` | ops agents (k8s, istio, helm, promql, kgateway): SandboxAgents on pool `kagent-ops` | `kagent-ops` | S&V | atenet-router only |
 | `ate-system` | Agent Substrate: ate-api, atenet-router, atelet, ate-controller, valkey, rustfs | one SA per component | platform | ate-api and router: kagent controller only; the rest: `ate-system` only |
 | `agentgateway-system` | ai-gateway (LLM + MCP) | `ai-gateway` | S&V | the agents' worker pools, by ServiceAccount (models, Cross App Access); the kagent controller (Ledgerline's public catalog); itself (the Cross App Access token requests) |
-| `agentgateway-system` | `idtoken-exchange` (ai-gateway's ext-auth for Cross App Access: Bob's ID token from the IdP that vouches for him) | `idtoken-exchange` | S&V | ai-gateway only |
+| `agentgateway-system` | `idtoken-exchange` (ai-gateway's ext-auth for Cross App Access: Bob's ID token from S&V's broker) | `idtoken-exchange` | S&V | ai-gateway only |
 | `agentregistry` | agentregistry | `agentregistry` | S&V | edge only (after S&V sign-in, kgateway OAuth2); its database: agentregistry only |
 | `sv-agents` | `bob-assistant`: SandboxAgent on pool `bob-assistant` | `bob-assistant` | S&V / Bob | atenet-router only (kagent controller → ate-api → router) |
 | `sv-agents` | advisor desk (meeting-prep, market-brief, compliance-check): SandboxAgents on pool `advisor-desk` | `advisor-desk` | S&V | atenet-router only |
@@ -55,7 +55,7 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | `sv-u4a` | `u4a-adapter` (UMA client: holds Bob's agent's key) | `u4a-adapter` | S&V / Bob | Bob's agent and the kagent controller only |
 | `ledgerline-identity` | Keycloak `ledgerline` (ID-JAG receiver) | `keycloak` | Ledgerline | edge (the realm only); `ledgerline-research` (JWKS) |
 | `ledgerline` | `ledgerline-research` (kmcp) behind `mcp-gateway`, Ledgerline's agentgateway | `ledgerline-research` | Ledgerline | edge (Ledgerline token for calls, verified again by the server) |
-| `ledgerline-egress` | `egress-waypoint` (Istio waypoint for the internet hosts Ledgerline reaches: its IdPs' keys) | `egress-waypoint` | Ledgerline | `ledgerline-research` and Ledgerline's Keycloak only |
+| `ledgerline-egress` | `egress-waypoint` (Istio waypoint for the internet hosts Ledgerline reaches: its AS's keys, when that AS is outside the lab) | `egress-waypoint` | Ledgerline | `ledgerline-research` and Ledgerline's Keycloak only |
 | `alice-identity` | Keycloak `alice` | `keycloak` | Alice | edge; `alice/uma-as` (JWKS) |
 | `alice` | uma-as (Alice's AS) | `uma-as` | Alice | its waypoint only: the edge (grant surface, and Meridian's uma-pep calling the protection API through it) and the portal (owner API) |
 | `alice` | alice-portal | `portal` | Alice | edge |
@@ -150,7 +150,7 @@ NetworkPolicy `no-internet`: its pods reach the cluster and nothing else
 (Prometheus also reaches the nodes' metrics ports). The ways out are the
 gateways built for it: ai-gateway (models, Cross App Access),
 `sv-egress/egress-waypoint` (S&V's upstream IdPs) and
-`ledgerline-egress/egress-waypoint` (Ledgerline's IdPs' keys). Istio ambient doesn't enforce
+`ledgerline-egress/egress-waypoint` (the keys of Ledgerline's AS outside the lab). Istio ambient doesn't enforce
 `outboundTrafficPolicy`, so the CNI (kindnet) does. `ate-system` keeps its
 egress: atelet pulls the actors' images itself.
 
@@ -172,7 +172,9 @@ users are linked to their S&V user by verified email, so `sub` never changes.
 External upstreams are reached through `sv-egress/egress-waypoint` (one
 ServiceEntry per IdP, exported to every S&V namespace that calls them),
 which is also where an outage is simulated: a DENY policy on that
-ServiceEntry. Cross App Access follows the same active IdP.
+ServiceEntry. Cross App Access calls no upstream: the broker vouches for
+S&V's users, and the assurance gate refuses a session from an IdP that is no
+longer active.
 
 Failover keeps sign-in up; assurance rules keep it from lowering what a
 sign-in proves. The broker carries each upstream's `acr`, `amr` and

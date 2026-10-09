@@ -94,7 +94,7 @@ ANTHROPIC_BASE_URL=https://llm.sterling.lab ANTHROPIC_AUTH_TOKEN="$(grep '^LLM_A
 | `curl -s https://idp.sterling.lab/realms/sterling-vance/.well-known/openid-configuration \| jq` | S&V's issuer and endpoints (same for `idp.alice.lab/realms/alice`, `idp.ledgerline.lab/realms/ledgerline`, `idp.ops.lab/realms/ops`) |
 | `grep -E 'KC_ADMIN_PASSWORD' .lab/secrets.env` | each Keycloak's admin password (user `admin`) |
 | `kubectl --context kind-solo-lab -n sv-identity port-forward svc/keycloak 18080:80` | S&V broker's admin console at http://127.0.0.1:18080/admin (the edge publishes only the realm; same for `sv-workforce`, `ops-identity`, `alice-identity`, `ledgerline-identity`) |
-| `make xaa-logs SINCE=2h` | the Cross App Access trail: both token requests, the ID-JAG's claims and every check, tokens redacted |
+| `make xaa-logs SINCE=2h` | the Cross App Access trail: both token requests (S&V's broker, Ledgerline's AS), the ID-JAG's claims and every check, tokens redacted |
 | `kubectl --context kind-solo-lab -n sv-identity logs deploy/keycloak --since=10m \| grep -i -E "claim\|IDENTITY_PROVIDER\|error"` | sign-in and broker errors (it names the claim or step that failed) |
 
 **Get Bob's tokens** (the scripted browser sign-in the checks use: kagent's

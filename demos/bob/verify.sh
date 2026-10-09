@@ -75,25 +75,14 @@ if ras_external; then
   ACCOUNT="issuer[\\\"]*: [\\\"]*$ISS.*ledgerline_account[\\\"]*: [\\\"]*bob|ledgerline_account[\\\"]*: [\\\"]*bob.*issuer[\\\"]*: [\\\"]*$ISS"
   CHAT='bob'
 fi
-# the IdP that should vouch for Bob: his session's (the token's idp claim)
-# when it issues ID-JAGs and is S&V's active tier, else S&V's broker
-# ("sterling-vance"). These checks sign Bob in through S&V's own IdP, which
-# vouches for him; Ledgerline links his seat to it at his first sign-in there.
-SESSION_IDP=$(echo "$BOB" | cut -d. -f2 | python3 -c 'import base64,json,sys; s=sys.stdin.read().strip(); print(json.loads(base64.urlsafe_b64decode(s+"="*(-len(s)%4))).get("idp",""))')
-ACTIVE=$(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}' 2>/dev/null) || ACTIVE=""
-VOUCHER=sterling-vance
-if [ -n "$SESSION_IDP" ] && [ "$SESSION_IDP" = "$ACTIVE" ]; then
-  case " $(idp_xaa_upstreams) " in *" $SESSION_IDP "*) VOUCHER=$SESSION_IDP ;; esac
-fi
 step "Cross App Access: Bob's agent -> Ledgerline Research (ID-JAG)"
-ras_external || { ledgerline_signin bob bob-demo || die "Bob could not sign in to Ledgerline through $ACTIVE"; }
 check "$ACCOUNT"                                "account_info: Ledgerline's own account for Bob"  $AGENT $XAA call account_info '{}' --token "$BOB"
 # the ID-JAG the gateway verified at the Ledgerline leg (ai-gateway's access
 # log: its claims; the gateway caches Ledgerline's token for up to five minutes)
-if [ "$VOUCHER" = sterling-vance ]; then WANT_ISS="https://idp.$SV_DOMAIN/realms/sterling-vance"
-else WANT_ISS=$(_idp_var "$VOUCHER" ISSUER); fi
+# S&V's broker vouches for every S&V user, whichever IdP signed them in
+WANT_ISS="https://idp.$SV_DOMAIN/realms/sterling-vance"
 if ! gw_log=$(K logs -n agentgateway-system -l gateway.networking.k8s.io/gateway-name=ai-gateway --since=6m --tail=-1 2>&1); then
-  res no "ID-JAG from $VOUCHER, verified at S&V's egress" "could not read ai-gateway's log: $gw_log"
+  res no "ID-JAG from S&V's broker, verified at S&V's egress" "could not read ai-gateway's log: $gw_log"
 else
   vouched=$(echo "$gw_log" | grep 'route=agentgateway-system/xaa-as-ledgerline ' | grep 'http.status=200 ' | python3 -c '
 import json, sys
@@ -104,11 +93,8 @@ for line in sys.stdin:
         last = json.JSONDecoder().raw_decode(line[i + 5:])[0]
 if last:
     print(last.get("iss", ""), "aud=%s client_id=%s" % (last.get("aud"), last.get("client_id")))') || vouched=""
-  if [ -n "$vouched" ] && [ "${vouched%% *}" = "${WANT_ISS%/}" ]; then res ok "ID-JAG from $VOUCHER, verified at S&V's egress: ${vouched#* }"
-  else
-    res no "ID-JAG from $VOUCHER, verified at S&V's egress" "${vouched:-no ID-JAG in the ai-gateway log}"
-    [ "$VOUCHER" != sterling-vance ] && echo "      $VOUCHER vouches for a session through it once Bob has signed in to Ledgerline through it (https://idp.$LEDGERLINE_DOMAIN/realms/ledgerline/account)"
-  fi
+  if [ -n "$vouched" ] && [ "${vouched%% *}" = "${WANT_ISS%/}" ]; then res ok "ID-JAG from S&V's broker, verified at S&V's egress: ${vouched#* }"
+  else res no "ID-JAG from S&V's broker, verified at S&V's egress" "${vouched:-no ID-JAG in the ai-gateway log}"; fi
 fi
 # the token requests go out through ai-gateway's own routes: no one else may use them
 code=$(K exec -n sv-agents probe-bob-assistant -- curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST \

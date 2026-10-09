@@ -29,7 +29,7 @@ spec:
   owner: Research desk
   workloads: [{namespace: agentgateway-system, serviceAccount: ai-gateway}]
   clients: [kagent, kagent-ui]
-  # the IdP that vouches for Bob to Ledgerline is the one signing him in
+  # Bob's session must come from the IdP that is active now
   sessions: ActiveIdPOnly
   assurance: {minimum: AAL2}
 ---
