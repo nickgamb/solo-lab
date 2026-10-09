@@ -145,3 +145,16 @@ func TestRedirectsNotFollowed(t *testing.T) {
 		t.Fatal("a redirected token request succeeded")
 	}
 }
+
+func TestGroupMapperReadsANamespacedClaimWhole(t *testing.T) {
+	m := GroupMapper("https://sterling.lab/groups", "advisors")
+	if m.Name != "group advisors" || m.Type != "oidc-advanced-group-idp-mapper" {
+		t.Fatalf("mapper %s %s", m.Name, m.Type)
+	}
+	if want := `[{"key":"https://sterling\\.lab/groups","value":"advisors"}]`; m.Config["claims"] != want {
+		t.Fatalf("claims %s, want %s", m.Config["claims"], want)
+	}
+	if m.Config["group"] != "/advisors" || m.Config["syncMode"] != "FORCE" || m.Config["are.claim.values.regex"] != "false" {
+		t.Fatalf("config %v", m.Config)
+	}
+}

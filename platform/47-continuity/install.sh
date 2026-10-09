@@ -128,14 +128,17 @@ desired=$({ for n in $CHAIN; do
     dir='{"directory": {"type": "keycloak", "url": "http://keycloak.sv-contingency.svc/admin/realms/contingency", "credentialsRef": {"name": "directory-contingency"}},
       "attributes": [{"attribute": "email", "path": "email"}, {"attribute": "firstName", "path": "firstName"}, {"attribute": "lastName", "path": "lastName"}]}'
   fi
+  gclaim=$(_idp_var "$n" GROUPS_CLAIM); gclaim=${gclaim:-groups}
   jq -nc --arg n "$n" --arg iss "$(_idp_var "$n" ISSUER)" --arg cid "$(_idp_var "$n" CLIENT_ID)" \
-    --arg auth "$(idp_client_auth "$n")" --argjson store "$store" --argjson dir "$dir" --argjson assurance "$ASSURANCE" '{name: $n,
+    --arg auth "$(idp_client_auth "$n")" --argjson store "$store" --argjson dir "$dir" --argjson assurance "$ASSURANCE" \
+    --arg gclaim "$gclaim" '{name: $n,
     displayName: ({okta: "Okta", auth0: "Auth0", gluu: "Gluu", keycloak: "Sterling & Vance (Keycloak)", contingency: "Sterling & Vance (contingency)"}[$n] // $n), type: "oidc",
     oidc: ({issuer: $iss, clientID: $cid, clientAuth: $auth}
       + (if $auth == "private_key_jwt" then {clientAssertionSigningAlg: "PS256"} else {clientSecretRef: {name: "upstream-\($n)"}} end)
       + (if $store then {scopes: ["openid", "email", "profile"], storeTokens: true} else {} end)),
     failoverWhen: {unreachable: true, serverError: true, invalidDiscovery: true, latencyAboveMs: 1500},
-    assurance: ($assurance[$n] // {default: "AAL1"})}
+    assurance: ($assurance[$n] // {default: "AAL1"}),
+    groups: {claim: $gclaim}}
     + ($dir // {})'
 done
 jq -nc '{name: "break-glass", displayName: "Platform admins (break-glass)", type: "local", assurance: {default: "AAL1"}}'
@@ -163,11 +166,14 @@ local_assurance() {
   jq -c --argjson l "$local_json" 'map(. as $t | (($l.tiers // {})[$t.name].assurance) as $a | if $a then .assurance = $a else . end)' <<<"$1"
 }
 desired=$(local_assurance "$desired")
+# the shape's groups and the workforce's email domains (config/lab.env)
+SHAPE=$(jq -nc --arg g "$SV_GROUPS" --arg d "$SV_EMAIL_DOMAINS" '{groups: ($g | split(",") | map(select(. != ""))), domains: ($d | split(",") | map(select(. != "")))}')
 if ! K get identitycontinuity sterling-vance -n sv-identity >/dev/null 2>&1; then
   desired=$(add_local "$desired")
   render "$D/identitycontinuity.yaml" | T="$desired" L="$local_json" yq '.spec.tiers = env(T)
     | (env(L) | .profile) as $p | (env(L) | .sync) as $s
-    | (select($p != null) | .spec.profile) = $p | (select($s != null) | .spec.sync) = $s' | K apply -f - >/dev/null
+    | (select($p != null) | .spec.profile) = $p | (select($s != null) | .spec.sync) = $s' \
+    | G="$SHAPE" yq '.spec.profile = ((.spec.profile // {}) * env(G))' | K apply -f - >/dev/null
 else
   cur=$(K get idc sterling-vance -n sv-identity -o json | jq -c '.spec.tiers')
   # an existing tier keeps what operators set (display name, enabled, failover
@@ -177,7 +183,8 @@ else
     | ([$c[] | select(.name == $t.name and .type == $t.type)][0]) as $old
     | if $old == null then $t
       else ($old * ($t | del(.displayName, .failoverWhen) | if $old.directory then del(.directory) else . end
-          | if $old.attributes then del(.attributes) else . end | if $old.assurance then del(.assurance) else . end))
+          | if $old.attributes then del(.attributes) else . end | if $old.assurance then del(.assurance) else . end
+          | if $old.groups then del(.groups) else . end))
         | if .oidc.clientAuth == "private_key_jwt" then del(.oidc.clientSecretRef) else . end end)')
   # every S&V caller of an upstream goes through the egress waypoint
   egress=$(render "$D/identitycontinuity.yaml" | yq -o json -I0 '.spec.egress')
@@ -194,6 +201,14 @@ else
     K patch idc sterling-vance -n sv-identity --type merge -p "$prof" >/dev/null
     ok "profile: $(echo "$prof" | jq -r '[.spec.profile.attributes[].name] | join(", ")')"
   fi
+  # the shape's groups and the workforce's domains, unless operators set them
+  shape=$(K get idc sterling-vance -n sv-identity -o json | jq -c --argjson s "$SHAPE" '(.spec.profile // {}) as $p
+    | [if $p.groups == null then {groups: $s.groups} else empty end, if $p.domains == null then {domains: $s.domains} else empty end]
+    | if length == 0 then empty else {spec: {profile: add}} end')
+  if [ -n "$shape" ]; then
+    K patch idc sterling-vance -n sv-identity --type merge -p "$shape" >/dev/null
+    ok "profile: $(echo "$shape" | jq -c .spec.profile)"
+  fi
   if [ "$(echo "$cur" | jq -cS .)" != "$(echo "$merged" | jq -cS .)" ]; then
     K patch idc sterling-vance -n sv-identity --type merge -p "{\"spec\":{\"tiers\":$merged}}" >/dev/null
     ok "tiers: $(echo "$cur" | jq -r 'map(.name) | join(" -> ")') => $(echo "$merged" | jq -r 'map(.name) | join(" -> ")')"
@@ -208,3 +223,20 @@ if [ "$fix" != "[]" ]; then K patch idc sterling-vance -n sv-identity --type jso
 wait_for "sterling-vance continuity Ready" 30 2 \
   sh -c "kubectl --context $KCTX get idc sterling-vance -n sv-identity -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}' | grep -q True"
 ok "active IdP: $(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}')  (kubectl get idc -n sv-identity)"
+# The directory sync makes the broker's accounts from the primary IdP and maps
+# everyone's groups, so it runs on a schedule (unless operators set their own)
+# and once now: the demos sign people in next.
+if [ -z "$(K get idc sterling-vance -n sv-identity -o jsonpath='{.spec.sync}')" ]; then
+  K patch idc sterling-vance -n sv-identity --type merge -p "{\"spec\":{\"sync\":{\"schedule\":\"$SV_SYNC_SCHEDULE\"}}}" >/dev/null
+fi
+# the controller's own image: a CronJob still on the previous one is updated on its next pass
+img=$(K get deploy continuity-controller -n sv-identity -o jsonpath='{.spec.template.spec.containers[0].image}')
+wait_for "the directory sync's CronJob, on $img" 60 2 \
+  sh -c "kubectl --context $KCTX get cronjob sterling-vance-profile-sync -n sv-identity -o jsonpath='{.spec.jobTemplate.spec.template.spec.containers[0].image}' | grep -qx '$img'"
+job="sterling-vance-profile-sync-install-$(date -u +%Y%m%d%H%M%S)"
+K create job "$job" -n sv-identity --from=cronjob/sterling-vance-profile-sync >/dev/null
+if K wait job "$job" -n sv-identity --for=condition=Complete --timeout=180s >/dev/null 2>&1; then
+  ok "directory sync: $(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.sync.message}')"
+else
+  warn "directory sync: $(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.sync.message}') (kubectl logs -n sv-identity job/$job)"
+fi

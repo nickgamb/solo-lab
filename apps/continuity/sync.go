@@ -78,6 +78,7 @@ func runSync(args []string) int {
 		st.Schemas = schemas
 	}
 	st.Users, st.Updated, st.Written, st.Created, st.Failed = int32(res.Users), int32(res.Updated), int32(res.Written), int32(res.Created), int32(res.Failed)
+	st.Provisioned = int32(res.Provisioned)
 	switch {
 	case err != nil:
 		st.Message = err.Error()
@@ -159,7 +160,11 @@ func syncOnce(ctx context.Context, c client.Client, ic *v1.IdentityContinuity, c
 	if primary == nil && len(failovers) == 0 {
 		return profilesync.Result{}, schemas, errors.New("no IdP has both a directory and an attribute mapping")
 	}
-	return profilesync.Run(ctx, kc, primary, failovers, controller.Writable(ic), controller.Lists(ic), func(msg string, kv ...any) { log.Info(msg, kv...) }), schemas, nil
+	var shape profilesync.Shape
+	if ic.Spec.Profile != nil {
+		shape = profilesync.Shape{Groups: ic.Spec.Profile.Groups, Domains: ic.Spec.Profile.Domains}
+	}
+	return profilesync.Run(ctx, kc, primary, failovers, controller.Writable(ic), controller.Lists(ic), shape, func(msg string, kv ...any) { log.Info(msg, kv...) }), schemas, nil
 }
 
 // testDirectory checks one tier's directory along the sync's own path and

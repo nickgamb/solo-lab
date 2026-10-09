@@ -7,7 +7,10 @@
 . "$(dirname "$0")/../../scripts/lib.sh"
 need_cluster
 . "$LAB_ROOT/scripts/idp.sh"
-NS=sv-identity IC=sterling-vance BOB_ID=5b0b0000-0000-4000-8000-000000000b0b
+NS=sv-identity IC=sterling-vance
+# Bob's S&V account: the directory sync made it from the primary IdP
+BOB_ID=$(kc_admin sv-identity SV_KC_ADMIN_PASSWORD sterling-vance GET "/users?exact=true&briefRepresentation=true&email=bob%40$SV_DOMAIN" | jq -r '.[0].id // empty')
+[ -n "$BOB_ID" ] || die "no S&V broker account for bob@$SV_DOMAIN: the directory sync makes it from the primary IdP (make layer-47)"
 T=keycloak TNS=sv-workforce   # S&V's own IdP, cut by a DENY in its namespace
 CA=(--cacert "$LAB_CA_DIR/ca.crt")
 TMPD=$(umask 077; mktemp -d); on_exit "rm -rf $TMPD"   # every temp file, gone on exit
@@ -249,6 +252,26 @@ expect '^204$' "S&V's own Keycloak made the primary; Bob's department changed th
 run_sync >/dev/null
 expect "^$W-in\$" "read in from the primary: S&V's profile has it" "$(dept_of broker "$BOB_ID")"
 expect 'updated=[1-9].* failed=0' "status.sync: S&V profiles updated, no failures" "$(sync_status)"
+
+# groups: the primary says which of the shape's groups Bob is in
+G=$(idc | jq -r '.spec.profile.groups // [] | map(select(. != "advisors")) | .[0] // empty')
+if [ -z "$G" ]; then
+  skipped "group membership from the primary: no shape group besides advisors (spec.profile.groups)"
+else
+  gid=$(workforce "/group-by-path/$G" | jq -r '.id // empty')
+  [ -n "$gid" ] || { workforce "/groups" -X POST -H 'content-type: application/json' --data "{\"name\":\"$G\"}" -o /dev/null
+    gid=$(workforce "/group-by-path/$G" | jq -r '.id // empty'); }
+  in_broker() { broker "/users/$BOB_ID/groups" | jq -r --arg g "$G" 'any(.[]; .name == $g)'; }
+  on_exit "workforce /users/$BOB_WF/groups/$gid -X DELETE -o /dev/null >/dev/null 2>&1"
+  expect '^204$' "Bob put in $G at the primary (S&V's own Keycloak)" "$(workforce "/users/$BOB_WF/groups/$gid" -X PUT -o /dev/null -w '%{http_code}')"
+  run_sync >/dev/null
+  expect '^true$' "read in from the primary: Bob is in $G at the broker" "$(in_broker)"
+  expect '^204$' "Bob taken out of $G at the primary" "$(workforce "/users/$BOB_WF/groups/$gid" -X DELETE -o /dev/null -w '%{http_code}')"
+  run_sync >/dev/null
+  expect '^false$' "read in again: Bob is out of $G at the broker" "$(in_broker)"
+fi
+expect '^true$' "Bob's broker account came from the primary: no credential of its own" \
+  "$(broker "/users/$BOB_ID/credentials" | jq -r 'length == 0')"
 
 expect '"ok":true,"users":[2-9][0-9]*,"attributes":\[[^]]*"firstName"' "Test connection: token, users counted, attribute schema read (no user data)" \
   "$(run_sync --test-tier=keycloak)"

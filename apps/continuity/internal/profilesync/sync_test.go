@@ -22,6 +22,8 @@ type fakeBroker struct {
 	local   map[string]bool
 	updated []keycloak.User
 	store   func(keycloak.User) // what the broker does to a user it stores
+	groups  map[string][]string // user id -> group names
+	created []string            // emails it created accounts for
 }
 
 // Users lists copies, as the admin API does.
@@ -64,6 +66,73 @@ func (f *fakeBroker) UpdateUser(_ context.Context, id string, apply func(keycloa
 		return true, nil
 	}
 	return false, keycloak.ErrNotFound
+}
+
+func (f *fakeBroker) FindUserByEmail(_ context.Context, email string) (string, error) {
+	for _, u := range f.users {
+		if s, _ := u["email"].(string); strings.EqualFold(s, email) {
+			id, _ := u["id"].(string)
+			return id, nil
+		}
+	}
+	return "", keycloak.ErrNotFound
+}
+
+func (f *fakeBroker) CreateUser(_ context.Context, email string, verified bool) (string, error) {
+	id := "new-" + email
+	f.users = append(f.users, keycloak.User{"id": id, "username": email, "email": email, "emailVerified": verified})
+	f.created = append(f.created, email)
+	return id, nil
+}
+
+func (f *fakeBroker) EnsureGroup(_ context.Context, name string) (string, error) {
+	return "g-" + name, nil
+}
+
+func (f *fakeBroker) UserGroups(_ context.Context, id string) ([]string, error) {
+	return slices.Clone(f.groups[id]), nil
+}
+
+func (f *fakeBroker) SetUserGroups(_ context.Context, id string, want []string, managed map[string]string) (bool, error) {
+	if f.groups == nil {
+		f.groups = map[string][]string{}
+	}
+	var next []string
+	for _, g := range f.groups[id] {
+		if _, m := managed[g]; !m {
+			next = append(next, g)
+		}
+	}
+	next = append(next, want...)
+	slices.Sort(next)
+	changed := !slices.Equal(next, f.groups[id])
+	f.groups[id] = next
+	return changed, nil
+}
+
+// groupDir is a fakeDir with users to list and groups (or roles) per user.
+type groupDir struct {
+	fakeDir
+	entries []Entry
+	groups  map[string][]string
+	set     map[string][]string // id -> the want of the last SetGroups
+}
+
+func (d *groupDir) List(_ context.Context, first, max int) ([]Entry, error) {
+	if first >= len(d.entries) {
+		return nil, nil
+	}
+	return d.entries[first:min(first+max, len(d.entries))], nil
+}
+
+func (d *groupDir) Groups(_ context.Context, id string) ([]string, error) { return d.groups[id], nil }
+
+func (d *groupDir) SetGroups(_ context.Context, id string, want, _ []string) error {
+	if d.set == nil {
+		d.set = map[string][]string{}
+	}
+	d.set[id] = want
+	return nil
 }
 
 // fakeDir is a directory of flat records (path -> value), as Lookup reads them.
@@ -149,7 +218,7 @@ func TestPrimaryIntoBrokerThenOutToFailovers(t *testing.T) {
 	primary := &IdP{Name: "auth0", Attributes: mappings, Dir: &fakeDir{recs: map[string]map[string]any{
 		"a-bob": {"department": "Advisory", "given_name": "Robert", "preferred_username": "evil"}}}}
 	kc := &fakeDir{recs: map[string]map[string]any{"k-bob": {"email": "bob@sterling.lab", "department": "old", "given_name": "Bob"}}}
-	res := Run(context.Background(), b, primary, []IdP{{Name: "keycloak", Attributes: mappings, Dir: kc}}, writable, nil, nop)
+	res := Run(context.Background(), b, primary, []IdP{{Name: "keycloak", Attributes: mappings, Dir: kc}}, writable, nil, Shape{}, nop)
 	if res.Users != 1 || res.Updated != 1 || res.Written != 1 || res.Failed != 0 {
 		t.Fatalf("result %+v", res)
 	}
@@ -170,12 +239,12 @@ func TestCreatedAtFailoverOnlyIfInPrimary(t *testing.T) {
 	primary := &IdP{Name: "auth0", Attributes: mappings, Dir: &fakeDir{recs: map[string]map[string]any{
 		"a-carol": {"email": "carol@sterling.lab", "department": "Ops"}}}}
 	kc := &fakeDir{recs: map[string]map[string]any{}}
-	res := Run(context.Background(), b, primary, []IdP{{Name: "keycloak", Attributes: mappings, Dir: kc}}, writable, nil, nop)
+	res := Run(context.Background(), b, primary, []IdP{{Name: "keycloak", Attributes: mappings, Dir: kc}}, writable, nil, Shape{}, nop)
 	if res.Created != 1 || !slices.Equal(kc.created, []string{"carol@sterling.lab"}) || kc.recs["new-carol@sterling.lab"]["department"] != "Ops" {
 		t.Fatalf("created %v (%+v): carol, who is in the primary; never dave", kc.created, res)
 	}
 	auth0 := &fakeDir{recs: map[string]map[string]any{}, noCreate: true}
-	res = Run(context.Background(), &fakeBroker{users: []keycloak.User{carol}}, primary, []IdP{{Name: "auth0-backup", Attributes: mappings, Dir: auth0}}, writable, nil, nop)
+	res = Run(context.Background(), &fakeBroker{users: []keycloak.User{carol}}, primary, []IdP{{Name: "auth0-backup", Attributes: mappings, Dir: auth0}}, writable, nil, Shape{}, nop)
 	if res.Failed != 0 || !strings.Contains(strings.Join(res.Notes, ""), "can't create one without a password") {
 		t.Fatalf("a directory that can't create without a password is noted, not a failed run: %+v", res)
 	}
@@ -185,7 +254,7 @@ func TestUnreadablePrimaryLeavesBrokerAndStillWritesFailovers(t *testing.T) {
 	b := &fakeBroker{users: []keycloak.User{bob()}, links: map[string]map[string]string{"bob": {"auth0": "a-bob"}}}
 	primary := &IdP{Name: "auth0", Attributes: mappings, Dir: &fakeDir{err: errors.New("unreachable")}}
 	kc := &fakeDir{recs: map[string]map[string]any{"k-bob": {"email": "bob@sterling.lab", "department": "stale"}}}
-	res := Run(context.Background(), b, primary, []IdP{{Name: "keycloak", Attributes: mappings, Dir: kc}}, writable, nil, nop)
+	res := Run(context.Background(), b, primary, []IdP{{Name: "keycloak", Attributes: mappings, Dir: kc}}, writable, nil, Shape{}, nop)
 	if res.Failed != 1 || len(b.updated) != 0 || kc.recs["k-bob"]["department"] != "old" {
 		t.Fatalf("broker kept, failover given the broker's last value: %+v %v", res, kc.recs)
 	}
@@ -197,7 +266,7 @@ func TestUnreadablePrimaryLeavesBrokerAndStillWritesFailovers(t *testing.T) {
 func TestDroppedAttributeIsReported(t *testing.T) {
 	b := &fakeBroker{users: []keycloak.User{bob()}}
 	kc := &fakeDir{recs: map[string]map[string]any{"k-bob": {"email": "bob@sterling.lab"}}, drop: "department"}
-	res := Run(context.Background(), b, nil, []IdP{{Name: "keycloak", Attributes: mappings, Dir: kc}}, writable, nil, nop)
+	res := Run(context.Background(), b, nil, []IdP{{Name: "keycloak", Attributes: mappings, Dir: kc}}, writable, nil, Shape{}, nop)
 	if res.Failed != 1 || !strings.Contains(strings.Join(res.Errors, ""), "didn't keep department") {
 		t.Fatalf("result %+v", res)
 	}
@@ -207,7 +276,7 @@ func TestLocalOnlyAndServiceAccountsSkipped(t *testing.T) {
 	b := &fakeBroker{users: []keycloak.User{{"id": "ops", "email": "ops@sterling.lab"}, {"id": "sa", "serviceAccountClientId": "x"}},
 		local: map[string]bool{"ops": true}}
 	kc := &fakeDir{recs: map[string]map[string]any{"k-ops": {"email": "ops@sterling.lab"}}}
-	if res := Run(context.Background(), b, nil, []IdP{{Name: "keycloak", Attributes: mappings, Dir: kc}}, writable, nil, nop); res.Users != 0 || len(kc.writes) != 0 {
+	if res := Run(context.Background(), b, nil, []IdP{{Name: "keycloak", Attributes: mappings, Dir: kc}}, writable, nil, Shape{}, nop); res.Users != 0 || len(kc.writes) != 0 {
 		t.Fatalf("result %+v writes %v", res, kc.writes)
 	}
 }
@@ -389,7 +458,7 @@ func TestListsCarryEveryValueSinglesOne(t *testing.T) {
 	ms := []v1.AttributeMapping{{Attribute: "groups", Path: "groups"}, {Attribute: "department", Path: "department"}}
 	primary := &IdP{Name: "auth0", Attributes: ms, Dir: &fakeDir{recs: map[string]map[string]any{
 		"a-bob": {"groups": []any{"advisors", "research"}, "department": []any{"Advisory", "Old"}}}}}
-	Run(context.Background(), b, primary, nil, []string{"groups", "department"}, []string{"groups"}, nop)
+	Run(context.Background(), b, primary, nil, []string{"groups", "department"}, []string{"groups"}, Shape{}, nop)
 	attrs := b.updated[0]["attributes"].(map[string]any)
 	if !slices.Equal(Values(attrs["groups"]), []string{"advisors", "research"}) || !slices.Equal(Values(attrs["department"]), []string{"Advisory"}) {
 		t.Fatalf("attributes %v: a list keeps every value, a single attribute its first", attrs)
@@ -404,12 +473,12 @@ func TestMixedCaseEmailSettles(t *testing.T) {
 		store: func(u keycloak.User) { u["email"] = strings.ToLower(u["email"].(string)) }}
 	primary := &IdP{Name: "gluu", Attributes: ms, Dir: &fakeDir{recs: map[string]map[string]any{"g-bob": {"email": " Bob@Sterling.LAB"}}}}
 	fo := &fakeDir{recs: map[string]map[string]any{"k-bob": {"email": "bob@old.lab"}}, lower: true}
-	res := Run(context.Background(), b, primary, []IdP{{Name: "kc2", Attributes: ms, Dir: fo}}, writable, nil, nop)
+	res := Run(context.Background(), b, primary, []IdP{{Name: "kc2", Attributes: ms, Dir: fo}}, writable, nil, Shape{}, nop)
 	if res.Updated != 1 || res.Written != 1 || res.Failed != 0 || b.users[0]["email"] != "bob@sterling.lab" || fo.recs["k-bob"]["email"] != "bob@sterling.lab" {
 		t.Fatalf("first run %+v: broker %v, failover %v", res, b.users[0], fo.recs["k-bob"])
 	}
 	fo.recs["k-bob"]["email"] = "Bob@Sterling.lab" // as the failover may show it
-	res = Run(context.Background(), b, primary, []IdP{{Name: "kc2", Attributes: ms, Dir: fo}}, writable, nil, nop)
+	res = Run(context.Background(), b, primary, []IdP{{Name: "kc2", Attributes: ms, Dir: fo}}, writable, nil, Shape{}, nop)
 	if res.Updated != 0 || res.Written != 0 || res.Failed != 0 {
 		t.Fatalf("second run %+v: nothing to do when only the case differs", res)
 	}
@@ -422,7 +491,7 @@ func TestUserOnTwoPagesSyncedOnce(t *testing.T) {
 	}
 	users = append(users, users[pageSize-1]) // shifted onto the next page meanwhile
 	b := &fakeBroker{users: users}
-	res := Run(context.Background(), b, nil, []IdP{{Name: "keycloak", Attributes: mappings, Dir: &fakeDir{recs: map[string]map[string]any{}}}}, writable, nil, nop)
+	res := Run(context.Background(), b, nil, []IdP{{Name: "keycloak", Attributes: mappings, Dir: &fakeDir{recs: map[string]map[string]any{}}}}, writable, nil, Shape{}, nop)
 	if res.Users != pageSize {
 		t.Fatalf("users %d, want %d", res.Users, pageSize)
 	}
@@ -433,7 +502,7 @@ func TestUsernameNeverSyncedEitherWay(t *testing.T) {
 	b := &fakeBroker{users: []keycloak.User{bob()}, links: map[string]map[string]string{"bob": {"auth0": "a-bob", "kc": "k-bob"}}}
 	primary := &IdP{Name: "auth0", Attributes: ms, Dir: &fakeDir{recs: map[string]map[string]any{"a-bob": {"preferred_username": "evil"}}}}
 	kc := &fakeDir{recs: map[string]map[string]any{"k-bob": {"email": "bob@sterling.lab"}}}
-	res := Run(context.Background(), b, primary, []IdP{{Name: "kc", Attributes: ms, Dir: kc}}, writable, nil, nop)
+	res := Run(context.Background(), b, primary, []IdP{{Name: "kc", Attributes: ms, Dir: kc}}, writable, nil, Shape{}, nop)
 	if res.Updated != 0 || res.Written != 0 || len(kc.writes) != 0 {
 		t.Fatalf("result %+v writes %v", res, kc.writes)
 	}
@@ -446,15 +515,61 @@ func TestEmailVerifiedCopiedFromTheSource(t *testing.T) {
 	primary := &IdP{Name: "auth0", Attributes: ms, Dir: &fakeDir{recs: map[string]map[string]any{
 		"a-bob": {"email": "bob@sterling.lab", "email_verified": false}}}}
 	kc := &fakeDir{recs: map[string]map[string]any{"k-bob": {"email": "bob@old.lab"}}}
-	Run(context.Background(), b, primary, []IdP{{Name: "kc", Attributes: ms, Dir: kc}}, writable, nil, nop)
+	Run(context.Background(), b, primary, []IdP{{Name: "kc", Attributes: ms, Dir: kc}}, writable, nil, Shape{}, nop)
 	if b.users[0]["emailVerified"] != false || kc.recs["k-bob"]["email_verified"] != false {
 		t.Fatalf("broker %v, failover %v: unverified at the primary stays unverified", b.users[0], kc.recs["k-bob"])
 	}
 	// a primary that doesn't say (SCIM): a changed address is not marked verified
 	b.users[0]["emailVerified"] = true
 	primary.Dir = &fakeDir{recs: map[string]map[string]any{"a-bob": {"email": "robert@sterling.lab"}}}
-	Run(context.Background(), b, primary, nil, writable, nil, nop)
+	Run(context.Background(), b, primary, nil, writable, nil, Shape{}, nop)
 	if b.users[0]["email"] != "robert@sterling.lab" || b.users[0]["emailVerified"] != false {
 		t.Fatalf("broker %v", b.users[0])
+	}
+}
+
+func yes() *bool { t := true; return &t }
+
+func TestProvisionsTheWorkforceFromThePrimary(t *testing.T) {
+	no := false
+	b := &fakeBroker{users: []keycloak.User{bob()}}
+	dir := &groupDir{fakeDir: fakeDir{recs: map[string]map[string]any{}}, entries: []Entry{
+		{ID: "a-bob", Email: "bob@sterling.lab", Verified: yes()},   // has an account
+		{ID: "a-dana", Email: "Dana@Sterling.lab", Verified: yes()}, // new: provisioned
+		{ID: "a-eve", Email: "eve@gmail.com", Verified: yes()},      // not the workforce
+		{ID: "a-fay", Email: "fay@sterling.lab", Verified: &no},     // email not verified
+		{ID: "a-gus", Email: "gus@sterling.lab"},                    // verification unknown
+	}}
+	res := Run(context.Background(), b, &IdP{Name: "auth0", Attributes: mappings, Dir: dir}, nil, writable, nil,
+		Shape{Domains: []string{"sterling.lab"}}, nop)
+	if res.Provisioned != 1 || !slices.Equal(b.created, []string{"dana@sterling.lab"}) {
+		t.Fatalf("provisioned %d: %v (errors %v)", res.Provisioned, b.created, res.Errors)
+	}
+	// no domains: no accounts
+	b = &fakeBroker{}
+	if res := Run(context.Background(), b, &IdP{Name: "auth0", Attributes: mappings, Dir: dir}, nil, writable, nil, Shape{}, nop); res.Provisioned != 0 {
+		t.Fatalf("provisioned %d without domains", res.Provisioned)
+	}
+}
+
+func TestGroupsFromThePrimaryIntoTheBrokerAndOut(t *testing.T) {
+	b := &fakeBroker{users: []keycloak.User{bob()}, links: map[string]map[string]string{"bob": {"auth0": "a-bob", "kc": "k-bob"}},
+		groups: map[string][]string{"bob": {"compliance", "local-team"}}}
+	primary := &groupDir{fakeDir: fakeDir{recs: map[string]map[string]any{"a-bob": {"department": "Advisory"}}},
+		groups: map[string][]string{"a-bob": {"Admin", "advisors"}}}
+	failover := &groupDir{fakeDir: fakeDir{recs: map[string]map[string]any{"k-bob": {"email": "bob@sterling.lab"}}}}
+	res := Run(context.Background(), b, &IdP{Name: "auth0", Attributes: mappings, Dir: primary},
+		[]IdP{{Name: "kc", Attributes: mappings, Dir: failover}}, writable, nil,
+		Shape{Groups: []string{"advisors", "compliance"}}, nop)
+	if len(res.Errors) > 0 {
+		t.Fatal(res.Errors)
+	}
+	// the shape's groups follow the primary; a group outside the shape stays
+	if got := b.groups["bob"]; !slices.Equal(got, []string{"advisors", "local-team"}) {
+		t.Fatalf("broker groups %v", got)
+	}
+	// the primary's roles outside the shape never reach the failover
+	if got := failover.set["k-bob"]; !slices.Equal(got, []string{"advisors"}) {
+		t.Fatalf("failover groups %v", got)
 	}
 }

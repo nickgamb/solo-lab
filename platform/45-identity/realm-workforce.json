@@ -86,6 +86,9 @@
   "groups": [
     {
       "name": "advisors"
+    },
+    {
+      "name": "platform-engineers"
     }
   ],
   "users": [
@@ -177,6 +180,9 @@
       "id": "5b0b0000-0000-4000-8000-00000000f0da",
       "realmRoles": [
         "default-roles-workforce"
+      ],
+      "groups": [
+        "platform-engineers"
       ]
     }
   ],
@@ -236,6 +242,18 @@
             "id.token.claim": "true",
             "access.token.claim": "true",
             "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "true"
           }
         }
       ]
