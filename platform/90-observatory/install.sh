@@ -53,6 +53,8 @@ if [ -n "${ISTIO_UI_CHART:-}" ]; then
   # the cluster as Istio names it, so the UI's graph matches the mesh's
   ISTIO_CLUSTER=$(K get deploy istiod -n istio-system -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="CLUSTER_ID")].value}')
   export ISTIO_CLUSTER
+  SOLO_UI_AGENTGATEWAY=false; [ "$AGW_EDITION" = enterprise ] && SOLO_UI_AGENTGATEWAY=true
+  export SOLO_UI_AGENTGATEWAY
   values_for "$D" values-solo-ui "$ISTIO_EDITION"
   helm_up solo-management "$ISTIO_UI_CHART" "$ISTIO_UI_VERSION" solo-enterprise "${VALS[@]}"
   ok "https://mesh.$OPS_DOMAIN  (ops / ops-demo)"

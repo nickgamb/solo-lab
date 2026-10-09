@@ -4,6 +4,12 @@
 cluster: ${ISTIO_CLUSTER}
 products:
   mesh: {enabled: true}
+  # with Solo Enterprise for agentgateway (AGW_EDITION=enterprise): its
+  # gateways, routes, policies, traces, playground and cost management
+  agentgateway:
+    enabled: ${SOLO_UI_AGENTGATEWAY}
+    namespace: agentgateway-system
+    features: {cost-management: true}
 licensing:
   createSecret: false
   secretName: solo-ui-license
