@@ -50,7 +50,7 @@ metadata:
 rules:
 - apiGroups: [""]
   resources: [secrets]
-  resourceNames: [continuity-controller, upstream-okta, upstream-auth0, upstream-gluu, upstream-keycloak, upstream-contingency]
+  resourceNames: [continuity-controller${CONTINUITY_UPSTREAM_SECRETS}]
   verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -194,7 +194,7 @@ metadata:
 rules:
 - apiGroups: [""]
   resources: [secrets]
-  resourceNames: [continuity-sync, directory-keycloak, directory-contingency, directory-auth0]
+  resourceNames: [continuity-sync${CONTINUITY_DIRECTORY_SECRETS}]
   verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

@@ -66,12 +66,12 @@ check 'http": 40[13]|isError": true'            "right user, not an agent (anoth
 check 'http": 40[13]|RBAC|isError": true|refused|reset|Broken pipe|Connection' \
                                                 "skip the waypoint: dial a pod IP with Bob's token" $AGENT "http://$POD_IP:3000/mcp" call whoami '{}' --token "$BOB"
 XAA=http://ai-gateway.agentgateway-system/xaa/ledgerline/mcp
-# Ledgerline's account for Bob: its own user ID (RESOURCE_AS=keycloak), or a
-# token its Gluu issued for Bob (RESOURCE_AS=gluu)
+# Ledgerline's account for Bob: its own user ID (its own Keycloak), or a token
+# an AS outside the lab issued for Bob
 ras_env
 ACCOUNT='11ed0000-0000-4000-8000-000000000b0b' CHAT='11ed0000-0000-4000-8000-000000000b0b|bob@sterling\.lab'
-if [ "$RESOURCE_AS" = gluu ]; then
-  ISS=$(echo "${RESOURCE_AS_ISSUER%/}" | sed 's/[.]/\\./g')
+if ras_external; then
+  ISS=$(echo "${LEDGERLINE_AS_ISSUER%/}" | sed 's/[.]/\\./g')
   ACCOUNT="issuer[\\\"]*: [\\\"]*$ISS.*ledgerline_account[\\\"]*: [\\\"]*bob|ledgerline_account[\\\"]*: [\\\"]*bob.*issuer[\\\"]*: [\\\"]*$ISS"
   CHAT='bob'
 fi
@@ -86,7 +86,7 @@ if [ -n "$SESSION_IDP" ] && [ "$SESSION_IDP" = "$ACTIVE" ]; then
   case " $(idp_xaa_upstreams) " in *" $SESSION_IDP "*) VOUCHER=$SESSION_IDP ;; esac
 fi
 step "Cross App Access: Bob's agent -> Ledgerline Research (ID-JAG)"
-[ "$RESOURCE_AS" = keycloak ] && { ledgerline_signin bob bob-demo || die "Bob could not sign in to Ledgerline through $ACTIVE"; }
+ras_external || { ledgerline_signin bob bob-demo || die "Bob could not sign in to Ledgerline through $ACTIVE"; }
 check "$ACCOUNT"                                "account_info: Ledgerline's own account for Bob"  $AGENT $XAA call account_info '{}' --token "$BOB"
 # the ID-JAG the gateway verified at the Ledgerline leg (ai-gateway's access
 # log: its claims; the gateway caches Ledgerline's token for up to five minutes)

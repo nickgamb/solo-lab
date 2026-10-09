@@ -116,7 +116,7 @@ for each from the primary): `bob` (`bob-demo`, group `advisors`); `carol`
 (`carol-demo`): another S&V employee; `dana` (`dana-demo`, group
 `platform-engineers`): an S&V platform engineer, an admin in the Solo UI on
 Enterprise. Those passwords are S&V's own Keycloak's; at Auth0 they are the
-ones you set (docs/IDENTITY-CONTINUITY.md#auth0-setup); `ops` (`ops-demo`,
+ones you set (docs/IDPS.md#auth0-auth0); `ops` (`ops-demo`,
 groups `platform-admins` / `observatory-admins`): realm `ops` for the
 Observatory, Grafana and Kiali, and S&V's break-glass platform admin at the
 broker, the only sign-in when every IdP is down; `alice` (`alice-demo`, her
@@ -145,8 +145,8 @@ Open it in a browser (`open docs/cards/<card>.html` on macOS, `xdg-open` on Linu
 | [Gluu](docs/cards/gluu.html) (experimental) | Bob signs in with a passkey at Gluu, his agent reaches Ledgerline as him: Gluu vouches (ID-JAG), Ledgerline's Gluu redeems it, every hop checked and logged | `make bob-verify` |
 
 `make reset` rewinds every demo without a rebuild. The identity continuity
-demo needs an Auth0 tenant (free tier is enough):
-[docs/IDENTITY-CONTINUITY.md](docs/IDENTITY-CONTINUITY.md#auth0-setup).
+demo runs on S&V's own two IdPs; to add Auth0, Gluu, Okta, Ping or another
+OIDC provider: [docs/IDPS.md](docs/IDPS.md).
 
 ## Observatory
 
@@ -201,16 +201,11 @@ See [docs/OBSERVATORY.md](docs/OBSERVATORY.md).
 | `LLM_FALLBACK`, `LLM_FALLBACK_MODEL` | a second provider (and model) the gateway fails over to; apply with `make llm` |
 | `OLLAMA_MODEL`, `OLLAMA_URL` | the local model and where the cluster reaches it |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL` | hosted models (held by agentgateway only) |
-| `ENTERPRISE_IDP` | S&V's IdPs in failover order (`okta`, `auth0`, `gluu`, `keycloak`, `contingency`; default `auth0,keycloak,contingency`): who signs Bob in and, for an IdP that issues ID-JAGs, who vouches for him to Ledgerline; the broker vouches otherwise |
-| `RESOURCE_AS`, `RESOURCE_AS_ISSUER` | Ledgerline's authorization server: `keycloak` (default) or `gluu` |
-| `AUTH0_ISSUER`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` | the auth0 IdP (your Auth0 tenant); left out without an issuer |
-| `AUTH0_DIRECTORY_CLIENT_ID`, `AUTH0_DIRECTORY_CLIENT_SECRET` | Auth0's Management API, for the directory sync |
+| `ENTERPRISE_IDP` | S&V's IdPs in failover order, by name (default `auth0,keycloak,contingency`; an IdP without an issuer is left out): who signs Bob in and, for an IdP that issues ID-JAGs, who vouches for him to Ledgerline; the broker vouches otherwise |
+| `<NAME>_ISSUER`, `<NAME>_CLIENT_ID`, `<NAME>_CLIENT_SECRET` | each IdP in the chain (`auth0`, `gluu`, `okta`, `ping`, any other); without a secret S&V authenticates with its keys (`make xaa-keys`). `keycloak` and `contingency` default to S&V's own at `login.sterling.lab` and `login-dr.sterling.lab` |
+| `<NAME>_DIRECTORY_*`, `<NAME>_GROUPS_CLAIM`, `<NAME>_ASSURANCE`, ... | the rest of an IdP's settings ([IDPS.md](docs/IDPS.md#settings)) |
+| `RESOURCE_AS`, `LEDGERLINE_<NAME>_ISSUER`, `LEDGERLINE_<NAME>_CLIENT_ID` | Ledgerline's authorization server, by name: `keycloak` (default, its own) or any other ([IDPS.md](docs/IDPS.md#ledgerlines-authorization-server)) |
 | `config/continuity.local.yaml` | this lab's own S&V profile attributes and IdP mappings, kept across rebuilds (format: `config/continuity.example.yaml`) |
-| `OKTA_ISSUER`, `OKTA_CLIENT_ID` | the okta IdP; the broker vouches for its users |
-| `GLUU_ISSUER`, `GLUU_CLIENT_ID` | the gluu IdP, authenticated with S&V's keys ([GLUU.md](docs/GLUU.md)) |
-| `KEYCLOAK_ISSUER`, `KEYCLOAK_CLIENT_ID` | the keycloak IdP; default S&V's own at `login.sterling.lab` |
-| `CONTINGENCY_ISSUER`, `CONTINGENCY_CLIENT_ID` | the contingency IdP; default S&V's own at `login-dr.sterling.lab` |
-| `<NAME>_CLIENT_SECRET` | optional per IdP; without it S&V authenticates with its keys (`make xaa-keys`) |
 | `EDITION`, `<PRODUCT>_EDITION`, `SOLO_LICENSE_KEY` | Solo Enterprise, all products or one at a time |
 | `SOLO_<PRODUCT>_LICENSE_KEY` | a licence for one product, in place of `SOLO_LICENSE_KEY` |
 | `LAB_PASSWORD_GRANT` | (`config/lab.env`) the password grant on Alice's portal client |
@@ -292,4 +287,5 @@ Layers:
 | [OBSERVATORY.md](docs/OBSERVATORY.md) | using the Observatory, how it derives the map, access model, local development |
 | [IDENTITY-CONTINUITY.md](docs/IDENTITY-CONTINUITY.md) | the IdP chain and break-glass, the IdentityContinuity API and controller, the directory sync, assurance, trust across IdPs, assurance rules and the gate, Auth0/Okta/S&V Keycloak setup, the kill switch |
 | [ENTERPRISE.md](docs/ENTERPRISE.md) | switching products to Solo Enterprise |
+| [IDPS.md](docs/IDPS.md) | S&V's IdPs and Ledgerline's authorization server: settings, registration, Auth0, Gluu, Okta, Ping, any other |
 | [GLUU.md](docs/GLUU.md) | Gluu (experimental) as S&V's enterprise IdP and Ledgerline's authorization server: settings, registration, logs, roadmap |

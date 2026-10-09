@@ -149,8 +149,10 @@ Two settings in `config/lab.env` (`scripts/idp.sh`):
 
 | Setting | Values | Decides |
 | --- | --- | --- |
-| `ENTERPRISE_IDP` | `auth0,keycloak` (default), `okta,auth0,keycloak`, `gluu,keycloak`, ...; any order | S&V's IdPs, which sign Bob in, in failover order ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md)), and who vouches for him; `keycloak` is the Keycloak S&V runs itself (`https://login.sterling.lab`) |
-| `RESOURCE_AS` | `keycloak` (default), `gluu` with `RESOURCE_AS_ISSUER` | Ledgerline's authorization server |
+| `ENTERPRISE_IDP` | `auth0,keycloak,contingency` (default), `gluu,auth0,keycloak,contingency`, `okta,keycloak`, ...; any order | S&V's IdPs, which sign Bob in, in failover order ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md)), and who vouches for him; `keycloak` is the Keycloak S&V runs itself (`https://login.sterling.lab`) |
+| `RESOURCE_AS` | `keycloak` (default), `gluu`, any name with `LEDGERLINE_<NAME>_ISSUER` | Ledgerline's authorization server |
+
+Each is configured by name ([IDPS.md](IDPS.md)).
 
 Who vouches is decided by Bob's session. S&V's broker records the IdP a
 session came from, and kagent's access token carries it (`idp`).
@@ -281,14 +283,14 @@ RFC 8693 instead (`subject_token` = the access token, `requested_token_type`
   Ledgerline's AS issuer as audience: the connection exists because the firm
   approved this scope for this client. `make xaa-keys` writes the public
   keys other parties register.
-- **Resource AS**, `RESOURCE_AS=keycloak` (Ledgerline Keycloak, realm
+- **Resource AS**, Ledgerline's own Keycloak (`RESOURCE_AS=keycloak`, realm
   `ledgerline`, feature `identity-assertion-jwt`,
   `demos/bob/ledgerline/realm-ledgerline.json`):
   - An identity provider per IdP that vouches for S&V's users:
     `sterling-vance` (S&V's broker) and `sterling-vance-<idp>` for each IdP
     in the chain that issues ID-JAGs (`sterling-vance-keycloak`,
     `sterling-vance-gluu`). Each accepts ID-JAGs (assertion reuse off, at most 300 s) and is
-    Ledgerline's SSO for S&V (client `ledgerline` there, `private_key_jwt`
+    Ledgerline's SSO for S&V (client `<NAME>_LEDGERLINE_CLIENT_ID` there, `private_key_jwt`
     with Ledgerline's own PS256 key, PKCE). Each is trusted for S&V's domain
     only (`email` must end in `@sterling.lab`).
   - Bob's Ledgerline account is linked to his `sub` at each IdP by his first
@@ -303,9 +305,11 @@ RFC 8693 instead (`subject_token` = the access token, `requested_token_type`
     `ledgerline-research`) only when it asks. No full scope.
   - Ledgerline's Keycloak reaches an upstream's JWKS through Ledgerline's
     egress waypoint (`ledgerline-egress`, one ServiceEntry per host).
-- **Resource AS**, `RESOURCE_AS=gluu`: Gluu at `RESOURCE_AS_ISSUER` trusts
-  S&V's IdPs and registers S&V's client key (`make xaa-keys`). It must be a
-  separate deployment from any Gluu in `ENTERPRISE_IDP`: an IdP can't vouch
+- **Resource AS** outside the lab (e.g. `RESOURCE_AS=gluu`, at
+  `LEDGERLINE_GLUU_ISSUER`): it trusts S&V's IdPs and registers S&V's client
+  key (`make xaa-keys`;
+  [IDPS.md](IDPS.md#ledgerlines-authorization-server)). It must be a
+  separate deployment from any IdP in `ENTERPRISE_IDP`: an IdP can't vouch
   for Bob to itself, and the install refuses it.
 - **Resource server** (`demos/bob/ledgerline/research.yaml`): Ledgerline's own
   agentgateway (`mcp-gateway`) in front of its MCP server, reached only from
