@@ -1,4 +1,4 @@
-# What kagent-enterprise 0.5.9 needs beyond the chart, in this lab.
+# What kagent-enterprise 0.5.10 needs beyond the chart, in this lab.
 #
 # Its UI image proxies /api to 127.0.0.1:8083 inside its own pod, where
 # nothing listens. The edge sends /api straight to the

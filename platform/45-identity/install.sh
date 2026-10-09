@@ -43,7 +43,7 @@ secret_apply sv-identity kc-secrets \
   SV_CONTINUITY_SYNC_CLIENT_SECRET="$(lab_secret SV_CONTINUITY_SYNC_CLIENT_SECRET)" \
   SV_OBSERVATORY_CLIENT_SECRET="$(lab_secret SV_OBSERVATORY_CLIENT_SECRET)"
 # S&V's IdP is the enterprise IdP for Cross App Access, so it must ISSUE
-# ID-JAGs: Keycloak 26.7.4 + keycloak/keycloak PR #49998 (tools/keycloak-idjag),
+# ID-JAGs: Keycloak 26.7.5 + keycloak/keycloak PR #49998 (tools/keycloak-idjag),
 # tagged by a hash of its sources. Back to stock KC_IMAGE once that PR ships
 # upstream.
 KC_IDJAG=$(kc_idjag_image)

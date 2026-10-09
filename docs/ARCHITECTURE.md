@@ -335,7 +335,7 @@ installs every story, so any card runs in any order on the same lab.
 
 | Where | What | Upstream |
 | --- | --- | --- |
-| `tools/keycloak-idjag` | Keycloak 26.7.4 + PR #49998 (ID-JAG issuing), backported; plus identity continuity's IdP mapper (`session-claims/`, a provider, not a patch) | keycloak/keycloak#49998 |
+| `tools/keycloak-idjag` | Keycloak 26.7.5 + PR #49998 (ID-JAG issuing), backported; plus identity continuity's IdP mapper (`session-claims/`, a provider, not a patch) | keycloak/keycloak#49998 |
 | `tools/kagent` 0001 | Go ADK: SandboxAgents call the controller back with the caller's credential (they have no ServiceAccount token). Both editions run this ADK | kagent-dev/kagent (PR to open) |
 | `tools/kagent` 0002 | OSS controller: a SandboxAgent turn sent as the last one closes (HITL approval) no longer races its suspend | kagent-dev/kagent (PR to open) |
 | `tools/substrate-mesh` 0001 | Substrate 0.0.9: WorkerPool pod identity (`serviceAccountName`, labels, annotations) | kagent-dev/substrate (PR to open) |

@@ -1,14 +1,14 @@
-# Keycloak with ID-JAG issuing (PR #49998, backported to 26.7.4)
+# Keycloak with ID-JAG issuing (PR #49998, backported to 26.7)
 
 Keycloak can *receive* ID-JAGs today (`identity-assertion-jwt` feature) but not
 *issue* them. [keycloak/keycloak#49998](https://github.com/keycloak/keycloak/pull/49998)
 (issue [#48818](https://github.com/keycloak/keycloak/issues/48818)) adds issuing
-through the token endpoint. This directory builds stock Keycloak 26.7.4 with
+through the token endpoint. This directory builds stock Keycloak 26.7.5 with
 that PR applied, so Sterling & Vance's IdP can act as the enterprise IdP in
 Cross App Access.
 
-- `patches/0001-backport-pr49998-idjag-issuer-26.7.4.patch`: the PR's single
-  commit (866d795), rebased onto the 26.7.4 tag. Two conflicts, both mechanical:
+- `patches/0001-backport-pr49998-idjag-issuer.patch`: the PR's single
+  commit (866d795), rebased onto the 26.7.4 tag; it applies unchanged to 26.7.5. Two conflicts, both mechanical:
   - `META-INF/services/...TokenExchangeProviderFactory`: main also lists
     `TokenExchangeDelegationProviderFactory`; 26.7.4 does not.
   - `StandardTokenExchangeProvider`: the PR extracts the response build into
@@ -16,7 +16,7 @@ Cross App Access.
     a `TokenExchangeResponseContext` client-policy event, a class that doesn't
     exist in 26.7.4, so the backport keeps 26.7.4's behavior and drops it.
 - Only `keycloak-core` and `keycloak-services` change. The Dockerfile rebuilds
-  those two jars and overlays them on `quay.io/keycloak/keycloak:26.7.4`.
+  those two jars and overlays them on `quay.io/keycloak/keycloak:26.7.5`.
 
 ## Contract (from the PR)
 
