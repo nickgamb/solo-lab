@@ -20,7 +20,7 @@ values_for "$D" tempo oss
 helm_up tempo tempo "$TEMPO_VERSION" $NS --repo https://grafana.github.io/helm-charts ${VALS[@]+"${VALS[@]}"}
 
 step "OpenTelemetry Collector $OTEL_COLLECTOR_VERSION"
-values_for "$D" otel-collector oss
+values_for "$D" otel-collector "$ISTIO_EDITION"
 helm_up otel-collector opentelemetry-collector "$OTEL_COLLECTOR_VERSION" $NS \
   --repo https://open-telemetry.github.io/opentelemetry-helm-charts ${VALS[@]+"${VALS[@]}"}
 

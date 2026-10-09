@@ -35,6 +35,7 @@ comparison of the editions.
 | agentregistry | Signs users in itself, roles from the token's groups | behind the edge's SSO | [user access control](https://docs.solo.io/agentregistry/latest/about/oss-enterprise/) | sign in at https://registry.sterling.lab |
 | agentregistry | A catalog of what the lab runs: every kagent agent with its model, MCP servers and instructions (a Prompt), and every MCP server, read from the cluster by layer 95 (`scripts/registry.sh`) and published as the S&V client `agentregistry-catalog`, a platform admin; advisors may browse it (an AccessPolicy for `AGENTREGISTRY_READERS`). With kagent Enterprise too, a `Kagent` runtime connects the registry to the kagent controller as the S&V client `agentregistry` (a kagent Writer, reached over the mesh): the agents and MCP servers running in `sv-agents` appear as unmanaged instances, and the catalog can deploy there | an empty catalog | [catalog](https://docs.solo.io/agentregistry/latest/about/oss-enterprise/) | `scripts/registry.sh` (fails if the registry refuses an entry) |
 | Istio | The Solo UI at https://mesh.ops.lab: the ambient mesh's workloads, traffic and policy, signing platform admins in against the ops realm (`observatory-admins` are its admins) | Kiali, view-only | [Solo UI](https://docs.solo.io/istio/latest/ui/about/architecture/) | `make observatory-verify` |
+| agentgateway | The Solo UI's agentgateway pages: every gateway's routes, backends and policies, traces of each model and MCP call (model, tokens, tool), a playground, and cost management. The gateways send traces to the platform collector, which hands them to the UI | the Observatory's Traffic view and Tempo | [Solo UI for agentgateway](https://docs.solo.io/agentgateway/latest/observability/ui/) | https://mesh.ops.lab |
 
 Both editions run the rest of the lab the same way: MCP federation and
 per-tool authorization, token exchange and Cross App Access toward tools
@@ -93,7 +94,8 @@ does with a key it doesn't accept:
 ### Istio
 
 Solo-built images (`global.hub`/`tag`), the licence on istiod, peering
-enabled. Layer 90 adds the Solo UI (the `management` chart, mesh views, in
+enabled. Layer 90 adds the Solo UI (the `management` chart, mesh views and,
+with Solo Enterprise for agentgateway, its agentgateway pages, in
 `solo-enterprise`; `ENT_ISTIO_UI_*` in `config/enterprise.env`): ClickHouse
 and two collectors beside it, its own OIDC sign-in against the ops realm
 (clients `solo-ui` and `solo-ui-backend`), on the ops edge with mesh policy

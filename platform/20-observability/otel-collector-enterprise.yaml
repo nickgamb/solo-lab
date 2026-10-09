@@ -1,0 +1,13 @@
+# With Solo Enterprise for Istio, traces also go to the Solo UI's collector
+# (platform/90-observatory), which shows the gateways' and kagent's GenAI
+# spans; Tempo keeps them too. Until the UI is installed the export retries
+# and drops.
+config:
+  exporters:
+    otlp/solo-ui:
+      endpoint: solo-enterprise-telemetry-collector.solo-enterprise.svc:4317
+      tls: {insecure: true}
+  service:
+    pipelines:
+      traces:
+        exporters: [otlp/tempo, otlp/solo-ui]
