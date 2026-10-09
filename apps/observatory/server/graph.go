@@ -1000,6 +1000,11 @@ func (b *builder) brokerSignIns() {
 				}
 				h := u.Hostname()
 				for _, app := range b.hosts[h] {
+					// another IdP federating to the broker (a partner's
+					// Keycloak) is an identity provider, not an app
+					if n := b.nodes[app]; n != nil && n.Kind == "idp" {
+						continue
+					}
 					if !slices.Contains(broker, app) {
 						sso.Apps = appendUniq(sso.Apps, app)
 						sso.Hosts = appendUniq(sso.Hosts, h)
