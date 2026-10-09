@@ -83,8 +83,15 @@ as kagent controller → atenet-router → worker, each hop mTLS.
 2. **Waypoints (L7, where a path- or JWT-level rule needs one).**
    - `sv-mcp`: `mcp-waypoint`, an agentgateway waypoint (MCP-aware,
      `waypoint-for: service`), for the whole namespace.
-   - `alice` and `meridian`: Istio waypoints (`waypoint-for: all`), used only
-     by the Services that opt in (`uma-as`, `uma-pep`).
+   - `alice`: an agentgateway waypoint (`enterprise-agentgateway-waypoint`
+     on Enterprise), used only by `uma-as`. Its rules are agentgateway
+     authorization on the route bound to the Service: the grant surface from
+     the edge, the owner API from the portal or the edge. The Service is
+     labelled `istio.io/ingress-use-waypoint`, so the edge sends to it by
+     Service address, through the waypoint.
+   - `meridian`: an Istio waypoint (`waypoint-for: all`), used only by
+     `uma-pep`. Meridian's gateway calls uma-pep for ext-auth by pod address,
+     which an agentgateway waypoint doesn't take.
    - `ledgerline`: none. Ledgerline fronts its MCP server with its own
      agentgateway (`mcp-gateway`), reached from the edge: per-tool
      authorization on Ledgerline's token, read from each MCP request. A

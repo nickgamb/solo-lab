@@ -84,6 +84,11 @@ secret_apply meridian meridian-config rs-client-secret="$RS" rs-secrets="{\"alic
 ok "uma-as, uma-pep keys; RS credential per party"
 
 step "Alice (alice), Meridian (meridian), S&V adapter (sv-u4a)"
+# earlier labs: Istio's own waypoint for Alice, and its L7 rules as Istio policy
+if [ "$(K get gateway waypoint -n alice -o jsonpath='{.spec.gatewayClassName}' 2>/dev/null)" = istio-waypoint ]; then
+  K delete gateway waypoint -n alice --wait >/dev/null
+fi
+K delete authorizationpolicy uma-as-grant-surface -n alice --ignore-not-found >/dev/null
 apply_tmpl "$D/alice.yaml" "$D/meridian.yaml" "$D/sv-u4a.yaml"
 deny_internet alice alice-identity meridian sv-u4a   # every party reaches the others through the edge
 wait_for "Alice's database" 60 5 K wait cluster/uma-as-db -n alice --for=condition=Ready --timeout=2s
