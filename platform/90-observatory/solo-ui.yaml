@@ -1,23 +1,27 @@
-# Solo Enterprise for Istio's UI (ISTIO_EDITION=enterprise): Solo's own view
-# of the ambient mesh, at https://mesh.${OPS_DOMAIN}. It signs the platform
-# admins in itself, against their Keycloak (realm ops, clients solo-ui and
-# solo-ui-backend), and reads the cluster as its own service account. The
-# chart (values-solo-ui.yaml) runs it with ClickHouse and two collectors in
-# solo-enterprise; the edge is the only way in.
+# The Solo UI (the management chart), S&V's console for its Solo Enterprise
+# products, at https://kagent.${SV_DOMAIN}: kagent (agents, chats), and with
+# Solo Enterprise for agentgateway and for Istio, the gateways and the mesh.
+# S&V's ops run it; everyone signs in as themselves through S&V's IdP (realm
+# sterling-vance: client kagent-ui in the browser, kagent for the backend),
+# and sees what their groups allow (values-solo-ui.yaml). It reads the
+# cluster as its own service account. The chart runs it with ClickHouse and
+# two collectors in solo-enterprise; the edge is the only way in.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: solo-enterprise
-  labels: {istio.io/dataplane-mode: ambient, lab.solo.io/party: platform}
+  labels: {istio.io/dataplane-mode: ambient, lab.solo.io/party: sterling-vance}
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata: {name: solo-ui, namespace: solo-enterprise}
 spec:
-  parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-ops}]
-  hostnames: ["mesh.${OPS_DOMAIN}"]
+  parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-sterling}]
+  hostnames: ["kagent.${SV_DOMAIN}"]
   rules:
   - backendRefs: [{name: solo-enterprise-ui, port: 80}]
+    timeouts:
+      request: 1800s          # agent turns stream for minutes on a local 27B model
 ---
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy

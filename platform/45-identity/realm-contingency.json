@@ -249,6 +249,22 @@
         ]
       },
       "id": "5b0b0000-0000-4000-8000-00000000f0c1"
+    },
+    {
+      "username": "dana",
+      "id": "5b0b0000-0000-4000-8000-00000000d0da",
+      "email": "dana@${SV_DOMAIN}",
+      "firstName": "Dana",
+      "lastName": "Okafor",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dana-demo",
+          "temporary": false
+        }
+      ]
     }
   ],
   "clientScopeMappings": {

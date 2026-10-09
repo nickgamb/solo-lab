@@ -94,12 +94,11 @@ workers in zones a, b and c). The full lab uses about 17 GB of memory.
 | URL | What | Sign in |
 | --- | --- | --- |
 | https://observatory.ops.lab | Observatory: topology, traffic, identity and model continuity | `ops` / `ops-demo` |
-| https://kagent.sterling.lab | kagent, where Bob's agents run | Bob at S&V's active IdP: Auth0 (`bob@sterling.lab`, your password) or S&V's own Keycloak (`bob` / `bob-demo`) |
+| https://kagent.sterling.lab | kagent, where Bob's agents run: on Enterprise the Solo UI (agents and chats, and for platform admins the gateways and the mesh) | Bob at S&V's active IdP: Auth0 (`bob@sterling.lab`, your password) or S&V's own Keycloak (`bob` / `bob-demo`) |
 | https://registry.sterling.lab | agentregistry: on Enterprise, a catalog of the lab's agents, their instructions and MCP servers, the kagent runtime and what runs there | S&V sign-in, as for kagent |
 | https://portal.alice.lab | Alice's portal (her grants and terms) | `alice` / `alice-demo` |
 | https://grafana.ops.lab | Grafana | `ops` / `ops-demo` |
 | https://kiali.ops.lab | Kiali mesh graph (view-only) | `ops` / `ops-demo` |
-| https://mesh.ops.lab | The Solo UI: the mesh (`ISTIO_EDITION=enterprise`) and agentgateway's gateways, traces and costs (`AGW_EDITION=enterprise`) | `ops` / `ops-demo` |
 | https://idp.sterling.lab/realms/sterling-vance/account | S&V broker account: sign-in through S&V's active IdP | S&V sign-in, as for kagent |
 | https://login.sterling.lab/realms/workforce/account | S&V's own Keycloak (an IdP in `ENTERPRISE_IDP`): a user's own account | `bob` / `bob-demo`, then the code from `make totp` |
 | https://login-dr.sterling.lab/realms/contingency/account | S&V's contingency IdP (password only, after S&V's own Keycloak in `ENTERPRISE_IDP`) | `bob` / `bob-demo` |
@@ -113,7 +112,10 @@ APIs on the edge, for agents and the checks rather than browsers:
 `ledgerline`, `ops`).
 
 Demo accounts: `bob` (`bob-demo`, S&V group `advisors`); `carol`
-(`carol-demo`, S&V's own Keycloak): another S&V employee; `ops` (`ops-demo`,
+(`carol-demo`, S&V's own Keycloak): another S&V employee; `dana`
+(`dana-demo`, S&V group `platform-engineers`): an S&V platform engineer, an
+admin in the Solo UI on Enterprise (to sign her in through Auth0, add
+`dana@sterling.lab` there with its email verified); `ops` (`ops-demo`,
 groups `platform-admins` / `observatory-admins`): realm `ops` for the
 Observatory, Grafana and Kiali, and S&V's break-glass platform admin at the
 broker, the only sign-in when every IdP is down; `alice` (`alice-demo`, her

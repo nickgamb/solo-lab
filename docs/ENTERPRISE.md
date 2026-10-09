@@ -31,7 +31,7 @@ comparison of the editions.
 | agentgateway | Token rate limits per agent on the model route, counted by the Solo rate limiter, keyed on each agent pool's mesh identity (`advisor-desk` held to 2,000 tokens a minute) | none (agentgateway OSS has local limits per route, or a rate-limit server you run yourself) | [global request- and token-based rate limiting](https://docs.solo.io/agentgateway/latest/about/overview/) | `make bob-verify` |
 | agentgateway | Spend budgets in dollars or tokens per API key (`EnterpriseAgentgatewayBudget`): the developer key $5 a day, key `capped` blocked | none | [LLM spend budgets](https://docs.solo.io/agentgateway/latest/about/overview/) | `make bob-verify` |
 | kgateway | A web application firewall on the edge: SQL and script injection refused for every party's hostnames | none | [WAF](https://docs.solo.io/kgateway/latest/security/waf/overview/) | `make bob-verify` |
-| kagent | The controller verifies each user's token against S&V's broker, and maps the token's groups to roles | trusted-proxy mode: the controller trusts the forwarded token, so mesh policy fences who may reach it (ARCHITECTURE.md) | [OIDC authentication, RBAC mapped to IdP groups](https://docs.solo.io/kagent/latest/about/) | `make bob-verify` |
+| kagent | The Solo UI is kagent's UI: each user signs in as themselves through S&V's IdP and sees what their groups allow (advisors chat with agents and see only their own sessions; platform admins administer). The controller verifies each user's token against S&V's broker, and maps the token's groups to roles | trusted-proxy mode: the controller trusts the forwarded token, so mesh policy fences who may reach it (ARCHITECTURE.md) | [OIDC authentication, RBAC mapped to IdP groups](https://docs.solo.io/kagent/latest/about/) | `make bob-verify` |
 | agentregistry | Signs users in itself, roles from the token's groups | behind the edge's SSO | [user access control](https://docs.solo.io/agentregistry/latest/about/oss-enterprise/) | sign in at https://registry.sterling.lab |
 | agentregistry | A catalog of what the lab runs: every kagent agent with its model, MCP servers and instructions (a Prompt), and every MCP server, read from the cluster by layer 95 (`scripts/registry.sh`) and published as the S&V client `agentregistry-catalog`, a platform admin; advisors may browse it (an AccessPolicy for `AGENTREGISTRY_READERS`). With kagent Enterprise too, a `Kagent` runtime connects the registry to the kagent controller as the S&V client `agentregistry` (a kagent Writer, reached over the mesh): the agents and MCP servers running in `sv-agents` appear as unmanaged instances, and the catalog can deploy there | an empty catalog | [catalog](https://docs.solo.io/agentregistry/latest/about/oss-enterprise/) | `scripts/registry.sh` (fails if the registry refuses an entry) |
 | Istio | The Solo UI at https://mesh.ops.lab: the ambient mesh's workloads, traffic and policy, signing platform admins in against the ops realm (`observatory-admins` are its admins) | Kiali, view-only | [Solo UI](https://docs.solo.io/istio/latest/ui/about/architecture/) | `make observatory-verify` |
@@ -94,12 +94,18 @@ does with a key it doesn't accept:
 ### Istio
 
 Solo-built images (`global.hub`/`tag`), the licence on istiod, peering
-enabled. Layer 90 adds the Solo UI (the `management` chart, mesh views and,
-with Solo Enterprise for agentgateway, its agentgateway pages, in
-`solo-enterprise`; `ENT_ISTIO_UI_*` in `config/enterprise.env`): ClickHouse
-and two collectors beside it, its own OIDC sign-in against the ops realm
-(clients `solo-ui` and `solo-ui-backend`), on the ops edge with mesh policy
-letting only the edge reach it. It needs an Enterprise-level licence.
+enabled. Layer 90 adds the Solo UI (the `management` chart, in
+`solo-enterprise`; `ENT_ISTIO_UI_*` in `config/enterprise.env`) when any of
+kagent, agentgateway or Istio runs Enterprise, with each product's pages on
+for the products that do. It is S&V's console at https://kagent.sterling.lab:
+everyone signs in as themselves through S&V's IdP (client `kagent-ui` in the
+browser, `kagent` for its backend), with roles from their groups:
+`platform-admins` administer, `advisors` read and chat with agents as
+themselves, each seeing only their own sessions. ClickHouse and two
+collectors run beside it; mesh policy lets only the edge reach the UI, and
+only the UI reach kagent's controller on a user's behalf. It needs an
+Enterprise-level licence (`SOLO_UI_LICENSE_KEY`, else
+`SOLO_ISTIO_LICENSE_KEY`).
 
 ### kgateway
 

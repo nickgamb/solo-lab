@@ -153,6 +153,31 @@
         ]
       },
       "id": "5b0b0000-0000-4000-8000-00000000f0c0"
+    },
+    {
+      "username": "dana",
+      "email": "dana@${SV_DOMAIN}",
+      "firstName": "Dana",
+      "lastName": "Okafor",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dana-demo",
+          "temporary": false
+        },
+        {
+          "type": "otp",
+          "userLabel": "Authenticator app",
+          "secretData": "{\"value\":\"${SV_WORKFORCE_TOTP_DANA}\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ],
+      "id": "5b0b0000-0000-4000-8000-00000000f0da",
+      "realmRoles": [
+        "default-roles-workforce"
+      ]
     }
   ],
   "clients": [

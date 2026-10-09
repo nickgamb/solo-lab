@@ -1,37 +1,53 @@
-# Solo Enterprise for Istio's UI (the management chart), one cluster. Its
-# licence is the Secret solo-ui-license (SOLO_ISTIO_LICENSE_KEY); the OIDC
-# client secret, solo-ui-oidc. Both are written by layer 90.
+# The Solo UI (the management chart), one per cluster: S&V's console for its
+# Solo Enterprise products, at https://kagent.${SV_DOMAIN}. Each product's
+# pages are on when that product runs Enterprise (layer 90 sets the flags).
+# Its licence is the Secret solo-ui-license; the backend's OIDC client
+# secret, solo-ui-oidc. Both are written by layer 90.
 cluster: ${ISTIO_CLUSTER}
 products:
-  mesh: {enabled: true}
-  # with Solo Enterprise for agentgateway (AGW_EDITION=enterprise): its
-  # gateways, routes, policies, traces, playground and cost management
+  # Solo Enterprise for kagent: agents and chats, each user's own sessions
+  kagent:
+    enabled: ${SOLO_UI_KAGENT}
+    namespace: kagent
+  # Solo Enterprise for agentgateway: gateways, routes, policies, traces,
+  # playground and cost management
   agentgateway:
     enabled: ${SOLO_UI_AGENTGATEWAY}
     namespace: agentgateway-system
     features: {cost-management: true}
+  # Solo Enterprise for Istio: the ambient mesh
+  mesh: {enabled: ${SOLO_UI_MESH}}
 licensing:
   createSecret: false
   secretName: solo-ui-license
 # on the edge only, never a load balancer of its own
 service: {type: ClusterIP}
+# everyone signs in as themselves through S&V's IdP
 oidc:
-  issuer: https://idp.${OPS_DOMAIN}/realms/ops
+  issuer: https://idp.${SV_DOMAIN}/realms/sterling-vance
 ui:
-  publicUrl: https://mesh.${OPS_DOMAIN}
+  publicUrl: https://kagent.${SV_DOMAIN}
   frontend:
-    oidc: {clientId: solo-ui}
+    oidc: {clientId: kagent-ui}
+  # the confidential client kagent's controller trusts too
   backend:
-    oidc: {clientId: solo-ui-backend, secretRef: solo-ui-oidc}
-    # the ops Keycloak's certificate is the lab CA's
+    oidc: {clientId: kagent, secretRef: solo-ui-oidc}
+    # S&V's Keycloak's certificate is the lab CA's
     extraEnvs: {SSL_CERT_FILE: {value: /etc/lab-ca/ca.crt}}
     volumes: [{name: lab-ca, configMap: {name: lab-ca-bundle}}]
     volumeMounts: [{name: lab-ca, mountPath: /etc/lab-ca, readOnly: true}]
-# the ops realm's platform admins administer it; nobody else gets a role
+# roles from the token's groups, the same mapping as kagent's controller
+# (platform/60-kagent/values-enterprise.yaml): platform engineers (an
+# employee group, signing in through the active IdP like everyone) and the
+# break-glass platform admins administer everything; advisors read, and chat with agents as themselves, each seeing
+# only their own sessions
 rbac:
   roleMapping:
     roleMapper: "has(claims.groups) ? claims.groups.transformList(i, v, v in rolesMap, rolesMap[v]) : []"
-    roleMappings: {observatory-admins: global.Admin}
+    roleMappings:
+      platform-admins: global.Admin
+      platform-engineers: global.Admin
+      advisors: global.Reader
     defaultRoles: []
   subjectMapping: {groupsClaim: groups}
 # ClickHouse keeps the chart's credentials: mesh policy lets only this
