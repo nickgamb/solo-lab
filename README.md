@@ -254,8 +254,8 @@ platform/NN-*/   one install.sh per layer, applied in order by make platform
 demos/           each story: install.sh, verify.sh, manifests, agents, tools
 apps/observatory Observatory: Go server (server/) and React UI (web/)
 apps/continuity  IdentityContinuity and WorkloadProfile CRDs, controller, directory sync, assurance gate
-apps/idtoken-exchange, apps/xaa-relay
-                 Cross App Access at S&V's egress (ID token, ID-JAG relay and checks)
+apps/idtoken-exchange
+                 Cross App Access at S&V's egress: the user's ID token from the IdP that vouches
 tools/           patched upstream builds (kagent, Substrate, Keycloak), the probe
                  toolbox image and mcp-probe.py (MCP calls from a pod, for the checks)
 docs/            architecture, per-app docs, commands, demo cards, images and videos

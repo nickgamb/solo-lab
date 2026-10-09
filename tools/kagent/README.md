@@ -48,4 +48,4 @@ remove `controller.image` and `controller.goAgentImage` from
 `platform/60-kagent/values-oss.yaml` and `values.yaml`.
 
 Agents don't receive the user's ID token on either edition. Cross App Access
-gets it at the gateway instead (`demos/bob/manifests/40-xaa-ledgerline.yaml`).
+gets it at the gateway instead (`demos/bob/manifests/xaa/ledgerline.yaml`).

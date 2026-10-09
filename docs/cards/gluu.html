@@ -130,14 +130,14 @@
           </td>
           <td class="say">
             <span class="chip refused">Every bypass fails</span>
-            <span class="lede">Every ID-JAG checked at the firm's egress; the agent never holds one.</span>
+            <span class="lede">agentgateway checks every ID-JAG at the firm's egress; the agent never holds one.</span>
           </td>
         </tr>
         <tr class="term">
           <td class="num">4</td>
           <td class="act">
             <span class="where">Terminal</span>
-            <div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab logs -n agentgateway-system -l app=xaa-relay --tail=4</code></div>
+            <div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab logs -n agentgateway-system -l gateway.networking.k8s.io/gateway-name=ai-gateway --tail=50 | grep -E 'route=agentgateway-system/xaa-(idp|as)-'</code></div>
           </td>
           <td class="say">
             <span class="chip tier">On the wire</span>

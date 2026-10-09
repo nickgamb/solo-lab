@@ -122,7 +122,7 @@ spec:
         toolNames: [account_info, sector_outlook, research_note]
 ---
 # Ledgerline Research: a SaaS S&V subscribes to, reached through Cross App
-# Access on the firm's egress gateway (40-xaa-ledgerline.yaml).
+# Access on the firm's egress gateway (manifests/xaa/ledgerline.yaml).
 apiVersion: kagent.dev/v1alpha2
 kind: RemoteMCPServer
 metadata:

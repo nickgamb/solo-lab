@@ -76,7 +76,8 @@ In the lab:
    (`https://idp.ledgerline.lab/realms/ledgerline/account`): Ledgerline links
    his account to his Gluu identity, for S&V's domain only.
 4. In kagent, ask which Ledgerline account Bob is using: the ID-JAG comes
-   from Gluu (`make xaa-logs`, `xaa-relay.log`, `idp: gluu`).
+   from Gluu (`make xaa-logs`, `ai-gateway.log`: route `xaa-idp-gluu`, and
+   the ID-JAG's `iss` S&V's Gluu at `xaa-as-ledgerline`).
 
 ## Ledgerline authorization server: Gluu
 
@@ -98,14 +99,14 @@ It fetches the AS's JWKS through `ledgerline-egress`.
 ## Logs
 
 `make xaa-logs SINCE=2h` writes `.lab/xaa/<UTC time>/`; tokens are replaced
-by `<jwt>`, claims kept. In `xaa-relay.log`:
+by `<jwt>`, claims kept. agentgateway makes both token requests through its
+own routes, so ai-gateway's access log (`ai-gateway.log`) has them:
 
-| Message | Fields |
+| Route | Fields |
 | --- | --- |
-| `id-jag accepted` | `idp`, `params` (credentials redacted, a JWT's `jti` kept), `client` (method), `header` (`typ`, `alg`, `kid`), `claims` (`iss`, `sub`, `aud`, `client_id`, `scope`, `jti`, `iat`, `exp`) |
-| `id-jag rejected` | the same, and `reason` |
-| `access token issued` | `params` (`assertion` by its `jti`), `client` (`private_key_jwt`), `claims` of Ledgerline's token |
-| `token request refused` | `reason` (not this connection's request) or `error` from the token endpoint |
+| `xaa-ledgerline` (rule: the IdP that vouches) | the caller's SPIFFE ID, the verified S&V token's claims, MCP method and tool, status |
+| `xaa-idp-<idp>` | the verified ID token's claims (`iss`, `sub`, `aud`, `acr`, `amr`), the IdP's endpoint, status |
+| `xaa-as-ledgerline` | the verified ID-JAG's claims (`iss`, `sub`, `aud`, `client_id`, `scope`, `jti`, `iat`, `exp`), status; 401 or 403 when it fails a check |
 
 ## Roadmap
 
@@ -120,12 +121,11 @@ Not built. Each item, with what it needs.
 | Sender-constrained tokens (DPoP, RFC 9449) | agentgateway DPoP proofs on the RAS leg and the MCP call; an AS issuing `cnf.jkt`; Ledgerline's MCP gateway and server checking the proof |
 | MCP enterprise-managed authorization extension | agentgateway or kagent MCP client declaring it on `initialize` |
 | OAuth MCP flow (401 + `WWW-Authenticate` to Protected Resource Metadata) | the MCP server on a public HTTPS host; agentgateway serving the metadata and the challenge for `/mcp` |
-| ID-JAG checks and redacted token-request logs inside agentgateway | crossAppAccess validating the ID-JAG and logging both legs; then xaa-relay goes |
 | Path-level policy on S&V's broker | a waypoint for `sv-identity`, so each caller reaches only its endpoints (the egress: token, certs, broker token; never admin) |
 | Narrower rights for the continuity controller and its sync | the controller holds `manage-identity-providers` and `manage-realm` (the login redirector lives in an authentication flow); the sync `manage-users` at the broker and at each Keycloak directory: Keycloak fine-grained admin permissions scoped to the IdPs, that one flow and attribute writes, or each credential treated as tier 0 (rotation, monitoring) |
 | Token status list / revocation at the RS | Ledgerline's server checking `status` (Gluu `status_list_endpoint`) per call |
 | AuthZEN policy decision at the egress | an ext_proc calling the PDP's `/access/v1/evaluation` (subject Bob, action tool call, resource tool) before the XAA exchange |
-| TRACE evidence for each agent action | an emitter from xaa-relay and gateway logs: EAT claims (agent SPIFFE ID, model, policy hash), references to the ID-JAG `jti` and tool call, SCITT registration |
+| TRACE evidence for each agent action | an emitter from the gateway's access log: EAT claims (agent SPIFFE ID, model, policy hash), references to the ID-JAG `jti` and tool call, SCITT registration |
 | Hardware-anchored agent identity | SPIRE with TPM node attestation (swtpm in kind, vTPM on a hosted cluster) issuing the agents' SPIFFE IDs |
 | Gluu in the lab | the Janssen Helm chart per party with CloudNativePG, clients, scopes, users and trusted issuers configured by script |
 | Gluu as S&V's only IdP | S&V's services (edge SSO, waypoint delegation, registry, Observatory) on Gluu clients; Gluu token exchange for the waypoint audience and for access token to ID token; continuity without a broker |

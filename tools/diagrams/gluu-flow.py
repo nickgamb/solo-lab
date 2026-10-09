@@ -35,9 +35,9 @@ NODES = [  # lane, product, kicker, title, body lines
     ("plat", "kc", "Keycloak · S&V's broker", "Links Bob, keeps his Gluu tokens", ["Gluu tokens (storeTokens), renewed here;", "S&V session for kagent at the edge"]),
     ("bob", "bob", "Bob · kagent chat", "Asks his agent", ["“Which Ledgerline account", "am I using?”"]),
     ("plat", "solo", "kagent · Bob's agent", "Calls the Ledgerline tool", ["tools/call account_info to ai-gateway,", "with Bob's S&V access token only"]),
-    ("plat", "solo", "agentgateway · S&V egress", "Admits it, gets Bob's ID token", ["JWT + the agent's SPIFFE ID + advisors;", "idtoken-exchange: Gluu ID token, renewed"]),
+    ("plat", "solo", "agentgateway · S&V egress", "Admits it, checks assurance", ["JWT + agent's SPIFFE ID + advisors; gate:", "AAL2 passkey ✓; idtoken-exchange: ID token"]),
     ("svidp", "gluu", "Gluu · S&V's IdP", "Vouches for Bob", ["token exchange: ID token", "→ ID-JAG for Ledgerline only"]),
-    ("plat", "solo", "xaa-relay · S&V egress", "Checks the ID-JAG", ["typ, signature, iss, aud, sub,", "client_id, exp; logs both legs"]),
+    ("plat", "solo", "agentgateway · S&V egress", "Checks the ID-JAG", ["verified against Gluu's keys: iss, aud,", "sub, exp, typ, client_id; claims logged"]),
     ("ll", "gluu", "Gluu · Ledgerline's AS", "Redeems it (RFC 7523)", ["private_key_jwt from S&V;", "a 5-minute token for its Bob"]),
     ("ll", "solo", "kmcp + Istio · Ledgerline", "Answers as Ledgerline's Bob", ["waypoint and server verify", "Gluu's token; account_info runs"]),
     ("bob", "bob", "Bob · kagent chat", "Sees his Ledgerline account", ["“bob”, no consent screen,", "no shared secret"]),
@@ -70,7 +70,7 @@ add(f'<text x="40" y="62" font-family="{SANS}" font-size="32" font-weight="700" 
     'Gluu · Cross App Access, end to end</text>')
 for k, line in enumerate([
     "Bob signs in with a passkey at S&V's Gluu. His agent reaches Ledgerline as him: S&V's Gluu vouches (ID-JAG), Ledgerline's Gluu redeems it.",
-    "The agent only ever holds Bob's S&V access token. Gluu unreachable: Bob signs in through the next IdP, which vouches. Gluu refuses: the call is refused.",
+    "The agent only ever holds Bob's S&V access token. Gluu unreachable: the next IdP vouches. A sign-in below AAL2, or Gluu refusing: refused.",
 ]):
     add(f'<text x="40" y="{96 + k * 22}" font-family="{SANS}" font-size="15.5" fill="{C["mid"]}">{escape(line)}</text>')
 legend = [("Bob", P["bob"]), ("Solo", P["solo"]), ("Gluu", P["gluu"]), ("Keycloak", P["kc"])]
@@ -227,7 +227,7 @@ panel("2", PX, 768, PW, "tools-call.http", "What the agent sends, and all it hol
     "}",
 ], lead(4))
 panel("3", PX, 1048, PW, "id-jag.jwt", "The ID-JAG, checked at S&V's egress", [
-    "// xaa-relay → S&V's Gluu, as S&V's client there (RFC 8693)",
+    "// ai-gateway → S&V's Gluu, as S&V's client there (RFC 8693)",
     "grant_type=urn:ietf:params:oauth:grant-type:token-exchange",
     "requested_token_type=urn:ietf:params:oauth:token-type:id-jag",
     "subject_token=<Bob's Gluu ID token>",

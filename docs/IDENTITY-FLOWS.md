@@ -176,24 +176,21 @@ sequenceDiagram
   participant G as ai-gateway (S&V egress)
   participant X as idtoken-exchange (ext_proc)
   participant K as S&V broker (Keycloak)
-  participant R as xaa-relay
   participant E as Bob's IdP (S&V's own Keycloak, Gluu)
   participant L as Ledgerline AS (Keycloak or Gluu)
   participant M as ledgerline-research (behind Ledgerline's MCP gateway)
   A->>G: tools/call /xaa/ledgerline/mcp, Authorization: Bob's access token
-  G->>G: verify JWT (aud ai-gateway), caller is an agent's pool, Bob in advisors
+  G->>G: before routing: verify the token, x-vouching-idp = Bob's IdP (or the broker)
+  G->>G: route to that IdP's backend; verify JWT (aud ai-gateway), caller is an agent's pool, Bob in advisors; assurance gate
   G->>X: request headers, verified token as metadata
   X->>K: as xaa-egress (its key): Bob's upstream access token (Identity Brokering API v2, renewed by the broker)
   X->>E: token exchange, as S&V's client there (the egress's key): Bob's ID token
   X-->>G: x-id-token (replaces any the caller sent)
-  G->>R: token exchange: subject = Bob's ID token, requested type ID-JAG, audience = Ledgerline's AS
-  R->>R: only this exchange, this audience, these scopes
-  R->>E: as S&V's client at the issuer of the ID token
-  E-->>R: ID-JAG for Bob, for this connection only
-  R->>R: check typ, signature, iss, aud, sub, client_id, exp, lifetime
-  R-->>G: ID-JAG
-  G->>R: JWT authorization grant (RFC 7523), scope research:read, private_key_jwt as sterling-vance-kagent
-  R->>L: relayed as signed
+  G->>G: IdP leg (/xaa-legs/ledgerline/idp/<idp>/token): verify the ID token, only this exchange, audience and scopes
+  G->>E: token exchange: subject = Bob's ID token, requested type ID-JAG, as S&V's client there
+  E-->>G: ID-JAG for Bob, for this connection only
+  G->>G: Ledgerline leg (/xaa-legs/ledgerline/as/token): verify the ID-JAG against its issuer, typ, client_id, lifetime, scopes
+  G->>L: JWT authorization grant (RFC 7523), scope research:read, private_key_jwt as sterling-vance-kagent
   L-->>G: Ledgerline access token for Ledgerline's Bob, aud ledgerline-research, scope research:read
   G->>M: via the edge (TLS), Authorization: Ledgerline's token
   M-->>A: result
@@ -203,17 +200,22 @@ With S&V's broker vouching, idtoken-exchange gets Bob's ID token from it by
 RFC 8693 instead (`subject_token` = the access token, `requested_token_type`
 = ID token, as `kagent`).
 
-- **Requesting side** (`demos/bob/manifests/40-xaa-ledgerline.yaml`):
-  - Route `xaa-ledgerline` on ai-gateway, matched only with a bearer token.
+- **Requesting side** (`demos/bob/manifests/xaa/`): agentgateway makes and
+  checks every token request; the lab adds only `idtoken-exchange`.
+  - Before routing (policy `xaa-vouching-idp` on ai-gateway, phase
+    `PreRouting`): the S&V token is verified when present, and header
+    `x-vouching-idp` is set from it alone, replacing any value the caller
+    sent: the IdP of Bob's session (claim `idp`) when it issues ID-JAGs,
+    else S&V's broker.
+  - Route `xaa-ledgerline` on ai-gateway, matched only with a bearer token:
+    one rule per IdP that may vouch (`ENTERPRISE_IDP` and the broker), by
+    `x-vouching-idp`, each to that IdP's backend `xaa-ledgerline-<idp>`.
   - JWT, strict, audience `ai-gateway`. Authorization: the caller is an
     agent's worker pool (by ServiceAccount) and `"advisors" in jwt.groups`.
   - Workload profile `ledgerline-research` (High, AAL2, sessions from the
     active IdP only): the assurance gate decides before the ID token is
     fetched or an ID-JAG asked for, so a session from an IdP the chain has
-    moved off, or one too weak, never reaches Ledgerline. `xaa-relay` logs
-    the ID-JAG's `acr`, `amr` and `auth_time` but doesn't decide on them:
-    when S&V's broker vouches (for an IdP that doesn't issue ID-JAGs) they
-    are the broker's own, not the upstream's.
+    moved off, or one too weak, never reaches Ledgerline.
   - External processor `idtoken-exchange` (`apps/idtoken-exchange`, gRPC
     ext_proc): request headers only, fail closed, the verified token passed
     as metadata (`jwt.rawToken`), never read from a header the caller sets.
@@ -239,25 +241,31 @@ RFC 8693 instead (`subject_token` = the access token, `requested_token_type`
       `sv-identity/sterling-vance` (Role: `get` on that object only), isn't
       ready until it knows it, and stops answering if it can't read it for
       30 s.
-  - Backend auth `crossAppAccess`: subject from header `x-id-token`, type ID
-    token; audience Ledgerline's AS issuer; scopes
-    `xaa-ledgerline research:read` for the ID-JAG and `research:read` for
-    Ledgerline's token. Both token endpoints are `xaa-relay`
-    (`apps/xaa-relay`), which only ai-gateway may call:
-    - `/op/token` admits only this connection's request (token exchange,
-      requested type ID-JAG, subject type ID token, Ledgerline's AS as
-      audience, allowed scopes) and sends it to the IdP that issued the
-      subject token, as S&V's client there. The gateway names the requesting
-      app (`kagent`) and holds no IdP credential. The ID-JAG is checked before
-      the gateway uses it: `typ` `oauth-id-jag+jwt`, signature against that
-      IdP's JWKS, `iss`, `aud` = Ledgerline's AS, `sub` = the subject token's,
-      `client_id` = `sterling-vance-kagent`, `exp`, at most 300 s.
-    - `/ras/token` admits only a JWT authorization grant and passes it to
-      Ledgerline's AS as sent: S&V authenticates with `private_key_jwt`
-      (client `sterling-vance-kagent`, assertion audience the AS's issuer,
-      key `.lab/keys/sv-xaa-client.key`).
-    - Both legs are logged with parameters and claims, credentials redacted
-      (`make xaa-logs`).
+  - Backend auth `crossAppAccess`, one backend per IdP
+    (`xaa/idp.yaml`, rendered from `ENTERPRISE_IDP` by `xaa_gateway_apply`
+    in `scripts/idp.sh`): subject from header `x-id-token`, type ID token;
+    audience Ledgerline's AS issuer; scopes `xaa-ledgerline research:read`
+    for the ID-JAG and `research:read` for Ledgerline's token. S&V
+    authenticates as its client at that IdP, with the egress's key
+    (`private_key_jwt`) or the client secret given for it, and at
+    Ledgerline's AS with `private_key_jwt` (client `sterling-vance-kagent`,
+    assertion audience the AS's issuer, key `.lab/keys/sv-xaa-client.key`).
+    The gateway holds those credentials; nothing else does.
+  - Both token requests go out through ai-gateway's own routes, so its
+    policies apply to them. Only ai-gateway may call these routes.
+    - IdP leg, `/xaa-legs/ledgerline/idp/<idp>/token` (route and policy
+      `xaa-idp-<idp>`): the subject token is verified against that IdP's
+      keys (issuer, audience S&V's client there); only a token exchange for
+      an ID-JAG for Ledgerline's AS, within the connection's scopes, goes
+      out.
+    - Ledgerline leg, `/xaa-legs/ledgerline/as/token` (route and policy
+      `xaa-as-ledgerline`): the ID-JAG in the grant is verified against the
+      IdP that issued it (signature, `iss`, `aud` = Ledgerline's AS, `exp`,
+      `sub`), then `typ` `oauth-id-jag+jwt`, `client_id` =
+      `sterling-vance-kagent`, at most 300 s, scopes within the
+      connection's and `openid profile email`. A refusal fails the call.
+    - Both legs are in ai-gateway's access log with the verified claims,
+      never the tokens (`make xaa-logs`).
   - The agent's tool (`RemoteMCPServer ledgerline-research`) points at
     `ai-gateway/xaa/ledgerline/mcp`.
 - **S&V's clients and keys** (realm `sterling-vance`):
@@ -267,7 +275,7 @@ RFC 8693 instead (`subject_token` = the access token, `requested_token_type`
   | `kagent` (secret: the edge and the egress, one application) | — | SSO for kagent; RFC 8693 (access token to ID token); request the ID-JAG with optional scope `xaa-ledgerline`. Keycloak issues an ID-JAG only for an ID token of the app the user signed into. No full scope |
   | `xaa-egress` (the egress's key, `private_key_jwt`) | — | read users' stored upstream tokens, for the vouching upstreams only. Nothing else |
   | broker key (PS256 realm key, client assertions only) | Keycloak | authenticate S&V's broker to upstream IdPs |
-  | egress key | idtoken-exchange, xaa-relay | authenticate S&V to upstream IdPs (renewal, ID-JAG) |
+  | egress key | idtoken-exchange, ai-gateway | authenticate S&V to upstream IdPs (renewal, ID-JAG) |
 
   Scope `xaa-ledgerline` adds `client_id=sterling-vance-kagent` and
   Ledgerline's AS issuer as audience: the connection exists because the firm
@@ -319,7 +327,8 @@ transitions); the chain is restored on exit.
 | Case | Expected |
 | --- | --- |
 | `account_info` with Bob's access token from an S&V agent workload | Ledgerline's own account for Bob |
-| the ID-JAG xaa-relay accepted | from the IdP that vouches for Bob's session, `typ` `oauth-id-jag+jwt`, `aud` Ledgerline's AS |
+| the ID-JAG ai-gateway verified | from the IdP that vouches for Bob's session, `aud` Ledgerline's AS, `client_id` S&V's client there |
+| an agent workload calling the gateway's Ledgerline leg directly | refused |
 | `sector_outlook` through XAA | result |
 | another user's ID token in `x-id-token` | replaced: still Bob's Ledgerline account |
 | what Ledgerline received | never an ID token |
