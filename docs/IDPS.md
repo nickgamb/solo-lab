@@ -72,7 +72,7 @@ The same for every IdP:
 | Application | confidential OIDC web application |
 | Redirect URI | `https://idp.sterling.lab/realms/sterling-vance/broker/<name>/endpoint` (also in `status.tiers[].redirectURI`) |
 | Logout redirect | `https://idp.sterling.lab/realms/sterling-vance/broker/<name>/endpoint/logout_response` |
-| Client authentication | `private_key_jwt` with the JWKS `sv-upstream-client.jwks.json` from `make xaa-keys` (the broker's key, PS256, and the egress's key, RS256), or a client secret (`client_secret_post`) |
+| Client authentication | `private_key_jwt` with the JWKS `sv-upstream-client.jwks.json` from `make xaa-keys` (the broker's key, PS256, and the egress's key, RS256; it runs before `make up` too), or a client secret (`client_secret_post`) |
 | Grant types | `authorization_code` with PKCE S256, `refresh_token` |
 | Scopes | `openid email profile` |
 | Users | `email` and `email_verified: true` in the ID token: the broker links a sign-in to the S&V account with that verified email |

@@ -8,8 +8,32 @@ default; two settings choose who plays each role
 
 - Demo card: [cards/gluu.html](cards/gluu.html)
 - Checks: `make bob-verify` (Bob signs in through S&V's own Keycloak, which
-  vouches), step 3 below for Gluu vouching
+  vouches); [Run it](#run-it) for Gluu vouching
 - Logs and keys: `make xaa-logs`, `make xaa-keys`
+
+## Run it
+
+With both Gluu servers set up as below, from a fresh clone:
+
+```bash
+cp .env.example .env     # then the Gluu settings below
+make xaa-keys            # S&V's public keys, before the lab exists
+make machine-setup       # once per machine
+make up
+```
+
+Register the keys `make xaa-keys` wrote to `.lab/xaa/keys/` before `make up`:
+
+| File | Register at |
+| --- | --- |
+| `sv-upstream-client.jwks.json` | S&V's Gluu: S&V's client (`GLUU_CLIENT_ID`) |
+| `sv-ras-client.jwks.json` | Ledgerline's Gluu: S&V's client (`LEDGERLINE_GLUU_CLIENT_ID`) |
+| `sv-idp.jwks.json`, `sv-workforce.jwks.json` | Ledgerline's Gluu, as trusted ID-JAG issuers `https://idp.sterling.lab/realms/sterling-vance` and `https://login.sterling.lab/realms/workforce`: then sessions S&V's broker or Keycloak vouches for are accepted too |
+
+Then sign in as Bob at `https://kagent.sterling.lab`: the login goes to
+Gluu (a passkey; the first sign-in enrolls one). Ask his assistant which
+Ledgerline account he is using: Gluu vouches (an ID-JAG) and Ledgerline's
+Gluu redeems it. `make xaa-logs` writes the trail.
 
 ## Settings
 
@@ -27,32 +51,34 @@ LEDGERLINE_GLUU_CLIENT_ID=<GLUU_CLIENT_ID>
 ```
 
 Gluu first makes it S&V's primary: the source of truth for who exists and
-their groups, read over SCIM by the directory sync. Janssen puts the
-requesting client's own ID in an ID-JAG, so S&V registers at Ledgerline's
-Gluu under its Gluu client ID, and S&V's own Keycloak and broker put that ID
-in their ID-JAGs too. Ledgerline's Gluu must be a different deployment from
-S&V's; the install refuses one Gluu in both roles.
+their groups. The directory sync reads its users over SCIM and gives the
+broker an account for each whose email is verified (`emailVerified` in its
+SCIM user extension) under `sterling.lab`; Bob signs in to that account.
+Janssen puts the requesting client's own ID in an ID-JAG, so S&V registers at
+Ledgerline's Gluu under its Gluu client ID, and S&V's own Keycloak and broker
+put that ID in their ID-JAGs too. Ledgerline's Gluu must be a different
+deployment from S&V's; the install refuses one Gluu in both roles.
 
-Registration at S&V's Gluu: [Registering S&V at an IdP](IDPS.md#registering-sv-at-an-idp),
-with `private_key_jwt` and token exchange, and a user `bob` with email
-`bob@sterling.lab` (verified), in group `advisors`. At Ledgerline's Gluu:
-[Ledgerline's authorization server](IDPS.md#ledgerlines-authorization-server).
+## S&V's Gluu
 
-## In the lab
+- S&V's client: [Registering S&V at an IdP](IDPS.md#registering-sv-at-an-idp),
+  with `private_key_jwt` and token exchange (access token to ID token, ID
+  token to ID-JAG for Ledgerline's Gluu).
+- A `groups` claim in the ID token for that client, with the user's Gluu
+  groups by name.
+- User `bob`, email `bob@sterling.lab` (verified), in group `advisors`.
+- A SCIM client for the directory sync ([IDPS.md](IDPS.md#gluu-gluu)).
 
-1. `.env` as above; `make layer-45 layer-47 && ./demos/bob/install.sh`.
-2. Sign in as Bob at `https://kagent.sterling.lab`: the login goes to Gluu
-   (a passkey; the first sign-in enrolls one). S&V's broker links Bob's S&V
-   account by verified email and keeps his Gluu tokens. Platform admins
-   (role `local-only`) are never linked to an IdP.
-3. In kagent, ask which Ledgerline account Bob is using: the ID-JAG comes
-   from Gluu (`make xaa-logs`, `ai-gateway.log`: route `xaa-idp-gluu`, and
-   the ID-JAG's `iss` S&V's Gluu at `xaa-as-ledgerline`).
+## Ledgerline's Gluu
+
+[Ledgerline's authorization server](IDPS.md#ledgerlines-authorization-server):
+S&V's client with `sv-ras-client.jwks.json`, the jwt-bearer grant, S&V's Gluu
+as a trusted ID-JAG issuer, scope `research:read`, access tokens for
+`ledgerline-research`.
 
 After failover to the next IdP a Gluu session is refused; Bob signs in again
 there and that IdP (or, if it doesn't issue ID-JAGs, S&V's broker) vouches.
-Ledgerline's Gluu accepts that only if it trusts the IdP's keys
-([IDPS.md](IDPS.md#ledgerlines-authorization-server)).
+Ledgerline's Gluu accepts that only if it trusts that issuer's keys.
 
 ## Logs
 

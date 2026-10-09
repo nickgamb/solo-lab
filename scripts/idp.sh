@@ -242,14 +242,21 @@ jwk = {"e": "AQAB", "kty": "RSA", "n": n}
 kid = base64.urlsafe_b64encode(hashlib.sha256(json.dumps(jwk, separators=(",", ":"), sort_keys=True).encode()).digest()).rstrip(b"=").decode()
 print(json.dumps({"keys": [{**jwk, "kid": kid, "use": "sig", "alg": "RS256"}]}, indent=2))'
 }
+# kc_jwks <key> <alg>: a lab key (.lab/keys, made if missing) as Keycloak
+# publishes it in a realm's JWKS: kid is the SHA-256 of its public key info
+kc_jwks() {
+  local kid
+  realm_signing_key "$1"
+  kid=$(openssl x509 -in "$LAB_STATE/keys/$1.crt" -pubkey -noout | openssl pkey -pubin -outform DER \
+    | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+  jwks_of "$LAB_STATE/keys/$1.crt" | jq --arg kid "$kid" --arg alg "$2" '.keys[0] |= (.kid = $kid | .alg = $alg)'
+}
 # sv_upstream_client_jwks: S&V's client at an upstream IdP: the broker's key
-# (as S&V's Keycloak publishes it, PS256) and the egress's key (RS256)
+# (PS256, as S&V's Keycloak publishes it) and the egress's key (RS256)
 sv_upstream_client_jwks() {
-  local certs
   realm_signing_key sv-egress-client
-  certs=$(curl -sf --cacert "$LAB_CA_DIR/ca.crt" "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/certs") || die "no JWKS from S&V's Keycloak"
-  echo "$certs" | jq --argjson egress "$(jwks_of "$LAB_STATE/keys/sv-egress-client.crt")" \
-    '{keys: ([.keys[] | select(.use == "sig" and .alg == "PS256")] + $egress.keys)}'
+  jq -n --argjson broker "$(kc_jwks sv-broker-client PS256)" --argjson egress "$(jwks_of "$LAB_STATE/keys/sv-egress-client.crt")" \
+    '{keys: ($broker.keys + $egress.keys)}'
 }
 
 # workforce_realm <realm.json>: S&V's workforce IdP, with S&V's client keys
@@ -261,14 +268,12 @@ workforce_realm() {
 # contingency_realm <realm.json>: S&V's contingency IdP, with the broker's key
 # (it vouches for no one, so the egress's key isn't there)
 contingency_realm() {
-  local certs
-  certs=$(curl -sf --cacert "$LAB_CA_DIR/ca.crt" "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/certs") || die "no JWKS from S&V's Keycloak"
-  jq --arg jwks "$(echo "$certs" | jq -c '{keys: [.keys[] | select(.use == "sig" and .alg == "PS256")]}')" \
+  jq --arg jwks "$(kc_jwks sv-broker-client PS256 | jq -c .)" \
     '(.clients[] | select(.clientId == "sterling-vance-broker") | .attributes["jwks.string"]) = $jwks' "$1"
 }
 
 # xaa_client_jwks: S&V's client key at Ledgerline's AS
-xaa_client_jwks() { jwks_of "$LAB_STATE/keys/sv-xaa-client.crt"; }
+xaa_client_jwks() { realm_signing_key sv-xaa-client; jwks_of "$LAB_STATE/keys/sv-xaa-client.crt"; }
 
 # ledgerline_realm <realm.json>: Ledgerline's realm, trusting each IdP that
 # vouches for S&V's users, for sign-in (Ledgerline's SSO client "ledgerline"
