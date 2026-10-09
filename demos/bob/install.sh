@@ -78,6 +78,7 @@ K delete "$AGW_BACKEND_KIND" xaa-ledgerline -n agentgateway-system --ignore-not-
 # Bob's agent is a SandboxAgent; an Agent of the same name (older labs) must go first.
 K delete agent bob-assistant -n sv-agents --ignore-not-found --wait >/dev/null
 apply_kustomize "$D/agent"
+K delete secret llm-via-gateway -n sv-agents --ignore-not-found >/dev/null   # earlier labs: a placeholder model key
 rollout sv-mcp deploy/mcp-guard deploy/bob-workspace deploy/mcp-waypoint
 rollout agentgateway-system deploy/idtoken-exchange
 wait_for "bob-assistant Ready" 60 5 K wait sandboxagent/bob-assistant -n sv-agents --for=condition=Ready --timeout=2s
