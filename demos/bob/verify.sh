@@ -80,19 +80,33 @@ fi
 step "Cross App Access: Bob's agent -> Ledgerline Research (ID-JAG)"
 [ "$RESOURCE_AS" = keycloak ] && { ledgerline_signin bob bob-demo || die "Bob could not sign in to Ledgerline through $ACTIVE"; }
 check "$ACCOUNT"                                "account_info: Ledgerline's own account for Bob"  $AGENT $XAA call account_info '{}' --token "$BOB"
-# xaa-relay's record of the last ID-JAG it accepted (the gateway caches
-# Ledgerline's token for up to five minutes)
-if ! relay_log=$(K logs -n agentgateway-system -l app=xaa-relay --since=6m --tail=-1 2>&1); then
-  res no "ID-JAG from $VOUCHER, checked at S&V's egress" "could not read xaa-relay's log: $relay_log"
+# the ID-JAG the gateway verified at the Ledgerline leg (ai-gateway's access
+# log: its claims; the gateway caches Ledgerline's token for up to five minutes)
+if [ "$VOUCHER" = sterling-vance ]; then WANT_ISS="https://idp.$SV_DOMAIN/realms/sterling-vance"
+else WANT_ISS=$(_idp_var "$VOUCHER" ISSUER); fi
+if ! gw_log=$(K logs -n agentgateway-system -l gateway.networking.k8s.io/gateway-name=ai-gateway --since=6m --tail=-1 2>&1); then
+  res no "ID-JAG from $VOUCHER, verified at S&V's egress" "could not read ai-gateway's log: $gw_log"
 else
-  vouched=$(echo "$relay_log" | grep '"msg":"id-jag accepted"' \
-    | jq -rs 'sort_by(.time) | last | "\(.idp) iss=\(.claims.iss) aud=\(.claims.aud) typ=\(.header.typ)"' 2>/dev/null) || vouched=""
-  if [ "${vouched%% *}" = "$VOUCHER" ]; then res ok "ID-JAG from $VOUCHER, checked at S&V's egress: ${vouched#* }"
+  vouched=$(echo "$gw_log" | grep 'route=agentgateway-system/xaa-as-ledgerline ' | grep 'http.status=200 ' | python3 -c '
+import json, sys
+last = None
+for line in sys.stdin:
+    i = line.find(" jwt={")
+    if i >= 0:
+        last = json.JSONDecoder().raw_decode(line[i + 5:])[0]
+if last:
+    print(last.get("iss", ""), "aud=%s client_id=%s" % (last.get("aud"), last.get("client_id")))') || vouched=""
+  if [ -n "$vouched" ] && [ "${vouched%% *}" = "${WANT_ISS%/}" ]; then res ok "ID-JAG from $VOUCHER, verified at S&V's egress: ${vouched#* }"
   else
-    res no "ID-JAG from $VOUCHER, checked at S&V's egress" "${vouched:-no ID-JAG in the xaa-relay log}"
+    res no "ID-JAG from $VOUCHER, verified at S&V's egress" "${vouched:-no ID-JAG in the ai-gateway log}"
     [ "$VOUCHER" != sterling-vance ] && echo "      $VOUCHER vouches for a session through it once Bob has signed in to Ledgerline through it (https://idp.$LEDGERLINE_DOMAIN/realms/ledgerline/account)"
   fi
 fi
+# the token requests go out through ai-gateway's own routes: no one else may use them
+code=$(K exec -n sv-agents probe-bob-assistant -- curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST \
+  http://ai-gateway.agentgateway-system/xaa-legs/ledgerline/as/token -d 'grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=a.b.c' 2>/dev/null) || code=""
+case "$code" in 401|403) res ok "Bob's agent asks Ledgerline's token endpoint through the gateway's leg: refused ($code)" ;;
+  *) res no "Bob's agent asks Ledgerline's token endpoint through the gateway's leg: refused" "HTTP ${code:-no answer}" ;; esac
 check 'overweight'                              "sector_outlook through XAA"                       $AGENT $XAA call sector_outlook '{"sector":"technology"}' --token "$BOB"
 check "$ACCOUNT"                                "another user's ID token is replaced: still Bob"   $AGENT $XAA call account_info '{}' --token "$BOB" --header "x-id-token=$OTHER_ID"
 # Ledgerline's server records any ID token that reaches it: none may

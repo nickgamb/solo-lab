@@ -4,7 +4,7 @@
 #
 #   sv-upstream-client.jwks.json  S&V's client at an upstream IdP (e.g. Gluu):
 #                                 the broker's key (Keycloak, PS256) and the
-#                                 egress's key (idtoken-exchange, xaa-relay)
+#                                 egress's key (idtoken-exchange, ai-gateway)
 #   sv-ras-client.jwks.json       S&V's client at Ledgerline's AS
 #                                 (sterling-vance-kagent)
 #   sv-idp.jwks.json              S&V's broker's token-signing keys, issuer

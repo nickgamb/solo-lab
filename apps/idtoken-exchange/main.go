@@ -2,7 +2,7 @@
 // Access. Given the caller's access token the gateway verified, it sets
 // x-id-token to an OIDC ID token for the same user from the enterprise IdP
 // that vouches for them, which the gateway then trades for an ID-JAG
-// (demos/bob/manifests/40-xaa-ledgerline.yaml).
+// (demos/bob/manifests/xaa/ledgerline.yaml).
 //
 // It exists because the agent doesn't have the ID token: kagent passes agents
 // the caller's access token, not the ID token. And agentgateway's own token

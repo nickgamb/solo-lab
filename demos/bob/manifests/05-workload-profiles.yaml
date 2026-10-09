@@ -3,7 +3,7 @@
 # Each says only what differs from the chain's assurancePolicy (AAL1, any IdP,
 # no break-glass). Owned with the firm's identity chain, in sv-identity. The
 # assurance gate enforces them at the workloads' policy points
-# (20-waypoint.yaml, 40-xaa-ledgerline.yaml); the Observatory's Identity
+# (20-waypoint.yaml, xaa/ledgerline.yaml); the Observatory's Identity
 # Continuity tab edits them (Assurance rules).
 apiVersion: continuity.lab.solo.io/v1alpha1
 kind: WorkloadProfile

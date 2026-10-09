@@ -228,6 +228,7 @@ spec:
   - {group: ${AGW_POLICY_GROUP}, kind: ${AGW_POLICY_KIND}, namespace: sv-mcp}
   - {group: ${AGW_POLICY_GROUP}, kind: ${AGW_POLICY_KIND}, namespace: agentgateway-system}
   - {group: agentgateway.dev, kind: AgentgatewayBackend, namespace: agentgateway-system}   # XAA stage 1 + IdP leg
+  - {group: gateway.networking.k8s.io, kind: HTTPRoute, namespace: agentgateway-system}  # XAA: the token request to S&V's broker
   to: [{group: "", kind: Service, name: keycloak}]
 ---
 # Same tool surface on the discovery lane, so the UI never advertises a tool

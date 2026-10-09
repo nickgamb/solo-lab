@@ -99,7 +99,7 @@ idp_client_auth() { if [ -n "$(_idp_var "$1" CLIENT_SECRET)" ]; then echo client
 
 # xaa_env: the OpenID Providers S&V's egress may get Bob's ID-JAG from, in
 # order, S&V's broker last as "sterling-vance" (XAA_OPS, for idtoken-exchange
-# and xaa-relay), and S&V's client key at Ledgerline's AS
+# and ai-gateway), and S&V's client key at Ledgerline's AS
 xaa_env() {
   local n d ops='[]'
   for n in $(idp_xaa_upstreams); do
@@ -143,6 +143,84 @@ xaa_secrets() {
     --dry-run=client -o yaml | K apply -f - >/dev/null
   K create secret generic xaa-client-key -n agentgateway-system --from-file=signingKey="$LAB_STATE/keys/sv-xaa-client.key" \
     --dry-run=client -o yaml | K apply -f - >/dev/null
+}
+
+# _xaa_endpoint <url>: how ai-gateway reaches a token or JWKS endpoint, as
+# JSON {ref, host, path, backend}: an in-cluster http URL is its Service; an
+# https host is a static backend (backend: its spec), trusting the lab CA for
+# the lab's own hosts
+_xaa_endpoint() {
+  jq -cn --arg u "$1" --arg tld "$LAB_TLD" --arg grp "$AGW_BACKEND_GROUP" --arg kind "$AGW_BACKEND_KIND" '
+    ($u | capture("^(?<scheme>https?)://(?<host>[^/:]+)(:(?<port>[0-9]+))?(?<path>/.*)?$")) as $c
+    | if $c == null then error("not a URL: \($u)")
+      elif $c.scheme == "http" then
+        {ref: {kind: "Service", name: ($c.host | split(".")[0]), namespace: ($c.host | split(".")[1]),
+               port: ($c.port // "80" | tonumber)}, host: $c.host, path: $c.path, backend: null}
+      else ("xaa-" + ($c.host | gsub("[.]"; "-"))) as $n
+        | {ref: {group: $grp, kind: $kind, name: $n}, host: $c.host, path: $c.path,
+           backend: {name: $n, host: $c.host, port: ($c.port // "443" | tonumber),
+                     labCA: ($c.host | endswith(".\($tld)"))}}
+      end'
+}
+
+# xaa_gateway_apply: ai-gateway's Cross App Access, from XAA_OPS (xaa_env):
+# xaa/ledgerline.yaml with a route rule per IdP that may vouch, and
+# xaa/idp.yaml per IdP (its backend, token route and checks). Objects of an
+# IdP no longer in the chain are removed.
+xaa_gateway_apply() {
+  local dir=$1 broker egress_kid n ep jwks idps eps auth providers='[]'
+  broker=$(echo "$XAA_OPS" | jq -r 'last.name')   # S&V's broker, last (xaa_env)
+  egress_kid=$(jwks_of "$LAB_STATE/keys/sv-egress-client.crt" | jq -r '.keys[0].kid')
+  eps='[]'
+  for n in $(echo "$XAA_OPS" | jq -r '.[].name'); do
+    ep=$(_xaa_endpoint "$(echo "$XAA_OPS" | jq -r --arg n "$n" '.[] | select(.name == $n) | .token_url')") || die "XAA: $n's token endpoint"
+    jwks=$(_xaa_endpoint "$(echo "$XAA_OPS" | jq -r --arg n "$n" '.[] | select(.name == $n) | .jwks_url')") || die "XAA: $n's JWKS"
+    eps=$(echo "$eps" | jq -c --argjson e "$ep" --argjson j "$jwks" '. + [$e, $j]')
+    # the ID-JAGs it issues, checked at the Ledgerline leg against its keys
+    providers=$(echo "$XAA_OPS" | jq -c --arg n "$n" --arg aud "$LEDGERLINE_AS_ISSUER" --argjson j "$jwks" --argjson p "$providers" \
+      '$p + [.[] | select(.name == $n) | {issuer: .issuer, audiences: [$aud], validation: {requiredClaims: ["aud", "exp", "sub"]},
+              jwks: {remote: {backendRef: $j.ref, jwksPath: $j.path, cacheDuration: "5m"}}}]')
+    auth=$(echo "$XAA_OPS" | jq -c --arg n "$n" --arg b "$broker" --arg kid "$egress_kid" '.[] | select(.name == $n)
+      | if .auth == "private_key_jwt" then
+          {clientId: .client_id, method: "PrivateKeyJwt", privateKeyJwt: {alg: "RS256", kid: $kid,
+           assertionAudience: .issuer, signingKeyRef: {name: "egress-client-key", key: "signingKey"}}}
+        else {clientId: .client_id, method: (if .auth == "client_secret_basic" then "ClientSecretBasic" else "ClientSecretPost" end),
+              secretRef: {name: (if .name == $b then "kagent-client" else "op-\(.name)" end), key: "clientSecret"}} end')
+    XAA_IDP=$n XAA_IDP_CLIENT_AUTH=$auth \
+      XAA_IDP_ISSUER=$(echo "$XAA_OPS" | jq -r --arg n "$n" '.[] | select(.name == $n) | .issuer') \
+      XAA_IDP_CLIENT_ID=$(echo "$XAA_OPS" | jq -r --arg n "$n" '.[] | select(.name == $n) | .client_id') \
+      XAA_IDP_TOKEN_REF=$(echo "$ep" | jq -c .ref) XAA_IDP_TOKEN_HOST=$(echo "$ep" | jq -r .host) XAA_IDP_TOKEN_PATH=$(echo "$ep" | jq -r .path) \
+      XAA_IDP_JWKS_REF=$(echo "$jwks" | jq -c .ref) XAA_IDP_JWKS_PATH=$(echo "$jwks" | jq -r .path) \
+      render "$dir/xaa/idp.yaml" | K apply -f - >/dev/null || die "XAA: $n's objects"
+  done
+  ep=$(_xaa_endpoint "$LEDGERLINE_AS_TOKEN_URL") || die "XAA: Ledgerline's token endpoint"
+  eps=$(echo "$eps" | jq -c --argjson e "$ep" '. + [$e]')
+  # the static backends for every https host
+  echo "$eps" | jq -c --arg api "$AGW_BACKEND_API" --arg kind "$AGW_BACKEND_KIND" '
+    [.[].backend | select(. != null)] | unique_by(.name)[]
+    | {apiVersion: $api, kind: $kind,
+       metadata: {name: .name, namespace: "agentgateway-system", labels: {"lab.solo.io/xaa-endpoint": "true"}},
+       spec: {static: {host: .host, port: .port},
+              policies: {tls: ({sni: .host} + if .labCA then {caCertificateRefs: [{name: "lab-ca-bundle"}]} else {} end)}}}' \
+    | K apply -f - >/dev/null || die "XAA: endpoint backends"
+  XAA_BROKER=$broker \
+    XAA_UPSTREAM_NAMES=$(echo "$XAA_OPS" | jq -c --arg b "$broker" '[.[].name | select(. != $b)]') \
+    XAA_ROUTE_RULES=$(echo "$XAA_OPS" | jq -c --arg grp "$AGW_BACKEND_GROUP" --arg kind "$AGW_BACKEND_KIND" '[.[] | {name: .name,
+      matches: [{path: {type: "PathPrefix", value: "/xaa/ledgerline"},
+                 headers: [{name: "authorization", type: "RegularExpression", value: "(?i)^bearer\\s+.+"},
+                           {name: "x-vouching-idp", value: .name}]}],
+      backendRefs: [{group: $grp, kind: $kind, name: "xaa-ledgerline-\(.name)"}]}]') \
+    XAA_IDJAG_PROVIDERS=$providers \
+    XAA_AS_REF=$(echo "$ep" | jq -c .ref) XAA_AS_HOST=$(echo "$ep" | jq -r .host) XAA_AS_PATH=$(echo "$ep" | jq -r .path) \
+    apply_tmpl "$dir/xaa/ledgerline.yaml" || die "XAA: the route and its checks"
+  # an IdP that left the chain, an endpoint no longer used
+  idps=$(echo "$XAA_OPS" | jq -r '[.[].name] | join(",")')
+  K delete "$AGW_BACKEND_KIND,httproute,$AGW_POLICY_KIND" -n agentgateway-system -l "lab.solo.io/xaa-idp,lab.solo.io/xaa-idp notin ($idps)" \
+    --ignore-not-found >/dev/null
+  for n in $(K get "$AGW_BACKEND_KIND" -n agentgateway-system -l lab.solo.io/xaa-endpoint -o name); do
+    echo "$eps" | jq -e --arg n "${n##*/}" 'any(.[].backend; . != null and .name == $n)' >/dev/null \
+      || K delete -n agentgateway-system "$n" >/dev/null
+  done
 }
 
 # jwks_of <cert>: the public half of a lab key, as a JWKS with its RFC 7638 kid

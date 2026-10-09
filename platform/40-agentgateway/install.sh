@@ -43,10 +43,10 @@ apply_tmpl "$D/ai-gateway.yaml"
 wait_for "ai-gateway Programmed" 60 3 \
   K wait -n agentgateway-system gateway/ai-gateway --for=condition=Programmed --timeout=2s
 ok "ai-gateway programmed — in-cluster: http://ai-gateway.agentgateway-system"
-# ai-gateway itself reaches the LLM providers. S&V's ID-token exchange and XAA
-# relay (demos/bob) beside it reach upstream IdPs only through the egress
-# waypoint, so they get the cluster and nothing else.
-deny_internet_pods agentgateway-system idtoken-exchange xaa-relay
-ok "no direct internet from idtoken-exchange, xaa-relay (agentgateway-system)"
+# ai-gateway itself reaches the LLM providers. S&V's ID-token exchange
+# (demos/bob) beside it reaches upstream IdPs only through the egress
+# waypoint, so it gets the cluster and nothing else.
+deny_internet_pods agentgateway-system idtoken-exchange
+ok "no direct internet from idtoken-exchange (agentgateway-system)"
 
 "$LAB_ROOT/scripts/llm.sh"
