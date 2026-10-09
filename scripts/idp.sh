@@ -342,7 +342,7 @@ spec:
 YAML
   done
   K get serviceentry -n ledgerline-egress -l lab.solo.io/egress=ledgerline -o json \
-    | jq -r --arg keep " $(echo $hosts) " '.items[] | select(($keep | contains(" " + .spec.hosts[0] + " ")) | not) | .metadata.name' \
+    | jq -r --arg keep " $(echo $hosts) " '.items[] | select(.spec.hosts[0] as $h | $keep | contains(" " + $h + " ") | not) | .metadata.name' \
     | while read -r se; do K delete serviceentry "$se" -n ledgerline-egress >/dev/null; done
 }
 
