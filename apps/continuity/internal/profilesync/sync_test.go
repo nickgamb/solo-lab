@@ -10,7 +10,9 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	v1 "github.com/nickgamb/solo-lab/apps/continuity/api/v1alpha1"
 	"github.com/nickgamb/solo-lab/apps/continuity/internal/keycloak"
@@ -600,5 +602,48 @@ func TestSCIMList(t *testing.T) {
 	}
 	if e := page[1]; e.Email != "eve@sterling.lab" || e.Verified != nil {
 		t.Fatalf("eve: %+v (want her only email, verification unknown)", e)
+	}
+}
+
+func TestRateLimitIsRetried(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			tokenOK(w)
+			return
+		}
+		if atomic.AddInt32(&calls, 1) < 3 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Write([]byte(`{"id":"inum-bob"}`))
+	}))
+	defer srv.Close()
+	d, _ := New("scim", srv.URL+"/scim/v2", Credentials{TokenURL: srv.URL + "/token", ClientID: "c", ClientSecret: "s"}, srv.Client())
+	if _, err := d.User(context.Background(), "inum-bob"); err != nil || calls != 3 {
+		t.Fatalf("got %v after %d calls, want the third to answer", err, calls)
+	}
+	// a limit that never lifts gives up
+	atomic.StoreInt32(&calls, -100)
+	if _, err := d.User(context.Background(), "inum-bob"); err == nil || !strings.Contains(err.Error(), "429") {
+		t.Fatalf("got %v, want the 429 after %d tries", err, rateLimitTries)
+	}
+}
+
+func TestRetryAfter(t *testing.T) {
+	now := time.Unix(1000, 0)
+	for _, c := range []struct {
+		h    http.Header
+		want time.Duration
+	}{
+		{http.Header{"Retry-After": {"3"}}, 3 * time.Second},
+		{http.Header{"X-Ratelimit-Reset": {"1002"}}, 2 * time.Second},
+		{http.Header{}, time.Second},
+		{http.Header{"Retry-After": {"600"}}, maxRateLimitWait},
+	} {
+		if got := retryAfter(c.h, now); got != c.want {
+			t.Errorf("%v: %v, want %v", c.h, got, c.want)
+		}
 	}
 }
