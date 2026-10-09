@@ -12,7 +12,7 @@ metadata: {name: uma-as, namespace: alice}
 ---
 apiVersion: v1
 kind: Service
-metadata: {name: uma-as, namespace: alice, labels: {istio.io/use-waypoint: waypoint}}
+metadata: {name: uma-as, namespace: alice, labels: {istio.io/use-waypoint: waypoint, istio.io/ingress-use-waypoint: "true"}}
 spec:
   selector: {app: uma-as}
   ports: [{name: http, port: 9000, targetPort: 9000}]
@@ -165,9 +165,9 @@ kind: Gateway
 metadata:
   name: waypoint
   namespace: alice
-  labels: {istio.io/waypoint-for: all}   # the edge dials pod addresses
+  labels: {istio.io/waypoint-for: all}
 spec:
-  gatewayClassName: istio-waypoint
+  gatewayClassName: ${AGW_WAYPOINT_CLASS}   # agentgateway as the ambient waypoint
   listeners: [{name: mesh, port: 15008, protocol: HBONE}]
 ---
 apiVersion: security.istio.io/v1
@@ -189,18 +189,36 @@ spec:
   action: ALLOW
   rules: [{from: [{source: {principals: [cluster.local/ns/alice/sa/waypoint]}}]}]
 ---
-# L7 (waypoint): who may reach which surface of her authorization server.
-apiVersion: security.istio.io/v1
-kind: AuthorizationPolicy
+# L7 (the agentgateway waypoint): who may reach which surface of her
+# authorization server, by the caller's mesh identity and the path.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: uma-as, namespace: alice}
+spec:
+  parentRefs: [{group: "", kind: Service, name: uma-as, port: 9000}]
+  rules:
+  - backendRefs: [{name: uma-as, port: 9000}]
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
 metadata: {name: uma-as-grant-surface, namespace: alice}
 spec:
-  targetRefs: [{kind: Service, group: "", name: uma-as}]
-  action: ALLOW
-  rules:
-  - from: [{source: {principals: [cluster.local/ns/kgateway-system/sa/edge]}}]
-    to: [{operation: {paths: [/token, /perm, /introspect, /consume, /jwks, /audit/access, /terms, "/terms/*", "/.well-known/*", /health, /rs/register]}}]
-  - from: [{source: {principals: [cluster.local/ns/alice/sa/portal, cluster.local/ns/kgateway-system/sa/edge]}}]
-    to: [{operation: {paths: [/owner, "/owner/*"]}}]
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: uma-as}]
+  traffic:
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+        # the grant surface: through the edge only
+        - >-
+          source.identity.namespace == "kgateway-system" && source.identity.serviceAccount == "edge"
+          && (request.path in ["/token", "/perm", "/introspect", "/consume", "/jwks", "/audit/access", "/terms", "/health", "/rs/register"]
+              || request.path.startsWith("/terms/") || request.path.startsWith("/.well-known/"))
+        # her own console: her portal, or the edge
+        - >-
+          ((source.identity.namespace == "alice" && source.identity.serviceAccount == "portal")
+           || (source.identity.namespace == "kgateway-system" && source.identity.serviceAccount == "edge"))
+          && (request.path == "/owner" || request.path.startsWith("/owner/"))
 ---
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
