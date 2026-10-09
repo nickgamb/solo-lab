@@ -34,3 +34,7 @@ spec:
   rules:
   - from: [{source: {principals: [cluster.local/ns/kgateway-system/sa/edge]}}]
   - from: [{source: {namespaces: [solo-enterprise]}}]
+  # the platform collector hands the UI's collector the gateways' and
+  # kagent's traces (platform/20-observability/otel-collector-enterprise.yaml)
+  - from: [{source: {principals: [cluster.local/ns/observability/sa/otel-collector]}}]
+    to: [{operation: {ports: ["4317"]}}]
