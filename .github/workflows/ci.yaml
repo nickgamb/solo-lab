@@ -67,7 +67,9 @@ jobs:
         git ls-files '*.json' | grep -v '^apps/observatory/web/' | while read -r f; do python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$f"; done
         pip3 install -q pyyaml
         # manifests carry ${VAR} placeholders inside flow mappings; render with
-        # empty values before parsing, the way scripts/lib.sh does
+        # placeholder values before parsing, the way scripts/lib.sh does. A line
+        # that starts with one is a whole field per edition (config/lab.env).
         git ls-files 'platform/*.yaml' 'demos/*.yaml' | while read -r f; do
-          sed -E 's/\$\{[A-Z][A-Z0-9_]*\}/x/g' "$f" | python3 -c "import yaml,sys; list(yaml.safe_load_all(sys.stdin))" || { echo "$f"; exit 1; }
+          sed -E -e 's/^([[:space:]]*)\$\{[A-Z][A-Z0-9_]*\}.*$/\1edition-field: x/' -e 's/\$\{[A-Z][A-Z0-9_]*\}/x/g' "$f" \
+            | python3 -c "import yaml,sys; list(yaml.safe_load_all(sys.stdin))" || { echo "$f"; exit 1; }
         done
