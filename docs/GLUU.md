@@ -112,4 +112,4 @@ Not built. Each item, with what it needs.
 | Hardware-anchored agent identity | SPIRE with TPM node attestation (swtpm in kind, vTPM on a hosted cluster) issuing the agents' SPIFFE IDs |
 | S&V's broker trusted from outside the lab | the broker's issuer on a public host (the lab hosted, with public DNS and certificates), or its JWKS published where an AS outside the lab can fetch them |
 | Gluu in the lab | the Janssen Helm chart per party with CloudNativePG, clients, scopes, users and trusted issuers configured by script |
-| Gluu as S&V's only IdP | S&V's services (edge SSO, waypoint delegation, registry, Observatory) on Gluu clients; Gluu token exchange for the waypoint audience and for access token to ID token; continuity without a broker |
+| Gluu as S&V's only IdP | S&V's services (edge SSO, the gateway's token exchange for MCP servers, registry, Observatory) on Gluu clients; Gluu token exchange for an MCP server's audience and for access token to ID token; continuity without a broker |

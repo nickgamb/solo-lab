@@ -76,11 +76,11 @@ next
 
 if scene 1 "Bob's agent, on Bob's tools (delegation)"; then
   look "Topology: kagent-controller → the bob-assistant tray: a worker bay lights as the actor wakes"
-  look "then the agent → ai-gateway (the model) and → bob-workspace, badged with the MCP waypoint"
+  look "then the agent → ai-gateway, for the model and for bob-workspace: one front door for both"
   ask "Who are you acting for, and what does the workspace see? Use whoami."
   ask "List my clients and their stage."
   look "Traffic: filter mcp and turn on Carries a token. Expand tools/call whoami: Bob's claims,"
-  look "verified by the waypoint (audience mcp-waypoint, groups advisors). The tool got a different token."
+  look "verified by ai-gateway (audience ai-gateway, groups advisors). The tool got a token of its own, minted for the call."
   next
 fi
 
@@ -94,13 +94,13 @@ fi
 
 if scene 3 "What isn't allowed (probe pods, no model)"; then
   look "Traffic: turn on only denied. Each row is a refusal; the line below names the layer."
-  GW=http://bob-workspace-mcp.sv-mcp:3000/mcp XAA=http://ai-gateway.agentgateway-system/xaa/ledgerline/mcp
+  GW=http://ai-gateway.agentgateway-system/mcp/bob-workspace XAA=http://ai-gateway.agentgateway-system/xaa/ledgerline/mcp
   POD_IP=$(K get pod -n sv-mcp -l app.kubernetes.io/name=bob-workspace -o jsonpath='{.items[0].status.podIP}')
   probe $AGENT        "export_book as an advisor (compliance only)"       "$GW" call export_book '{}' --token "$BOB"
   probe $AGENT        "an agent workload with no user token"              "$GW" call whoami '{}'
   probe observability "Bob's token from the wrong workload"               "$GW" call whoami '{}' --token "$BOB"
   probe sv-agents     "Bob's token from a non-agent pod beside the agents" "$GW" call whoami '{}' --token "$BOB"
-  probe $AGENT        "skip the waypoint: dial the tool's pod directly"   "http://$POD_IP:3000/mcp" call whoami '{}' --token "$BOB"
+  probe $AGENT        "skip the front door: dial the tool's pod directly" "http://$POD_IP:3000/mcp" call whoami '{}' --token "$BOB"
   probe observability "Ledgerline via XAA from the wrong workload"        "$XAA" call account_info '{}' --token "$BOB"
   probe $AGENT        "straight to Ledgerline with Bob's S&V token"       "https://mcp.$LEDGERLINE_DOMAIN/mcp" call account_info '{}' --token "$BOB"
   look "Topology, view Cross-party: the only wires left are the calls that cross a company boundary."

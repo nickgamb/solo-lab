@@ -182,7 +182,7 @@ builder, and the directory sync window. See
       mode        = "Enforce"
       workloads   = ["sv-mcp/bob-workspace"]
       minimum     = "AAL2"     # what a rule leaves out is the default's
-      enforced_at = ["sv-mcp/bob-workspace-caller"]
+      enforced_at = ["agentgateway-system/bob-workspace-caller"]
     }
     ```
   - Save writes, as you: the IdentityContinuity (default rule, IdPs), each
@@ -311,15 +311,15 @@ signed-in admin, and the assurance rules, which their window reads from
 
 ## Telemetry wiring
 
-- `platform/90-observatory/telemetry.yaml`: access-log policies on ai-gateway,
-  the S&V MCP waypoint and Meridian's gateway (agentgateway), and on the edge
-  (kgateway ListenerPolicy), all to the OTel collector. S&V's two gateways
-  also log the assurance gate's decision (`continuity.decision`). agentgateway sends to
+- `platform/90-observatory/telemetry.yaml`: access-log policies on ai-gateway
+  and Meridian's gateway (agentgateway), and on the edge (kgateway
+  ListenerPolicy), all to the OTel collector. ai-gateway also logs the
+  assurance gate's decision (`continuity.decision`). agentgateway sends to
   the collector's Service as a backend, so the export carries the gateway's
   mesh identity, which the collector's policy requires.
 - `platform/20-observability/otel-collector.yaml`: access logs arrive on
   their own ports (14317 gRPC, 14318 HTTP), which the mesh policy opens only
-  to the four gateways, and only that pipeline exports to
+  to those three gateways, and only that pipeline exports to
   `observatory.observatory.svc:4318`. So a claim shown as verified by a
   gateway came from one. Other components' OTLP (4317/4318) goes to Tempo and
   Prometheus; their logs are dropped.

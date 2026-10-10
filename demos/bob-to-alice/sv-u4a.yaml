@@ -14,10 +14,10 @@ metadata: {name: u4a-adapter, namespace: sv-u4a}
 ---
 apiVersion: v1
 kind: Service
-metadata: {name: u4a-adapter, namespace: sv-u4a}
+metadata: {name: u4a-adapter, namespace: sv-u4a, labels: {lab.solo.io/mcp: alice-vault}}
 spec:
   selector: {app: u4a-adapter}
-  ports: [{name: mcp, port: 9030, targetPort: 9030}]
+  ports: [{name: mcp, port: 9030, targetPort: 9030, appProtocol: agentgateway.dev/mcp}]
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -60,7 +60,7 @@ kind: PeerAuthentication
 metadata: {name: strict, namespace: sv-u4a}
 spec: {mtls: {mode: STRICT}}
 ---
-# Bob's agent, and the kagent controller listing tools. Nobody else.
+# Only the firm's gateway, which decides who may use the adapter (below).
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata: {name: default-deny, namespace: sv-u4a}
@@ -72,7 +72,81 @@ metadata: {name: adapter-callers, namespace: sv-u4a}
 spec:
   selector: {matchLabels: {app: u4a-adapter}}
   action: ALLOW
-  rules: [{from: [{source: {principals: [cluster.local/ns/sv-agents/sa/bob-assistant, cluster.local/ns/kagent/sa/kagent-controller]}}]}]
+  rules: [{from: [{source: {principals: [cluster.local/ns/agentgateway-system/sa/ai-gateway]}}]}]
+---
+# The adapter behind the firm's gateway, like every MCP server, at
+#   http://ai-gateway.agentgateway-system.svc.cluster.local/mcp/alice-vault
+#   user lane       Bob's agent's workers, acting for an advisor; the advisor's
+#                   token stops here (the adapter speaks for the agent, by its
+#                   own key, and takes no token)
+#   discovery lane  no token -> only the kagent controller, listing tools
+apiVersion: ${AGW_BACKEND_API}
+kind: ${AGW_BACKEND_KIND}
+metadata: {name: alice-vault, namespace: agentgateway-system}
+spec:
+  mcp:
+    targets:
+    - name: alice-vault
+      selector:
+        namespaces: {matchLabels: {kubernetes.io/metadata.name: sv-u4a}}
+        services: {matchLabels: {lab.solo.io/mcp: alice-vault}}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: alice-vault, namespace: agentgateway-system}
+spec:
+  parentRefs: [{name: ai-gateway, sectionName: http}]
+  rules:
+  - matches:
+    - path: {type: PathPrefix, value: /mcp/alice-vault}
+      headers: [{name: authorization, type: RegularExpression, value: "(?i)^bearer\\s+.+"}]
+    backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: alice-vault}]
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: alice-vault-caller, namespace: agentgateway-system}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: alice-vault}]
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+      - issuer: https://idp.${SV_DOMAIN}/realms/sterling-vance
+        audiences: [ai-gateway]
+        jwks:
+          remote:
+            backendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}
+            jwksPath: /realms/sterling-vance/protocol/openid-connect/certs
+            cacheDuration: 5m
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+        - 'source.identity.namespace == "sv-agents" && source.identity.serviceAccount == "bob-assistant" && "advisors" in jwt.groups'
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: alice-vault-discovery, namespace: agentgateway-system}
+spec:
+  parentRefs: [{name: ai-gateway, sectionName: http}]
+  rules:
+  - matches: [{path: {type: PathPrefix, value: /mcp/alice-vault}}]
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier: {remove: [authorization, x-id-token]}
+    backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: alice-vault}]
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: alice-vault-discovery, namespace: agentgateway-system}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: alice-vault-discovery}]
+  traffic:
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+        - 'source.identity.namespace == "kagent" && source.identity.serviceAccount == "kagent-controller"'
 ---
 apiVersion: kagent.dev/v1alpha2
 kind: RemoteMCPServer
@@ -80,7 +154,7 @@ metadata: {name: alice-vault-via-u4a, namespace: sv-agents}
 spec:
   description: "Alice's accounts at Meridian Wealth, on Alice's terms (UMA for agents)"
   protocol: STREAMABLE_HTTP
-  url: http://u4a-adapter.sv-u4a.svc.cluster.local:9030/mcp
+  url: http://ai-gateway.agentgateway-system.svc.cluster.local/mcp/alice-vault
   sseReadTimeout: 300s
   terminateOnClose: false
   timeout: 300s

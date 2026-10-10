@@ -471,7 +471,7 @@ kind: WorkloadProfile
 metadata: {name: advisor-workspace, namespace: sv-identity}
 spec:
   continuity: sterling-vance
-  description: Bob's workspace tools behind the sv-mcp waypoint, used by his agents on his behalf
+  description: Bob's workspace tools behind the firm's front door, used by his agents on his behalf
   criticality: Critical
   mode: Enforce
   workloads: [{namespace: sv-mcp, serviceAccount: bob-workspace}]
@@ -518,7 +518,7 @@ Bob's demo has three (`demos/bob/manifests/05-workload-profiles.yaml`):
 
 | Rule | Criticality | Requirements | Enforced at |
 | --- | --- | --- | --- |
-| `advisor-workspace` | Critical | AAL2 | `sv-mcp/bob-workspace-caller` (the waypoint in front of Bob's workspace) |
+| `advisor-workspace` | Critical | AAL2 | `agentgateway-system/bob-workspace-caller` (ai-gateway, in front of Bob's workspace) |
 | `ledgerline-research` | High | AAL2, active IdP only | `agentgateway-system/xaa-ledgerline-caller` (S&V's egress to Ledgerline, before any ID-JAG) |
 | `agent-console` | Standard | break-glass allowed | the kagent console's sign-in is at the edge, which doesn't ask the gate |
 

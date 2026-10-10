@@ -22,17 +22,18 @@ OTHER_ID=$(sso_token carol carol-demo | jq -r '.id_token // empty') || OTHER_ID=
 [ -n "$OTHER_ID" ] || die "could not sign Carol in (her ID token is the one swapped in below)"
 # Bob's agent's workload identity (its worker pool's ServiceAccount), another
 # workload in the same namespace, and one in another namespace.
-probe_pod sv-agents bob-assistant; probe_pod sv-agents; probe_pod observability; probe_pod "$KAGENT_UI_NS" "$KAGENT_UI_SA"
+probe_pod sv-agents bob-assistant; probe_pod sv-agents; probe_pod observability; probe_pod "$KAGENT_UI_NS" "$KAGENT_UI_SA"; probe_pod kagent kagent-ops
 AGENT=sv-agents/probe-bob-assistant
-# Agents call the tool's own Service; the mesh carries every call into sv-mcp's
-# agentgateway waypoint. There is no gateway URL to remember, or to skip.
-GW=http://bob-workspace-mcp.sv-mcp:3000/mcp
+# Agents call the workspace at the firm's front door, the ai-gateway; the
+# workspace takes connections from that gateway alone.
+GW=http://ai-gateway.agentgateway-system/mcp/bob-workspace
 POD_IP=$(K get pod -n sv-mcp -l app.kubernetes.io/name=bob-workspace -o jsonpath='{.items[0].status.podIP}')
 [ -n "$POD_IP" ] || die "no bob-workspace pod in sv-mcp (make layer-95)"
 TMPD=$(umask 077; mktemp -d); on_exit "rm -rf $TMPD"   # every temp file, gone on exit
 pass=0 fail=0 skip=0
 res() { if [ "$1" = ok ]; then ok "$2"; pass=$((pass+1)); else warn "$2"; echo "      got: ${3:0:300}"; fail=$((fail+1)); fi; }
 skipped() { printf '  - skipped: %s\n' "$*"; skip=$((skip+1)); }
+expect_res() { if echo "$3" | grep -qE "$1"; then res ok "$2"; else res no "$2" "$3"; fi; }
 check() {  # check <expect-regex> <label> <ns>[/<pod>] <probe args...>
   local want=$1 label=$2 ns=${3%%/*} pod=probe; [[ $3 == */* ]] && pod=${3#*/}; shift 3
   local out; out=$(probe_exec "$ns/$pod" "$@" 2>&1 | tail -1) || true
@@ -62,9 +63,9 @@ else
 fi
 check 'Alice Chen'                              "list_clients returns Bob's book"             $AGENT $GW call list_clients '{}' --token "$BOB"
 check 'account_number\\": \\"(\\u2022){4}8265\\"' \
-                                                "get_client: account number masked by the waypoint's guardrail" $AGENT $GW call get_client '{"name": "Marcus Webb"}' --token "$BOB"
+                                                "get_client: account number masked by the front door's guardrail" $AGENT $GW call get_client '{"name": "Marcus Webb"}' --token "$BOB"
 # mcp-guard's record of what it masked: the tool and a count, never the value
-if ! guard_log=$(K logs -n sv-mcp -l app=mcp-guard --since=10m --tail=-1 2>&1); then
+if ! guard_log=$(K logs -n agentgateway-system -l app=mcp-guard --since=10m --tail=-1 2>&1); then
   res no "mcp-guard logs the mask, not the account number" "could not read mcp-guard's log: $guard_log"
 else
   masked=$(echo "$guard_log" | grep -c '"msg":"masked"') || masked=0
@@ -77,8 +78,20 @@ check 'Unknown tool|isError": true|http": 40[13]' "export_book: hidden from advi
 check 'http": 40[13]|isError": true'            "agent with no user token (discovery lane is controller-only)" $AGENT $GW call whoami '{}'
 check 'http": 40[13]|isError": true'            "right user, wrong workload (observability)"  observability $GW call whoami '{}' --token "$BOB"
 check 'http": 40[13]|isError": true'            "right user, not an agent (another sv-agents workload)" sv-agents $GW call whoami '{}' --token "$BOB"
-check 'http": 40[13]|RBAC|isError": true|refused|reset|Broken pipe|Connection' \
-                                                "skip the waypoint: dial a pod IP with Bob's token" $AGENT "http://$POD_IP:3000/mcp" call whoami '{}' --token "$BOB"
+check 'http": 0|http": 40[13]|RBAC|isError": true|refused|reset|Broken pipe|Connection' \
+                                                "skip the front door: dial the workspace's Service with Bob's token" $AGENT http://bob-workspace-mcp.sv-mcp:3000/mcp call whoami '{}' --token "$BOB"
+check 'http": 0|http": 40[13]|RBAC|isError": true|refused|reset|Broken pipe|Connection' \
+                                                "skip the front door: dial a pod IP with Bob's token" $AGENT "http://$POD_IP:3000/mcp" call whoami '{}' --token "$BOB"
+
+step "The ops agents' tools (kagent-tools), behind the same front door"
+OPS_GW=http://ai-gateway.agentgateway-system/mcp/kagent-tools
+n=$(K get remotemcpserver kagent-tool-server -n kagent -o json 2>/dev/null \
+  | jq -r 'if (.spec.url | test("/mcp/kagent-tools$")) then (.status.discoveredTools // [] | length) else "not via the gateway: \(.spec.url)" end' 2>&1) || n=""
+expect_res '^[1-9][0-9]*$' "kagent lists the ops tools through the gateway" "$n"
+check 'http": 40[13]|isError": true'            "an ops agent's worker, for Bob (not a platform admin): refused" kagent/probe-kagent-ops $OPS_GW list --token "$BOB"
+check 'http": 40[13]|isError": true'            "an ops agent's worker with no user token (discovery lane is controller-only)" kagent/probe-kagent-ops $OPS_GW list
+check 'http": 0|http": 40[13]|refused|reset|Broken pipe|Connection' \
+                                                "skip the front door: an ops agent's worker dials kagent-tools" kagent/probe-kagent-ops http://kagent-tools.kagent:8084/mcp list
 XAA=http://ai-gateway.agentgateway-system/xaa/ledgerline/mcp
 # Ledgerline's account for Bob: its own user ID (its own Keycloak), or a token
 # an AS outside the lab issued for Bob
@@ -300,7 +313,6 @@ gate_says() {  # gate_says <token> <url> [tool]: "<status> <x-continuity-decisio
 if ! K get ns sv-contingency >/dev/null 2>&1 || ! K get idc sterling-vance -n sv-identity -o json | jq -e '.spec.tiers | any(.name == "contingency")' >/dev/null; then
   skipped "failover to a weaker IdP: S&V's contingency IdP isn't in ENTERPRISE_IDP"
 else
-  expect_res() { if echo "$3" | grep -qE "$1"; then res ok "$2"; else res no "$2" "$3"; fi; }
   expect_res '^aal2 pwd otp$' "Bob's sign-in at S&V's own Keycloak took a second factor: idp_acr aal2, idp_amr pwd otp" "$(claim "$BOB" idp_acr) $(claim "$BOB" idp_amr)"
   expect_res '^200 allow advisor-workspace: AAL2 via keycloak' "advisor-workspace (Critical, AAL2): Bob's agent allowed" "$(gate_says "$BOB" "$GW")"
   expect_res '^200 allow ledgerline-research: AAL2 via keycloak' "ledgerline-research (High, AAL2): allowed before anything is exchanged" "$(gate_says "$BOB" "$XAA")"

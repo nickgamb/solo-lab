@@ -31,7 +31,7 @@ secret_apply sv-identity kc-secrets \
   KC_BOOTSTRAP_ADMIN_USERNAME=admin \
   KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret SV_KC_ADMIN_PASSWORD)" \
   SV_KAGENT_CLIENT_SECRET="$(lab_secret SV_KAGENT_CLIENT_SECRET)" \
-  SV_MCP_WAYPOINT_CLIENT_SECRET="$(lab_secret SV_MCP_WAYPOINT_CLIENT_SECRET)" \
+  SV_AI_GATEWAY_CLIENT_SECRET="$(lab_secret SV_AI_GATEWAY_CLIENT_SECRET)" \
   SV_AGENTREGISTRY_CLIENT_SECRET="$(lab_secret SV_AGENTREGISTRY_CLIENT_SECRET)" \
   SV_AGENTREGISTRY_CATALOG_SECRET="$(lab_secret SV_AGENTREGISTRY_CATALOG_SECRET)" \
   SV_CLIENT_AT_LEDGERLINE="$SV_CLIENT_AT_LEDGERLINE" \
@@ -53,6 +53,7 @@ KC_IMAGE="localhost:${LAB_REGISTRY_PORT}/$KC_IDJAG" \
 wait_for "https://idp.$SV_DOMAIN discovery" 30 3 \
   sh -c "curl -sf --cacert '$LAB_CA_DIR/ca.crt' https://idp.$SV_DOMAIN/realms/sterling-vance/.well-known/openid-configuration >/dev/null"
 ok "issuer https://idp.$SV_DOMAIN/realms/sterling-vance  (admin: see .lab/secrets.env)"
+apply_tmpl "$D/gateway-grants.yaml"   # the firm's gateway may use the broker
 
 step "Sterling & Vance workforce IdP, Keycloak $KEYCLOAK_VERSION (sv-workforce)"
 # The Keycloak S&V runs itself (keycloak in ENTERPRISE_IDP), apart from the
@@ -100,6 +101,8 @@ secret_apply kagent kagent-oidc client-secret="$(lab_secret SV_KAGENT_CLIENT_SEC
 # Keycloak issues an ID-JAG only for the app the user signed into, so the
 # egress acts as kagent, the same application as the edge.
 secret_apply agentgateway-system kagent-client clientSecret="$(lab_secret SV_KAGENT_CLIENT_SECRET)"
-# the sv-mcp waypoint's own token-exchange client identity
-secret_apply sv-mcp mcp-waypoint-oidc clientSecret="$(lab_secret SV_MCP_WAYPOINT_CLIENT_SECRET)"
-ok "kagent/kagent-oidc  agentgateway-system/kagent-client  sv-mcp/mcp-waypoint-oidc"
+# the ai-gateway's own client, for its exchange at the broker on OSS (on
+# Enterprise agentgateway's STS mints MCP servers' tokens instead)
+secret_apply agentgateway-system ai-gateway-oidc clientSecret="$(lab_secret SV_AI_GATEWAY_CLIENT_SECRET)"
+K delete secret mcp-waypoint-oidc -n sv-mcp --ignore-not-found >/dev/null   # earlier labs: the sv-mcp waypoint's client
+ok "kagent/kagent-oidc  agentgateway-system/kagent-client  agentgateway-system/ai-gateway-oidc"

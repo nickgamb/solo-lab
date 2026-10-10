@@ -30,6 +30,7 @@ comparison of the editions.
 | --- | --- | --- | --- | --- |
 | agentgateway | Token rate limits per agent on the model route, counted by the Solo rate limiter, keyed on each agent pool's mesh identity (`advisor-desk` held to 2,000 tokens a minute) | none (agentgateway OSS has local limits per route, or a rate-limit server you run yourself) | [global request- and token-based rate limiting](https://docs.solo.io/agentgateway/latest/about/overview/) | `make bob-verify` |
 | agentgateway | Spend budgets in dollars or tokens per API key (`EnterpriseAgentgatewayBudget`): the developer key $5 a day, key `capped` blocked | none | [LLM spend budgets](https://docs.solo.io/agentgateway/latest/about/overview/) | `make bob-verify` |
+| agentgateway | The STS mints the token each MCP server accepts: the ai-gateway trades the user's verified token for one for that server alone (5 s, `MCP_TOKEN_LIFETIME`), and the server trusts the STS's issuer only (`MCP_TOKEN_ISSUER`). Only the ai-gateway may mint there (mesh policy `sts-callers`) | an RFC 8693 exchange at S&V's broker as client `ai-gateway` (120 s), issued by the broker | [Solo STS token exchange](https://docs.solo.io/agentgateway/latest/mcp/token-exchange/obo/) | `make bob-verify` |
 | kgateway | A web application firewall on the edge: SQL and script injection refused for every party's hostnames | none | [WAF](https://docs.solo.io/kgateway/latest/security/waf/overview/) | `make bob-verify` |
 | kagent | The Solo UI is kagent's UI: each user signs in as themselves through S&V's IdP and sees what their groups allow (advisors chat with agents and see only their own sessions; platform admins administer). The controller verifies each user's token against S&V's broker, and maps the token's groups to roles | trusted-proxy mode: the controller trusts the forwarded token, so mesh policy fences who may reach it (ARCHITECTURE.md) | [OIDC authentication, RBAC mapped to IdP groups](https://docs.solo.io/kagent/latest/about/) | `make bob-verify` |
 | agentregistry | Signs users in itself, roles from the token's groups | behind the edge's SSO | [user access control](https://docs.solo.io/agentregistry/latest/about/oss-enterprise/) | sign in at https://registry.sterling.lab |
@@ -135,7 +136,7 @@ checks carry over.
   Keycloak (`oidc.*`), where OSS trusts the forwarded token. Roles come from
   the `groups` claim (`platform-admins` admin, `advisors` writer); the
   Observatory's client reads Substrate status. `oidc.skipOBO` passes the
-  user's own token to agents, as the RFC 8693 exchange at the waypoint needs.
+  user's own token to agents, as the front door's checks on every tool call need.
 - **Go ADK:** `tools/kagent`'s build, pinned by digest
   (`GOLANG_ADK_IMAGE_DIGEST`): SandboxAgents call the controller back with
   the caller's credential.

@@ -1,5 +1,5 @@
 // mcp-guard: an agentgateway MCP guardrail (ExtMCP, extmcp/ext_mcp.proto) for
-// the sv-mcp waypoint (demos/bob/manifests/20-waypoint.yaml). It masks what a
+// S&V's front door (demos/bob/manifests/20-front-door.yaml). It masks what a
 // tool returns before the agent, and so the model, sees it:
 //
 //	tools/call response   in the result's content[].text and structuredContent

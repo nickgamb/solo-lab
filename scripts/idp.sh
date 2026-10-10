@@ -62,7 +62,7 @@ idp_internal() { case "$(echo "$1" | sed -E 's#^https?://([^/:]+).*#\1#')" in *.
 # mcp_exchange <audience>: how a gateway gets the token an MCP server accepts
 # (agentgateway oauthTokenExchange, JSON): from agentgateway's STS on
 # Enterprise (MCP_TOKEN_ISSUER), as the gateway itself, which only gateways
-# may reach; else from S&V's broker as the sv-mcp waypoint's client. The
+# may reach; else from S&V's broker as the ai-gateway's own client. The
 # subject is the user's verified token, which never goes upstream.
 mcp_exchange() {
   if [ "$AGW_EDITION" = enterprise ]; then
@@ -73,7 +73,7 @@ mcp_exchange() {
     jq -nc --arg aud "$1" '{backendRef: {kind: "Service", name: "keycloak", namespace: "sv-identity", port: 80},
       path: "/realms/sterling-vance/protocol/openid-connect/token", grantType: "TokenExchange",
       subjectToken: {source: {expression: "jwt.rawToken.unredacted()"}, tokenType: "AccessToken"}, audiences: [$aud],
-      clientAuth: {clientId: "mcp-waypoint", method: "ClientSecretBasic", secretRef: {name: "mcp-waypoint-oidc", key: "clientSecret"}}}'
+      clientAuth: {clientId: "ai-gateway", method: "ClientSecretBasic", secretRef: {name: "ai-gateway-oidc", key: "clientSecret"}}}'
   fi
 }
 

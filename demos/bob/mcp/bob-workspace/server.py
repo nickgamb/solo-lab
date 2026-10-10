@@ -1,10 +1,11 @@
 """bob-workspace: Bob's book of business at Sterling & Vance, as an MCP server.
 
-Its one rule: it only answers a token *delegated to it*. That token is minted
-per call by the firm's agentgateway (RFC 8693, audience bob-workspace, 120 s).
-The sv-mcp waypoint verifies the caller's token before this process sees the
-call, and this process verifies the delegated one itself (signature against
-S&V's keys, issuer, audience, expiry): no check trusts the one before it.
+Its one rule: it only answers a token *minted for it*. The firm's front door
+(the ai-gateway) verifies the caller's token, then mints one per call for the
+workspace alone (audience bob-workspace, seconds to live: agentgateway's STS on
+Enterprise, an RFC 8693 exchange at S&V's broker on OSS). This process verifies
+that token itself (signature against the issuer's keys, issuer, audience,
+expiry): no check trusts the one before it.
 
 Bob's own sign-in token (audience ai-gateway) is refused here, so an agent
 that skipped the gateway and replayed Bob's token would get nothing. Each tool

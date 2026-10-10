@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Story 1 (Bob): Bob's agent, his workspace (kmcp) behind an agentgateway
-# waypoint with RFC 8693 delegation, and Ledgerline Research via Cross App
-# Access (ID-JAG). Needs the platform (make platform). Idempotent.
+# Story 1 (Bob): Bob's agent, his workspace (kmcp) behind S&V's front door
+# (the ai-gateway, which mints the workspace its own tokens), and Ledgerline
+# Research via Cross App Access (ID-JAG). Needs the platform (make platform). Idempotent.
 . "$(dirname "$0")/../../scripts/lib.sh"
 D="$(cd "$(dirname "$0")" && pwd)"
 need_cluster
@@ -62,12 +62,23 @@ else
   warn "no S&V broker account for bob@$SV_DOMAIN yet (the directory sync makes it from S&V's primary IdP): Ledgerline can't link him"
 fi
 
-step "Sterling & Vance: workspace, waypoint, agent, Cross App Access"
+step "Sterling & Vance: workspace, front door, agent, Cross App Access"
 # S&V's key for Ledgerline, kept with its egress gateway
 xaa_secrets
 K delete secret ledgerline-client -n agentgateway-system --ignore-not-found >/dev/null   # earlier labs: a shared secret
 MCP_EXCHANGE_WORKSPACE=$(mcp_exchange bob-workspace); export MCP_EXCHANGE_WORKSPACE
 apply_tmpl "$D"/manifests/*.yaml
+# earlier labs: the tools sat behind a waypoint of their own in sv-mcp
+K label namespace sv-mcp istio.io/use-waypoint- >/dev/null 2>&1 || true
+K delete authorizationpolicy pods-only-from-waypoint -n sv-mcp --ignore-not-found >/dev/null
+K delete "$AGW_POLICY_KIND" -n sv-mcp --ignore-not-found >/dev/null \
+  bob-workspace-caller bob-workspace-tools bob-workspace-discovery bob-workspace-discovery-tools \
+  mcp-guard-timeout mcp-guard-route access-log
+K delete httproute bob-workspace bob-workspace-discovery mcp-guard -n sv-mcp --ignore-not-found >/dev/null
+K delete "$AGW_BACKEND_KIND" bob-workspace bob-workspace-discovery -n sv-mcp --ignore-not-found >/dev/null
+K delete gateway mcp-waypoint -n sv-mcp --ignore-not-found >/dev/null
+K delete "$AGW_PARAMS_KIND" mcp-waypoint -n sv-mcp --ignore-not-found >/dev/null
+K delete deploy,service,serviceaccount mcp-guard -n sv-mcp --ignore-not-found >/dev/null
 # Cross App Access on ai-gateway: S&V's broker vouches for Bob
 xaa_gateway_apply "$D/manifests"
 # earlier labs: the token requests went through xaa-relay
@@ -85,8 +96,8 @@ K delete role,rolebinding idtoken-exchange-continuity -n sv-identity --ignore-no
 K delete agent bob-assistant -n sv-agents --ignore-not-found --wait >/dev/null
 apply_kustomize "$D/agent"
 K delete secret llm-via-gateway -n sv-agents --ignore-not-found >/dev/null   # earlier labs: a placeholder model key
-rollout sv-mcp deploy/mcp-guard deploy/bob-workspace deploy/mcp-waypoint
-rollout agentgateway-system deploy/idtoken-exchange
+rollout sv-mcp deploy/bob-workspace
+rollout agentgateway-system deploy/mcp-guard deploy/idtoken-exchange
 wait_for "bob-assistant Ready" 60 5 K wait sandboxagent/bob-assistant -n sv-agents --for=condition=Ready --timeout=2s
 apply_kustomize "$D/desk"
 for a in meeting-prep market-brief compliance-check; do

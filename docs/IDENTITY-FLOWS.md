@@ -7,7 +7,7 @@ what the checks prove.
 
 | Flow | Question it answers | Demo card | Checks |
 | --- | --- | --- | --- |
-| [Delegation](#1-delegation-rfc-8693-at-the-mcp-waypoint) | how does Bob's agent act for Bob on the firm's own tools? | [Bob](cards/bob.html) | `make bob-verify` |
+| [Delegation](#1-delegation-at-the-firms-gateway) | how does Bob's agent act for Bob on the firm's own tools? | [Bob](cards/bob.html) | `make bob-verify` |
 | [Cross App Access](#2-cross-app-access-id-jag-to-a-saas) | how does it reach a SaaS the firm subscribes to, as Bob? | [Bob](cards/bob.html) | `make bob-verify` |
 | [UMA for agents](#3-uma-for-agents-bob-to-alice) | how does it reach data owned by someone outside the firm, on their terms? | [Bob to Alice](cards/bob-to-alice.html) | `make alice-verify` |
 
@@ -21,8 +21,8 @@ cross-company token.
 1. Bob opens `https://kagent.sterling.lab`. The kgateway edge runs the OIDC
    code flow against S&V's broker (realm `sterling-vance`, client `kagent`,
    `platform/60-kagent/edge-sso.yaml`) and keeps two cookies:
-   - `BearerToken`: Bob's **access token**, audiences `ai-gateway` and
-     `mcp-waypoint`, plus claim `idp` (the IdP of the
+   - `BearerToken`: Bob's **access token**, audience `ai-gateway`, plus
+     claim `idp` (the IdP of the
      session) and what that IdP asserted about the sign-in (`idp_acr`,
      `idp_amr`, `idp_auth_time`). The edge forwards it to kagent as
      `Authorization`.
@@ -43,43 +43,69 @@ Access (section 2), has the egress gateway get it from S&V's broker, which
 vouches for Bob. The edge forwards the access token because Keycloak's
 standard token exchange only accepts an access token as its subject.
 
-## 1. Delegation (RFC 8693) at the MCP waypoint
+## 1. Delegation at the firm's gateway
+
+Every S&V MCP server sits behind the firm's one gateway, the `ai-gateway`
+(`agentgateway-system`), the same one that fronts models and Cross App
+Access. It decides who may call which tool, and mints each MCP server a
+short-lived token of its own. An MCP server that takes a token accepts
+only one the gateway minted; the agent never holds a token an MCP server
+accepts.
+
+| Path on `http://ai-gateway.agentgateway-system.svc.cluster.local` | MCP server | Caller (workload, acting for) | Upstream gets |
+| --- | --- | --- | --- |
+| `/mcp/bob-workspace` | `sv-mcp/bob-workspace` | `sv-agents` `bob-assistant` or `advisor-desk`, for a user in `advisors` | a token for the workspace alone |
+| `/mcp/kagent-tools` | `kagent/kagent-tools` (the ops agents' tools) | `kagent/kagent-ops`, for a user in `platform-admins` | no token |
+| `/mcp/alice-vault` | `sv-u4a/u4a-adapter` (section 3) | `sv-agents/bob-assistant`, for a user in `advisors` | no token (the adapter signs with its own key) |
+| `/xaa/ledgerline/mcp` | Ledgerline (section 2) | the agents' worker pools | an ID-JAG, then Ledgerline's token |
+
+Each path has two lanes: the user lane (a bearer token) and the discovery
+lane (no token, only the kagent controller's SPIFFE ID, so the UI can list
+tools). The mesh lets only the gateway's identity
+(`cluster.local/ns/agentgateway-system/sa/ai-gateway`) reach each server
+(`pods-only-from-gateway` in `sv-mcp`, `kagent-tools-callers` in `kagent`,
+`adapter-callers` in `sv-u4a`). The ops agents forward the signed-in user's
+token (`KAGENT_PROPAGATE_TOKEN`), and the chart's RemoteMCPServer
+`kagent-tool-server` points at the gateway (layer 60). A path per server,
+rather than kagent's proxy setting, because the kagent controller lists
+tools by dialing each server: agents and tool discovery go through the same
+front door.
 
 Bob's workspace (`sv-mcp/bob-workspace`, a kmcp server) never sees Bob's
-token. The waypoint in front of it verifies Bob and the agent, then swaps
-Bob's token for one only the workspace accepts, for two minutes.
+token. The gateway verifies Bob and the agent, then mints the workspace a
+token of its own for Bob, for that call alone.
 
 In RFC 8693's terms the swap is *impersonation*, not delegation: the
-waypoint sends only a subject token (Bob's), so the new token names Bob and
+gateway sends only a subject token (Bob's), so the new token names Bob and
 has no `act` claim for the agent. Which agent is calling is established by
-the mesh (the worker pool's SPIFFE ID, checked at the waypoint), not
+the mesh (the worker pool's SPIFFE ID, checked at the gateway), not
 recorded in the token. Keycloak's standard token exchange doesn't take an
 actor token yet; with one, the token would carry `act: {sub: <agent>}`.
 
 ```mermaid
 sequenceDiagram
   participant A as Bob's agent (sv-agents)
-  participant W as mcp-waypoint (agentgateway, sv-mcp)
-  participant K as S&V broker (Keycloak)
+  participant G as ai-gateway (agentgateway, agentgateway-system)
+  participant S as agentgateway STS (Enterprise) or S&V broker (OSS)
   participant T as bob-workspace
-  A->>W: tools/call, Authorization: Bob's access token (HBONE, SPIFFE ID of the agent)
-  W->>W: verify JWT (aud mcp-waypoint), caller is an agent's pool, Bob in advisors, tool allowed
-  W->>W: assurance gate: does Bob's sign-in meet advisor-workspace's assurance rules?
-  W->>K: token exchange (RFC 8693) as client mcp-waypoint, subject = Bob's token
-  K-->>W: token for Bob, aud bob-workspace, 120 s
-  W->>T: tools/call, Authorization: the exchanged token (Bob's own token removed)
-  T->>K: JWKS (cached): verify the exchanged token's signature, issuer, audience, expiry
-  T-->>A: result, acting for bob
+  A->>G: tools/call /mcp/bob-workspace, Authorization: Bob's access token (HBONE, SPIFFE ID of the agent)
+  G->>G: verify JWT (aud ai-gateway), caller is an agent's pool, Bob in advisors, tool allowed
+  G->>G: assurance gate: does Bob's sign-in meet advisor-workspace's assurance rules?
+  G->>S: token exchange, subject = Bob's token, audience bob-workspace
+  S-->>G: token for Bob, aud bob-workspace, seconds to live
+  G->>T: tools/call, Authorization: the minted token (Bob's own token removed)
+  T->>S: JWKS (cached): verify the minted token's signature, issuer, audience, expiry
+  T-->>A: result, acting for bob (through mcp-guard)
 ```
 
-- **Path.** The agent calls the tool's own address,
-  `bob-workspace-mcp.sv-mcp:3000`. Ambient mesh sends every call to that
-  Service through the namespace's waypoint (an agentgateway), so no route
-  skips it. Pods behind it take connections from the waypoint only.
+- **Path.** The agent calls
+  `http://ai-gateway.agentgateway-system.svc.cluster.local/mcp/bob-workspace`.
+  The workspace's pods take connections from the gateway only, so no route
+  skips it.
 - **User lane** (a bearer token is present), all in
-  `demos/bob/manifests/20-waypoint.yaml`:
+  `demos/bob/manifests/20-front-door.yaml`:
   - JWT, strict: issuer `https://idp.sterling.lab/realms/sterling-vance`,
-    audience `mcp-waypoint`.
+    audience `ai-gateway`.
   - Authorization: the caller is an agent's worker pool, named by
     ServiceAccount (`bob-assistant` or `advisor-desk` in `sv-agents`), and
     `"advisors" in jwt.groups`. Another workload in `sv-agents` holding
@@ -92,45 +118,53 @@ sequenceDiagram
   - Workload profile `advisor-workspace` (Critical, AAL2): the same policy
     asks the assurance gate (`extAuth`, fail closed) with the verified
     token's claims about the sign-in. A session that can't meet it is
-    refused before anything is exchanged: 401 with an RFC 9470 challenge
+    refused before anything is minted: 401 with an RFC 9470 challenge
     when a stronger sign-in at the IdP would pass, 403 when the profile
     doesn't take sessions from that IdP
     ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#the-assurance-gate)).
-  - Backend auth: `oauthTokenExchange` against S&V's broker as client
-    `mcp-waypoint`, with subject `jwt.rawToken.unredacted()`, audience
-    `bob-workspace`. The client's token lifespan is 120 s.
-  - The workspace verifies that token itself (signature against the broker's JWKS,
-    issuer, audience `bob-workspace`, expiry) before any tool runs, so a
-    forged or replayed token is refused even if something reached the pod.
+  - Backend auth: `oauthTokenExchange` with subject
+    `jwt.rawToken.unredacted()`, audience `bob-workspace`
+    (`mcp_exchange` in `scripts/idp.sh`). On Enterprise, agentgateway's STS
+    (`enterprise-agentgateway:7777`) mints it, for `MCP_TOKEN_LIFETIME`
+    (5 s), issuer the STS; only the ai-gateway may mint there (mesh policy
+    `sts-callers`). On OSS, an RFC 8693 exchange at S&V's broker as client
+    `ai-gateway` (confidential, standard token exchange; secret
+    `agentgateway-system/ai-gateway-oidc`), token lifespan 120 s.
+  - The workspace verifies that token itself (signature against the
+    issuer's JWKS, issuer `MCP_TOKEN_ISSUER` in `config/lab.env`, audience
+    `bob-workspace`, expiry) before any tool runs, so Bob's own token, or a
+    forged or replayed one, is refused even if something reached the pod.
   - Tool output: every `tools/call` result goes through `mcp-guard`
-    (`apps/mcp-guard`, an agentgateway MCP guardrail, ExtMCP over gRPC)
-    before the agent sees it. Account numbers (runs of 8 to 17 digits) and
+    (`apps/mcp-guard`, an agentgateway MCP guardrail, ExtMCP over gRPC, in
+    `agentgateway-system`) before the agent sees it. Account numbers (runs of 8 to 17 digits) and
     SSNs in the result's text and `structuredContent` are masked to their
     last four (`••••8265`). The guard logs the tool and how many values it
     masked, never the values. `failureMode: FailClosed` with a 5 s deadline:
-    no answer from the guard, no result. Only the waypoint can reach it
+    no answer from the guard, no result. Only the ai-gateway can reach it
     (`demos/bob/manifests/25-mcp-guard.yaml`).
 - **Discovery lane** (no token): only the kagent controller's SPIFFE ID, so
-  the UI can list tools. Same tool filter, no exchange, and the route strips
+  the UI can list tools. Same tool filter, no token minted, and the route strips
   `Authorization` and `X-Id-Token`, so nothing that looks like a credential
-  reaches the workspace on it. A tool call here has no delegated token and
+  reaches the workspace on it. A tool call here has no minted token and
   the workspace refuses it.
 - **Writes wait for Bob.** `log_followup` is in the agent's
   `requireApproval`, so the agent pauses for his approval in the chat. The
-  entry records the user (`bob`) and the party that carried it out
-  (`mcp-waypoint`).
+  entry records the user (`bob`) and the party that carried it out (the
+  token's `azp`).
 
 Checks (`make bob-verify`, from real pods with their own identities):
 
 | Case | Expected |
 | --- | --- |
 | an S&V agent workload with Bob's token lists tools, calls `whoami`, `list_clients` | allowed; `acting_for: bob`, `audience: bob-workspace` |
-| `get_client` for a client with an account number | the record, account number masked to its last four by the waypoint's guardrail |
+| `get_client` for a client with an account number | the record, account number masked to its last four by the gateway's guardrail |
 | `export_book` as an advisor | not in the list; refused |
 | an S&V agent workload with no user token | refused (discovery lane is controller-only) |
 | Bob's token from another namespace (`observability`) | refused |
 | Bob's token from a workload in `sv-agents` that isn't an agent's pool | refused |
-| Bob's token sent straight to a workspace pod IP | refused (the pod only accepts the waypoint) |
+| Bob's token sent straight to the workspace's Service, or a pod IP | refused (the pods only accept the gateway) |
+| an ops agent's worker, for a user not in `platform-admins`, or with no user token, at `/mcp/kagent-tools` | refused |
+| an ops agent's worker straight to kagent-tools | refused (only the gateway) |
 | Bob's sign-in at S&V's own Keycloak (password and one-time code) | allowed: AAL2 meets `advisor-workspace` |
 | S&V's own Keycloak cut, Bob's new sign-in at the contingency IdP (password only) | refused: 401 `insufficient_user_authentication`, AAL1 below AAL2 |
 | his AAL2 session from before the outage | allowed (the profile takes any allowed IdP's sessions) |
@@ -340,7 +374,7 @@ sequenceDiagram
   participant M as Meridian gateway + uma-pep
   participant AS as Alice's AS (uma-as)
   participant P as Alice (portal)
-  A->>U: tool call (holdings)
+  A->>U: tool call (holdings), through ai-gateway /mcp/alice-vault
   U->>M: request, signed with the agent key (RFC 9421)
   M->>AS: register permission (PAT)
   M-->>U: 401, UMA challenge: permission ticket + Alice's AS
@@ -358,8 +392,10 @@ sequenceDiagram
 - **Parties** (`demos/bob-to-alice`):
   - S&V: `sv-u4a/u4a-adapter`, the UMA client. It holds the agent's Ed25519
     key (a fresh one per pod, so the agent is pseudonymous to Alice) and runs
-    ticket, terms, agreement, and RPT for the agent. Only Bob's agent and the
-    kagent controller can reach it. It agrees to Alice's terms on the agent's
+    ticket, terms, agreement, and RPT for the agent. Only the ai-gateway can
+    reach it (`/mcp/alice-vault`, section 1), for Bob's agent acting for an
+    advisor and for the kagent controller listing tools; the advisor's token
+    stops at the gateway. It agrees to Alice's terms on the agent's
     behalf by itself, within `UMA4A_STANDING_MAX_EXPIRES` (7 days): no person
     at S&V signs each agreement, and it doesn't know which user a call is
     for ([ARCHITECTURE.md](ARCHITECTURE.md#what-the-lab-doesnt-enforce)).
@@ -401,7 +437,8 @@ Checks (`make alice-verify`):
 | tier 3 trade | held; Alice denies; nothing executed |
 | a call to Meridian with no grant | 401 with a UMA challenge |
 | Alice's owner API without her token | refused |
-| another S&V workload using Bob's agent's adapter | refused (mesh) |
+| Bob's agent's adapter, skipping the firm's gateway | refused (mesh) |
+| another S&V workload using Bob's agent's adapter at the gateway | refused |
 | straight to Alice's vault, skipping Meridian's gateway | refused (mesh) |
 | straight to Alice's AS, skipping the edge | refused (mesh) |
 
@@ -414,7 +451,7 @@ new agent key, so the next run starts as a first contact.
 | --- | --- | --- |
 | `tools/kagent` 0001 | all three | Substrate actors call the kagent controller back with the caller's credential (they have no ServiceAccount token) |
 | `tools/kagent` 0002 | writes that wait for approval, UMA holds | a turn sent as the last one closes (after a human approval) no longer races the actor's suspend (OSS controller) |
-| `tools/substrate-mesh` 0001, 0002 | all three | a worker pool runs as its agent's ServiceAccount, so the agent's calls carry that SPIFFE ID (which the waypoint, ai-gateway and the adapter check), and only serves its own namespace |
+| `tools/substrate-mesh` 0001, 0002 | all three | a worker pool runs as its agent's ServiceAccount, so the agent's calls carry that SPIFFE ID (which the ai-gateway checks), and only serves its own namespace |
 | `tools/substrate-mesh` 0003 | all three | actors work under the mesh's in-pod traffic capture |
 | `tools/keycloak-idjag` | Cross App Access | ID-JAG issuing (keycloak/keycloak#49998) |
 
@@ -423,6 +460,6 @@ new agent key, so the next run starts as a first contact.
 - **Topology, Identity view:** the IdPs, SSO links, token-exchange hops and
   gateways that check tokens, with each agent's path to its tools.
 - **Traffic, Carries a token:** each request's verified claims at the gateway
-  that checked them: at `mcp-waypoint` and `ai-gateway`, Bob's access token
-  (issuer, audience, groups, expiry). Exchanged tokens are minted
-  after the log point and aren't shown.
+  that checked them: at `ai-gateway`, Bob's access token (issuer, audience,
+  groups, expiry). The tokens it mints for MCP servers are minted after the
+  log point and aren't shown.

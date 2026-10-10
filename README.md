@@ -27,7 +27,7 @@ identities, IdP and hostnames. They meet only at the edge. See
 | Product | In this lab | Product page | Docs |
 | --- | --- | --- | --- |
 | kgateway | the edge: TLS, one listener per party, SSO for every UI | [solo.io](https://www.solo.io/products/kgateway) | [docs.solo.io/kgateway](https://docs.solo.io/kgateway/) |
-| agentgateway | the firm's AI gateway (models, Cross App Access), its MCP waypoint, Meridian's gateway | [solo.io](https://www.solo.io/products/agentgateway) | [docs.solo.io/agentgateway](https://docs.solo.io/agentgateway/) |
+| agentgateway | the firm's AI gateway: models, the front door for every MCP server (a short-lived token minted for each), Cross App Access; Meridian's gateway | [solo.io](https://www.solo.io/products/agentgateway) | [docs.solo.io/agentgateway](https://docs.solo.io/agentgateway/) |
 | kagent + kmcp | agents, their controller and UI; MCP servers as Kubernetes resources | [solo.io](https://www.solo.io/products/kagent) | [docs.solo.io/kagent](https://docs.solo.io/kagent/) |
 | Agent Substrate | every agent runs in a snapshot-backed sandbox on a worker pool | [solo.io](https://www.solo.io/products/kagent) | [docs.solo.io/kagent](https://docs.solo.io/kagent/) |
 | agentregistry | the firm's catalog of agents, MCP servers and skills | [solo.io](https://www.solo.io/products/agentregistry) | [docs.solo.io/agentregistry](https://docs.solo.io/agentregistry/) |
@@ -136,7 +136,7 @@ Open it in a browser (`open docs/cards/<card>.html` on macOS, `xdg-open` on Linu
 
 | Card | Shows | Checks |
 | --- | --- | --- |
-| [Bob](docs/cards/bob.html) | Bob's agent acts for Bob: RFC 8693 token exchange at the MCP waypoint, per-tool policy, human approval for writes, Cross App Access (ID-JAG) to a SaaS | `make bob-verify` |
+| [Bob](docs/cards/bob.html) | Bob's agent acts for Bob: the firm's gateway mints each tool a token of its own, per-tool policy, human approval for writes, Cross App Access (ID-JAG) to a SaaS | `make bob-verify` |
 | [Bob to Alice](docs/cards/bob-to-alice.html) | the same agent asks Alice for her data on her terms (UMA for agents) | `make alice-verify` |
 | [Observatory tour](docs/cards/observatory.html) | every story end to end from one command, watched live: the agent waking, verified tokens per hop, refusals, Alice's terms, an IdP outage | `make tour` |
 | [Identity continuity](docs/cards/identity-continuity.html) | a real network outage of the active IdP, automatic failover to the next one, and failback, live in the Observatory | `make continuity-verify` |
@@ -267,11 +267,11 @@ Layers:
 | `10-istio` | Istio ambient: base, istiod, istio-cni, ztunnel |
 | `20-observability` | kube-prometheus-stack, Tempo, OTel collector, Kiali |
 | `30-kgateway` | the edge: per-party TLS listeners on NodePorts 30080/30443 |
-| `40-agentgateway` | ai-gateway: LLM backend, MCP |
+| `40-agentgateway` | ai-gateway: LLM backend, MCP; on Enterprise the STS for MCP servers' tokens |
 | `45-identity` | S&V's mesh baseline, S&V's broker (Keycloak, `idp.sterling.lab`), S&V's own Keycloak (`login.sterling.lab`, realm `workforce`), its contingency IdP (`login-dr.sterling.lab`), client secrets for S&V components |
 | `47-continuity` | IdentityContinuity and WorkloadProfile CRDs and controller, the directory sync, the assurance gate, S&V egress waypoint |
 | `50-substrate` | Agent Substrate (patched), in the mesh |
-| `60-kagent` | kagent + kmcp (patched), ops agents on Substrate, edge SSO |
+| `60-kagent` | kagent + kmcp (patched), ops agents on Substrate, their tools behind ai-gateway, edge SSO |
 | `70-agentregistry` | agentregistry behind S&V SSO |
 | `80-mesh-policy` | S&V's mesh baseline, re-applied, and its egress fences |
 | `90-observatory` | Observatory, its Keycloak (realm `ops`), Grafana and Kiali on the edge behind it, gateway access logs |

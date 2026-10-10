@@ -222,7 +222,7 @@ panel("2", PX, 768, PW, "tools-call.http", "What the agent sends, and all it hol
     "// the bearer, decoded: S&V's own token, nothing cross-company",
     "{",
     '  "iss": "https://idp.sterling.lab/realms/sterling-vance",',
-    '  "aud": ["ai-gateway", "mcp-waypoint"], "azp": "kagent",',
+    '  "aud": "ai-gateway", "azp": "kagent",',
     '  "preferred_username": "bob", "groups": ["advisors"]',
     "}",
 ], lead(4))

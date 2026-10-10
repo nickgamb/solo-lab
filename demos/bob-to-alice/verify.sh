@@ -86,7 +86,10 @@ c=$(curl -s -o /dev/null -w '%{http_code}' "${CA[@]}" "$AS/owner/pending")
 expect '401|403' "Alice's owner API without her token" "$c"
 o=$(probe_exec sv-agents http://u4a-adapter.sv-u4a:9030/mcp list 2>&1 | tail -1) || true
 probe_ran "$o" || o="probe did not run: $o"
-expect 'connection failed|http": 0' "another S&V workload can't use Bob's agent's adapter" "$o"
+expect 'connection failed|http": 0' "Bob's agent's adapter, skipping the firm's gateway" "$o"
+o=$(probe_exec sv-agents http://ai-gateway.agentgateway-system/mcp/alice-vault list 2>&1 | tail -1) || true
+probe_ran "$o" || o="probe did not run: $o"
+expect 'http": 40[13]' "another S&V workload can't use Bob's agent's adapter at the gateway" "$o"
 o=$(probe_exec sv-agents http://alice-vault.meridian:9020/mcp list 2>&1 | tail -1) || true
 probe_ran "$o" || o="probe did not run: $o"
 expect 'connection failed|http": 0' "straight to Alice's vault, skipping Meridian's gateway" "$o"

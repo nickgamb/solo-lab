@@ -31,7 +31,7 @@ kind: PeerAuthentication
 metadata: {name: strict, namespace: agentgateway-system}
 spec: {mtls: {mode: STRICT}}
 ---
-# The agentgateway proxies (ai-gateway, mcp-waypoint) run outside the mesh and
+# The agentgateway proxies (ai-gateway) run outside the mesh and
 # terminate HBONE themselves, so they dial the controller's xDS port without
 # mesh mTLS. That one port stays PERMISSIVE; the rest of the controller is STRICT.
 apiVersion: security.istio.io/v1
@@ -56,8 +56,7 @@ spec:
   - from:
     - source:
         notPrincipals:
-        - cluster.local/ns/sv-mcp/sa/mcp-waypoint                 # gateways: mint
-        - cluster.local/ns/agentgateway-system/sa/ai-gateway
+        - cluster.local/ns/agentgateway-system/sa/ai-gateway       # the gateway: mints
         - cluster.local/ns/sv-mcp/sa/bob-workspace                # MCP servers: keys
     to: [{operation: {ports: ["7777"]}}]
 ---
@@ -106,8 +105,7 @@ spec:
         - cluster.local/ns/agentgateway-system/sa/ai-gateway
         - cluster.local/ns/agentgateway-system/sa/idtoken-exchange   # Cross App Access: access token -> ID token
         - cluster.local/ns/agentgateway-system/sa/${AGW_RELEASE}   # controller: JWKS fetch
-        - cluster.local/ns/sv-mcp/sa/mcp-waypoint
-        - cluster.local/ns/sv-mcp/sa/bob-workspace      # verifies its delegated tokens (JWKS)
+        - cluster.local/ns/sv-mcp/sa/bob-workspace      # OSS: verifies the broker's tokens (JWKS)
         - cluster.local/ns/agentregistry/sa/agentregistry
         - cluster.local/ns/sv-identity/sa/continuity-controller
         - cluster.local/ns/sv-identity/sa/continuity-sync
@@ -214,8 +212,9 @@ spec:
         - cluster.local/ns/observatory/sa/observatory   # Agent Substrate status, as its own service account
         - cluster.local/ns/agentregistry/sa/agentregistry-enterprise   # agentregistry's kagent runtime (Enterprise)
 ---
-# kagent-tools can act on the cluster: only the agents that use it (the ops
-# agents) and the controller (tool discovery).
+# kagent-tools can read the cluster: only through the firm's gateway, which
+# decides who may use it (platform/60-kagent/front-door.yaml), like every MCP
+# server.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata: {name: kagent-tools-callers, namespace: kagent}
@@ -226,8 +225,7 @@ spec:
   - from:
     - source:
         principals:
-        - cluster.local/ns/kagent/sa/kagent-ops
-        - cluster.local/ns/kagent/sa/kagent-controller
+        - cluster.local/ns/agentgateway-system/sa/ai-gateway
 ---
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy

@@ -100,13 +100,13 @@
         </tr>
         <tr class="term">
           <td class="num">2</td>
-          <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab -n sv-mcp logs deploy/mcp-waypoint -f | grep request</code></div></td>
-          <td class="say">Follows the MCP waypoint's access log.</td>
+          <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab -n agentgateway-system logs deploy/ai-gateway -f | grep request | grep mcp.tool.name</code></div></td>
+          <td class="say">Follows the MCP calls in the AI gateway's access log.</td>
         </tr>
         <tr class="term">
           <td class="num">3</td>
-          <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab -n sv-mcp logs deploy/mcp-waypoint | grep -o 'continuity.decision="[^"]*"'</code></div></td>
-          <td class="say">Prints the assurance decisions the waypoint logged.</td>
+          <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab -n agentgateway-system logs deploy/ai-gateway | grep -o 'continuity.decision="[^"]*"'</code></div></td>
+          <td class="say">Prints the assurance decisions the AI gateway logged.</td>
         </tr>
         <tr class="term">
           <td class="num">4</td>

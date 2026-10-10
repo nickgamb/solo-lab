@@ -124,16 +124,6 @@
           }
         },
         {
-          "name": "aud-mcp-waypoint",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-audience-mapper",
-          "config": {
-            "included.client.audience": "mcp-waypoint",
-            "access.token.claim": "true",
-            "id.token.claim": "false"
-          }
-        },
-        {
           "name": "idp",
           "protocol": "openid-connect",
           "protocolMapper": "oidc-usersessionmodel-note-mapper",
@@ -172,24 +162,13 @@
     },
     {
       "clientId": "ai-gateway",
-      "name": "ai-gateway (audience only: the tokens agents present to it)",
+      "name": "ai-gateway (agentgateway): the tokens agents present to it, and on OSS its exchange for the token an MCP server accepts",
       "enabled": true,
-      "bearerOnly": true,
       "publicClient": false,
+      "secret": "${SV_AI_GATEWAY_CLIENT_SECRET}",
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
-      "fullScopeAllowed": false
-    },
-    {
-      "clientId": "mcp-waypoint",
-      "name": "sv-mcp waypoint (agentgateway): token exchange for S&V tools",
-      "enabled": true,
-      "publicClient": false,
-      "secret": "${SV_MCP_WAYPOINT_CLIENT_SECRET}",
-      "standardFlowEnabled": false,
-      "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": true,
       "attributes": {
         "standard.token.exchange.enabled": "true",
         "access.token.lifespan": "120"
@@ -362,16 +341,6 @@
           "protocolMapper": "oidc-audience-mapper",
           "config": {
             "included.client.audience": "ai-gateway",
-            "access.token.claim": "true",
-            "id.token.claim": "false"
-          }
-        },
-        {
-          "name": "aud-mcp-waypoint",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-audience-mapper",
-          "config": {
-            "included.client.audience": "mcp-waypoint",
             "access.token.claim": "true",
             "id.token.claim": "false"
           }

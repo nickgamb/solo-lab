@@ -7,8 +7,8 @@
 # its own worker pool, whose pods run as that ServiceAccount.
 #
 # The agent holds no credentials of its own: no provider key (the firm's
-# ai-gateway injects it) and no tool token (the tools' waypoint mints a
-# delegated one per call). Its model calls carry the user's own token
+# ai-gateway injects it) and no tool token (the same gateway mints each tool
+# server a token of its own per call). Its model calls carry the user's own token
 # (apiKeyPassthrough), so the gateway knows whose turn each call serves.
 apiVersion: kagent.dev/v1alpha2
 kind: ModelConfig
@@ -31,9 +31,9 @@ metadata:
 spec:
   description: "Bob's book of business at Sterling & Vance (clients, notes, follow-ups)"
   protocol: STREAMABLE_HTTP
-  # The tool's own address. The mesh routes every call through sv-mcp's
-  # agentgateway waypoint; there is no gateway URL to skip.
-  url: http://bob-workspace-mcp.sv-mcp.svc.cluster.local:3000/mcp
+  # The firm's front door to the workspace (manifests/20-front-door.yaml); the
+  # workspace itself takes connections from that gateway alone.
+  url: http://ai-gateway.agentgateway-system.svc.cluster.local/mcp/bob-workspace
   timeout: 60s
 ---
 # An actor's calls leave through its worker pod, so the pool runs as Bob's
@@ -94,8 +94,9 @@ spec:
       Keep answers short and factual.
     deployment:
       env:
-      # Forward the signed-in advisor's token on every tool call. The tools'
-      # waypoint verifies it, then exchanges it; it never reaches the tool.
+      # Forward the signed-in advisor's token on every tool call. The firm's
+      # gateway verifies it, then mints the tool a token of its own; Bob's
+      # never reaches the tool.
       - {name: KAGENT_PROPAGATE_TOKEN, value: "true"}
     tools:
     - type: McpServer
