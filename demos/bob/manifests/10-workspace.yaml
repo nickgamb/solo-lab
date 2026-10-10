@@ -25,8 +25,8 @@ spec:
     image: ${BOB_WORKSPACE_IMAGE}
     port: 3000
     env:
-      WORKSPACE_ISSUER: https://idp.${SV_DOMAIN}/realms/sterling-vance
-      WORKSPACE_JWKS_URL: http://keycloak.sv-identity.svc/realms/sterling-vance/protocol/openid-connect/certs
+      WORKSPACE_ISSUER: ${MCP_TOKEN_ISSUER}       # the gateway's tokens only (config/lab.env)
+      WORKSPACE_JWKS_URL: ${MCP_TOKEN_JWKS}
       WORKSPACE_BOOK_OWNER: bob@${SV_DOMAIN}      # the advisor whose book the fixture is
     replicas: 2
     resources:

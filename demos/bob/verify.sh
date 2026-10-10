@@ -46,6 +46,20 @@ step "Allowed: an S&V agent workload acting for Bob"
 check '"whoami"'                                "agent lists Bob's tools (as Bob)"            $AGENT $GW list --token "$BOB"
 check '\\"acting_for\\": \\"bob@.*\\"audience\\": \\"bob-workspace\\"' \
                                                 "whoami: acts as bob, token aud=bob-workspace" $AGENT $GW call whoami '{}' --token "$BOB"
+# the token the workspace accepts is the gateway's, short-lived, for it alone
+ISS_RE=$(echo "$MCP_TOKEN_ISSUER" | sed 's/[.]/\\./g')
+check "issuer.{0,6}$ISS_RE.*token_lifetime_s.{0,6}[1-5][^0-9]" \
+                                                "whoami: the token was minted for the workspace by the gateway ($MCP_TOKEN_LIFETIME)" $AGENT $GW call whoami '{}' --token "$BOB"
+if [ "$AGW_EDITION" = enterprise ]; then
+  # the agent holds Bob's token, but can't trade it for one a tool accepts
+  code=$(printf '%s\n' "$BOB" | K exec -i -n sv-agents probe-bob-assistant -- sh -c 'read -r s; curl -s -m 10 -o /dev/null -w "%{http_code}" -X POST \
+    http://enterprise-agentgateway.agentgateway-system:7777/oauth2/token -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+    --data-urlencode subject_token=$s -d subject_token_type=urn:ietf:params:oauth:token-type:jwt -d audience=bob-workspace' 2>/dev/null) || code=refused
+  case "$code" in 000|refused) res ok "the agent asks the STS for a workspace token with Bob's token: refused (only gateways may)" ;;
+    *) res no "the agent asks the STS for a workspace token with Bob's token: refused (only gateways may)" "HTTP $code" ;; esac
+else
+  skipped "the agent can't mint a tool's token itself: agentgateway's STS is Enterprise"
+fi
 check 'Alice Chen'                              "list_clients returns Bob's book"             $AGENT $GW call list_clients '{}' --token "$BOB"
 check 'account_number\\": \\"(\\u2022){4}8265\\"' \
                                                 "get_client: account number masked by the waypoint's guardrail" $AGENT $GW call get_client '{"name": "Marcus Webb"}' --token "$BOB"

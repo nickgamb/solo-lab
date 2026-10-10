@@ -66,6 +66,7 @@ step "Sterling & Vance: workspace, waypoint, agent, Cross App Access"
 # S&V's key for Ledgerline, kept with its egress gateway
 xaa_secrets
 K delete secret ledgerline-client -n agentgateway-system --ignore-not-found >/dev/null   # earlier labs: a shared secret
+MCP_EXCHANGE_WORKSPACE=$(mcp_exchange bob-workspace); export MCP_EXCHANGE_WORKSPACE
 apply_tmpl "$D"/manifests/*.yaml
 # Cross App Access on ai-gateway: S&V's broker vouches for Bob
 xaa_gateway_apply "$D/manifests"

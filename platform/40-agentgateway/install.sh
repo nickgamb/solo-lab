@@ -30,6 +30,8 @@ helm_up "$AGW_RELEASE" "$AGW_CHART" "$AGW_VERSION" agentgateway-system ${VALS[@]
 step "AI gateway (agentgateway-system/ai-gateway)"
 K apply -f "$D/llm/costs.yaml" >/dev/null
 apply_tmpl "$D/ai-gateway.yaml"
+# Enterprise: the STS that mints the tokens MCP servers accept (values-enterprise.yaml)
+if [ "$ED" = enterprise ]; then apply_tmpl "$D/sts.yaml"; ok "STS: $MCP_TOKEN_ISSUER (tokens for MCP servers, $MCP_TOKEN_LIFETIME)"; fi
 wait_for "ai-gateway Programmed" 60 3 \
   K wait -n agentgateway-system gateway/ai-gateway --for=condition=Programmed --timeout=2s
 ok "ai-gateway programmed — in-cluster: http://ai-gateway.agentgateway-system"

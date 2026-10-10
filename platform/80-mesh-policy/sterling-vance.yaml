@@ -42,6 +42,25 @@ spec:
   mtls: {mode: STRICT}
   portLevelMtls: {"9978": {mode: PERMISSIVE}}
 ---
+# The STS (Enterprise, port 7777): only the gateways that mint the tokens MCP
+# servers accept, and the MCP servers that verify them (its keys share the
+# port; they never hold a user's token to trade). An agent holding a user's
+# token can't trade it there for one an MCP server would take.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: sts-callers, namespace: agentgateway-system}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: ${AGW_RELEASE}}}
+  action: DENY
+  rules:
+  - from:
+    - source:
+        notPrincipals:
+        - cluster.local/ns/sv-mcp/sa/mcp-waypoint                 # gateways: mint
+        - cluster.local/ns/agentgateway-system/sa/ai-gateway
+        - cluster.local/ns/sv-mcp/sa/bob-workspace                # MCP servers: keys
+    to: [{operation: {ports: ["7777"]}}]
+---
 apiVersion: security.istio.io/v1
 kind: PeerAuthentication
 metadata: {name: strict, namespace: sv-agents}

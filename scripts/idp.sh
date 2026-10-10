@@ -59,6 +59,24 @@ idp_chain() {
 # through the edge), not on the internet
 idp_internal() { case "$(echo "$1" | sed -E 's#^https?://([^/:]+).*#\1#')" in *."$LAB_TLD") return 0 ;; esac; return 1; }
 
+# mcp_exchange <audience>: how a gateway gets the token an MCP server accepts
+# (agentgateway oauthTokenExchange, JSON): from agentgateway's STS on
+# Enterprise (MCP_TOKEN_ISSUER), as the gateway itself, which only gateways
+# may reach; else from S&V's broker as the sv-mcp waypoint's client. The
+# subject is the user's verified token, which never goes upstream.
+mcp_exchange() {
+  if [ "$AGW_EDITION" = enterprise ]; then
+    jq -nc --arg aud "$1" '{backendRef: {kind: "Service", name: "enterprise-agentgateway", namespace: "agentgateway-system", port: 7777},
+      path: "/oauth2/token", grantType: "TokenExchange",
+      subjectToken: {source: {expression: "jwt.rawToken.unredacted()"}, tokenType: "Jwt"}, audiences: [$aud]}'
+  else
+    jq -nc --arg aud "$1" '{backendRef: {kind: "Service", name: "keycloak", namespace: "sv-identity", port: 80},
+      path: "/realms/sterling-vance/protocol/openid-connect/token", grantType: "TokenExchange",
+      subjectToken: {source: {expression: "jwt.rawToken.unredacted()"}, tokenType: "AccessToken"}, audiences: [$aud],
+      clientAuth: {clientId: "mcp-waypoint", method: "ClientSecretBasic", secretRef: {name: "mcp-waypoint-oidc", key: "clientSecret"}}}'
+  fi
+}
+
 # ras_external: whether Ledgerline's AS is one the lab reaches over the
 # internet, not its own Keycloak
 ras_external() { ! idp_internal "$LEDGERLINE_AS_ISSUER"; }

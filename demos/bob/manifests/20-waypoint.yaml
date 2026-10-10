@@ -201,21 +201,12 @@ spec:
             failureMode: FailClosed   # no answer from the guard, no result
             metadata: {tool: 'mcp.tool.name'}
           methods: {"tools/call": Response}
+    # The token the workspace accepts, for it alone and short-lived
+    # (MCP_TOKEN_LIFETIME): minted by agentgateway's STS on Enterprise, else
+    # exchanged at S&V's broker (scripts/idp.sh mcp_exchange). The JWT policy
+    # strips Bob's token from the request; it never goes upstream.
     auth:
-      oauthTokenExchange:
-        backendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}
-        path: /realms/sterling-vance/protocol/openid-connect/token
-        grantType: TokenExchange
-        # The JWT policy strips Bob's token from the request (it never goes
-        # upstream); the exchange takes it from the already-verified claims.
-        subjectToken:
-          source: {expression: 'jwt.rawToken.unredacted()'}
-          tokenType: AccessToken
-        audiences: [bob-workspace]
-        clientAuth:
-          clientId: mcp-waypoint      # the waypoint's own OAuth identity
-          method: ClientSecretBasic
-          secretRef: {name: mcp-waypoint-oidc, key: clientSecret}
+      oauthTokenExchange: ${MCP_EXCHANGE_WORKSPACE}
 ---
 # The identity team lets S&V's gateways reach Keycloak (JWKS + token exchange).
 apiVersion: gateway.networking.k8s.io/v1beta1
