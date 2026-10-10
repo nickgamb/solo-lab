@@ -157,9 +157,13 @@ function Continuity({ lab, ic, items, setPick }: {
     const fabric = broker ? nodes.get(broker) : undefined
     if (broker && fabric) tile(broker, fabric, col.broker, mid, { highlight: signInOK ? 'ok' : 'bad', caption: fabric.sub })
     const tierRow = (i: number) => mid - (idps.length - 1) / 2 + i
+    // the IdPs routing rules send sign-ins to now sign people in too
+    const routedBy = new Map<string, string[]>()
+    for (const r of ic.status?.routing ?? []) if (r.idp && r.idp !== active) routedBy.set(r.idp, [...(routedBy.get(r.idp) ?? []), r.name])
     idps.forEach((t, i) => {
       const st = status.get(t.name)
-      const isActive = t.name === active
+      const routedHere = routedBy.get(t.name)
+      const isActive = t.name === active || !!routedHere
       const isCut = cuts.has(t.name)
       const down = isCut || (!!st && st.configured !== false && !st.healthy)
       const n: LabNode = { id: `tier:${t.name}`, kind: 'idp', label: `${i + 1}. ${t.displayName ?? t.name}`, group: '',
@@ -167,10 +171,10 @@ function Continuity({ lab, ic, items, setPick }: {
       const off = st?.configured === false || t.enabled === false || !!t.drain
       tile(n.id, n, col.idp, tierRow(i), { fog: !isActive && !down && off, highlight: isActive ? 'ok' : down ? 'bad' : undefined, outage: isCut, caption: n.sub })
       if (broker) wire(broker, n.id, { state: isActive ? 'active' : down ? 'down' : 'standby', rps: isActive ? 1 : 0,
-        cut: isCut, label: isCut ? 'network cut' : undefined })
+        cut: isCut, label: isCut ? 'network cut' : routedHere ? `routed: ${routedHere.join(', ')}` : undefined })
     })
     return { rfNodes, rfEdges }
-  }, [tiers, status, active, cuts, nodes, paths, resources, groups, brokerID])
+  }, [tiers, status, active, cuts, nodes, paths, resources, groups, brokerID, ic.status?.routing])
 
   const names = useMemo(() => new Map(lab.graph?.nodes.map(n => [n.id, n.label]) ?? []), [lab.graph])
   // this instance's identity traffic: its failovers and outages, and the

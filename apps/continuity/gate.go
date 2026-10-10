@@ -196,7 +196,7 @@ func (g *gate) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.Che
 		if t := f["auth_time"].GetNumberValue(); t > 0 {
 			s.AuthTime = time.Unix(int64(t), 0)
 		}
-		d = assurance.Decide(rule.rules, activeChain(rule.ic.Spec.Tiers), rule.ic.Status.Active, s, g.now())
+		d = assurance.Decide(rule.rules, activeChain(rule.ic.Spec.Tiers), current(rule.ic), s, g.now())
 	}
 	verdict := "deny"
 	switch {
@@ -301,6 +301,18 @@ const decisionHeader = "x-continuity-decision"
 
 func decision(verdict, profile, reason string) string {
 	return quote(verdict + " " + profile + ": " + reason)
+}
+
+// current: the IdPs the chain signs people in through now: the active tier,
+// and those its routing rules send sign-ins to.
+func current(ic v1.IdentityContinuity) assurance.Current {
+	c := assurance.Current{Active: ic.Status.Active}
+	for _, r := range ic.Status.Routing {
+		if r.IdP != "" {
+			c.Routed = append(c.Routed, r.IdP)
+		}
+	}
+	return c
 }
 
 // activeChain: the tiers that can ever be active (disabled ones never are).

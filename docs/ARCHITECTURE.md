@@ -22,7 +22,10 @@ password-only contingency IdP in `sv-contingency`, Okta, Gluu) and holds only
 the profiles those IdPs provision (no employee passwords), plus break-glass
 accounts for platform admins. It is never an IdP itself: it is the identity
 fabric attached to S&V's gateway, the only issuer anything trusts, so S&V's
-IdPs never know each other or the resources (see Identity continuity).
+IdPs never know each other or the resources (see Identity continuity). Which
+IdP each sign-in goes to is the gateway's call: the broker's authorization
+endpoint passes the ai-gateway, whose routing policy (CEL rules the
+continuity controller keeps in step with every IdP's health) picks it.
 Alice is a user of her own IdP (realm `alice` in `alice-identity`).
 
 ## Workloads and identities

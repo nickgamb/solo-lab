@@ -36,6 +36,7 @@ import (
 	v1 "github.com/nickgamb/solo-lab/apps/continuity/api/v1alpha1"
 	"github.com/nickgamb/solo-lab/apps/continuity/internal/keycloak"
 	"github.com/nickgamb/solo-lab/apps/continuity/internal/probe"
+	"github.com/nickgamb/solo-lab/apps/continuity/internal/routing"
 	"github.com/nickgamb/solo-lab/apps/continuity/internal/tiers"
 	"github.com/nickgamb/solo-lab/apps/continuity/internal/trust"
 )
@@ -137,6 +138,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		byName[ic.Status.Tiers[i].Name] = &ic.Status.Tiers[i]
 	}
 	active, why := tiers.Select(ic.Spec, byName, ic.Status.Active)
+	// the IdPs routing rules send sign-ins to sign people in too
+	routed := routing.Signing("", routing.Resolve(ic.Spec, byName, nil))
 
 	// Status says where logins go only once Keycloak does: with the broker
 	// unreachable (a restart, say) nothing can change, so hold; a Manual
@@ -149,7 +152,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	case broker.Kind != tiers.Healthy:
 		kcErr = fmt.Errorf("broker unreachable: %s", broker.Message)
 	default:
-		effective, applied, _, err := r.reconcileKeycloak(ctx, &ic, kc, creds, byName, active)
+		effective, applied, keep, err := r.reconcileKeycloak(ctx, &ic, kc, creds, byName, active, routed)
 		kcErr = err
 		// after the failover path, and never holding it up
 		profileErr = errors.Join(profileErr, r.reconcileProfile(ctx, &ic, kc))
@@ -159,6 +162,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			}
 			r.recordActive(&ic, effective, why)
 		}
+		// after Keycloak, so a hint only ever names an IdP set up there
+		r.reconcileRouting(ctx, &ic, byName, keep)
 	}
 	r.setConditions(&ic, byName, active, kcErr, egressErr)
 	r.setProfileCondition(&ic, profileErr)
@@ -624,7 +629,7 @@ func hasMappings(ic *v1.IdentityContinuity) bool {
 // IdPs this instance owns beyond those. It returns the tier logins actually
 // go to now, whether the redirector was set (so status can follow it), and
 // the tiers whose IdP exists.
-func (r *Reconciler) reconcileKeycloak(ctx context.Context, ic *v1.IdentityContinuity, kc *keycloak.Client, creds map[string]credential, st map[string]*v1.TierStatus, active string) (string, bool, map[string]bool, error) {
+func (r *Reconciler) reconcileKeycloak(ctx context.Context, ic *v1.IdentityContinuity, kc *keycloak.Client, creds map[string]credential, st map[string]*v1.TierStatus, active string, routed map[string]bool) (string, bool, map[string]bool, error) {
 	existing, err := kc.IdPs(ctx)
 	if err != nil {
 		return "", false, nil, err
@@ -663,10 +668,11 @@ func (r *Reconciler) reconcileKeycloak(ctx context.Context, ic *v1.IdentityConti
 			continue
 		}
 		hide := !tiers.Eligible(t, st[t.Name])
-		// Only the active tier signs anyone in: a hint or a direct broker URL
-		// can't reach an upstream that failed over, drained or is waiting
-		// its turn. Users' links to it stay.
-		enabled := (t.Enabled == nil || *t.Enabled) && t.Name == active
+		// Only the active tier, and the IdPs routing rules send sign-ins to
+		// now, sign anyone in: a hint or a direct broker URL can't reach an
+		// upstream that failed over, drained or is waiting its turn. Users'
+		// links to it stay.
+		enabled := (t.Enabled == nil || *t.Enabled) && (t.Name == active || routed[t.Name])
 		var err error
 		d := r.cachedDiscovery(ic, t)
 		switch {

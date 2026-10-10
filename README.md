@@ -15,6 +15,14 @@ ambient, kgateway, agentgateway, kagent + kmcp, Agent Substrate,
 agentregistry and Keycloak, plus two lab apps: the **Observatory** (a live
 control-plane UI) and an **identity continuity** controller (IdP failover).
 
+It is an **identity fabric built with Solo**: every IdP a firm owns,
+connected through one gateway to every resource and MCP server it runs, so
+people and agents sign in once and work easily and securely. agentgateway
+decides which IdP each sign-in goes to (routing rules in CEL), fails over
+across IdPs without anything downstream noticing, verifies who and which
+workload is calling on every request, and mints each tool or SaaS a
+short-lived token for that one call.
+
 ![The whole lab in the Observatory: the edge on the left, one lane per party, external services on the right](docs/images/observatory-export-topology-all.jpg)
 
 The lab models four parties on a shared platform (an advisory firm, its SaaS
@@ -140,6 +148,7 @@ Open it in a browser (`open docs/cards/<card>.html` on macOS, `xdg-open` on Linu
 | [Bob](docs/cards/bob.html) | Bob's agent acts for Bob: the firm's gateway mints each tool a token of its own, per-tool policy, human approval for writes, Cross App Access (ID-JAG) to a SaaS | `make bob-verify` |
 | [Bob to Alice](docs/cards/bob-to-alice.html) | the same agent asks Alice for her data on her terms (UMA for agents) | `make alice-verify` |
 | [Observatory tour](docs/cards/observatory.html) | every story end to end from one command, watched live: the agent waking, verified tokens per hop, refusals, Alice's terms, an IdP outage | `make tour` |
+| [Identity fabric](docs/cards/identity-fabric.html) | every IdP to every resource and MCP server through one gateway: routing rules in CEL send each sign-in to the right IdP, edited live, falling back when an IdP is down | `make routes` |
 | [Identity continuity](docs/cards/identity-continuity.html) | a real network outage of the active IdP, automatic failover to the next one, and failback, live in the Observatory | `make continuity-verify` |
 | [Assurance rules](docs/cards/assurance.html) | what each workload needs a sign-in to prove, through failover to an IdP that proves less: the rules, what-if, report-only, and failing closed | `make bob-verify` |
 | [Commands](docs/cards/commands.html) | kubectl, istioctl and curl commands for the running lab, grouped by Observatory screen | `make status` |
@@ -160,14 +169,17 @@ different lab renders the same way.
   views (All, Identity, Agents & tools, Cross-party), and PNG export.
 - **Traffic:** every gateway's access log, with the verified token claims on
   each request.
-- **Identity Continuity:** the sign-in chain, the outage button, the rule
-  builder, the directory sync, and the assurance rules.
+- **Identity Continuity:** the identity fabric: the sign-in chain, the
+  outage button, the rule builder, the routing policy, the directory sync,
+  and the assurance rules.
 
 ![Identity Continuity: Auth0 signing people in through the S&V egress, S&V's own Keycloak as the failover, the rule builder on the right](docs/images/observatory-continuity-connected.jpg)
 
 S&V's broker (Keycloak at `idp.sterling.lab`) routes sign-in to the firm's
 IdPs in failover order: here Auth0, then the Keycloak S&V runs itself at
-`login.sterling.lab`. The directory sync keeps those IdPs in step so
+`login.sterling.lab`. Routing rules at the gateway send some sign-ins
+elsewhere (AI clients to S&V's own Keycloak, with MFA), and fall back down
+their own list when an IdP is down (`make routes` shows where each goes). The directory sync keeps those IdPs in step so
 whichever one is active signs each employee in with the same profile: it
 reads the primary IdP's user attributes into S&V's profile on the broker,
 then writes that profile to every failover IdP, creating the users the
@@ -229,12 +241,13 @@ count, host ports, party domains, registry port; `config/oss.env` and
 | `verify` | `reset`, then `bob-verify`, `alice-verify`, `continuity-verify`, `observatory-verify` |
 | `bob-verify` | story 1 checks only (delegation, per-tool policy, Cross App Access) |
 | `alice-verify` | story 2 checks only (Bob to Alice, UMA for agents), after a `reset` |
-| `continuity-verify` | identity continuity checks only (failover, kill switch, live rules, directory sync) |
+| `continuity-verify` | identity continuity checks only (failover, kill switch, live rules, routing, directory sync) |
 | `observatory-verify` | what the Observatory's admins may and may not change (RBAC, admission) |
 | `tour` | drive every story end to end, paced, to watch in the Observatory |
 | `reset` | rewind the demos (grants, terms, agent key, follow-ups) |
 | `llm` | switch the model: `make llm LLM_PROVIDER=anthropic` |
 | `xaa-logs` | the Cross App Access trail (both token requests, claims, checks), tokens redacted: `make xaa-logs SINCE=2h` |
+| `routes` | where sign-ins go now: each routing rule's IdP, and where a browser app, an AI client and an AI client for Ledgerline land |
 | `xaa-keys` | the public keys other parties register, in `.lab/xaa/keys/`: S&V's clients at upstream IdPs and at Ledgerline, S&V's broker (`sv-idp.jwks.json`, for an AS outside the lab), Ledgerline's SSO client at S&V's broker |
 | `status` | pods, the active IdP, URLs |
 | `preflight` | tools, Docker resources, free ports, `*.lab` DNS, Ollama and its model |

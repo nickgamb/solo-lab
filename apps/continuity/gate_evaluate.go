@@ -146,7 +146,7 @@ func evaluate(ic v1.IdentityContinuity, profiles []v1.WorkloadProfile, req EvalR
 			}
 		}
 	}
-	chain, active := activeChain(spec.Tiers), ic.Status.Active
+	chain, active, cur := activeChain(spec.Tiers), ic.Status.Active, current(ic)
 	out := EvalResponse{Continuity: ic.Name, Active: active, IdPs: []EvalIdP{}, Rules: []EvalRule{}}
 	for _, t := range spec.Tiers {
 		out.IdPs = append(out.IdPs, EvalIdP{Name: t.Name, Ceiling: assurance.Ceiling(t).String(), Active: t.Name == active,
@@ -170,14 +170,14 @@ func evaluate(ic v1.IdentityContinuity, profiles []v1.WorkloadProfile, req EvalR
 			er.Eligible = []string{}
 		}
 		for _, t := range chain {
-			er.IdPs = append(er.IdPs, assurance.ReachOf(rs, t, active))
+			er.IdPs = append(er.IdPs, assurance.ReachOf(rs, t, cur))
 		}
 		if s := req.Session; s != nil {
 			sess := assurance.Session{IdP: s.IdP, ACR: s.ACR, AMR: s.AMR}
 			if s.AuthTime > 0 {
 				sess.AuthTime = time.Unix(s.AuthTime, 0)
 			}
-			er.Session = sessionDecision(assurance.Decide(rs, chain, active, sess, now), mode)
+			er.Session = sessionDecision(assurance.Decide(rs, chain, cur, sess, now), mode)
 		}
 		out.Rules = append(out.Rules, er)
 	}

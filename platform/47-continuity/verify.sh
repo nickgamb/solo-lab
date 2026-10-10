@@ -36,9 +36,9 @@ events() {
     | jq --argjson s "$2" '[.items[] | (.eventTime // .firstTimestamp) | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 | select(. >= $s)] | length'
 }
 # Where a fresh browser sign-in to kagent lands: S&V's own form, or the
-# first URL off idp.sterling.lab (an upstream IdP).
+# first URL off idp.sterling.lab (an upstream IdP). $1: more query parameters.
 login_lands() {
-  local url="https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/auth?client_id=kagent&response_type=code&scope=openid&redirect_uri=https%3A%2F%2Fkagent.$SV_DOMAIN%2Foauth2%2Fredirect&code_challenge=vErIfYvErIfYvErIfYvErIfYvErIfYvErIfYvErIf00&code_challenge_method=S256"
+  local url="https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/auth?client_id=kagent&response_type=code&scope=openid&redirect_uri=https%3A%2F%2Fkagent.$SV_DOMAIN%2Foauth2%2Fredirect&code_challenge=vErIfYvErIfYvErIfYvErIfYvErIfYvErIfYvErIf00&code_challenge_method=S256${1:-}"
   local out loc
   : > "$JAR"
   for _ in 1 2 3 4; do
@@ -90,7 +90,7 @@ spec: {action: DENY, rules: [{}], $target}
 YAML
 }
 heal() { K delete authorizationpolicy "continuity-partition-$1" -n "$2" --ignore-not-found >/dev/null; }
-ORIG=$(idc | jq -c '{tiers: .spec.tiers, failback: .spec.failback, profile: .spec.profile, sync: .spec.sync}')
+ORIG=$(idc | jq -c '{tiers: .spec.tiers, failback: .spec.failback, profile: .spec.profile, sync: .spec.sync, routing: .spec.routing}')
 BASE=$(active)
 KI=$(echo "$ORIG" | jq '[.tiers[].name] | index("keycloak") // empty')   # its place in the chain
 [ -n "$KI" ] || die "S&V's own Keycloak (keycloak) isn't in ENTERPRISE_IDP: these checks run on it"
@@ -183,6 +183,33 @@ K patch idc "$IC" -n "$NS" --type json -p "[{\"op\":\"add\",\"path\":\"/spec/tie
 expect '^[0-9]+s SlowResponse$' "failoverWhen latencyAboveMs=1: slow counts, fails over" "$(within 25 is_active "$NEXT") $(tier "$T" reason)"
 K patch idc "$IC" -n "$NS" --type json -p "[{\"op\":\"remove\",\"path\":\"/spec/tiers/$KI/failoverWhen/latencyAboveMs\"}]" >/dev/null
 expect '^[0-9]+s$' "rule removed: back to $T" "$(within 35 is_active "$T")"
+
+step "Routing: the gateway decides which IdP each sign-in goes to"
+# route_is <rule> <idp>: the rule's IdP now, as the controller wrote it ("" = the active IdP's)
+route_is() { [ "$(idc | jq -r --arg n "$1" '.status.routing[]? | select(.name==$n) | .idp // ""')" = "$2" ]; }
+expect '^True' "routing written to the gateway (condition Routed)" \
+  "$(K get idc "$IC" -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="Routed")].status} {.status.conditions[?(@.type=="Routed")].message}')"
+expect 'kc_idp_hint=' "the gateway's sign-in policy carries the controller's CEL" \
+  "$(K get "$AGW_POLICY_KIND" fabric-routing -n agentgateway-system -o jsonpath='{.spec.traffic.transformation.request.set[0].value}' 2>&1)"
+expect 'error=invalid_request' "a client that sends its own IdP hint is refused (the gateway's comes first)" "$(login_lands '&kc_idp_hint=contingency')"
+if [ -n "$NNS" ]; then
+  # a rule of the check's own, first: sign-ins that say login_hint=routing-check
+  K patch idc "$IC" -n "$NS" --type json -p '[{"op":"add","path":"/spec/routing/rules/0","value":{"name":"verify","when":"request.uri.matches(\"[?&]login_hint=routing-check(&|$)\")","idps":["'"$NEXT"'"]}}]' >/dev/null
+  expect '^[0-9]+s$' "rule verify resolves to $NEXT" "$(within 20 route_is verify "$NEXT")"
+  sleep 3   # the gateway picks up the policy
+  expect "^https://login-dr\.$SV_DOMAIN/realms/contingency/protocol/openid-connect/auth\?.*broker%2F$NEXT%2Fendpoint" \
+    "a sign-in the rule matches goes to $NEXT, while $T is active" "$(login_lands '&login_hint=routing-check')"
+  expect "^https://login\.$SV_DOMAIN/realms/workforce/" "any other sign-in goes to the active IdP ($T)" "$(login_lands)"
+  partition "$NEXT" "$NNS"
+  expect '^[0-9]+s$' "$NEXT cut: the rule falls back to the active IdP" "$(within 25 route_is verify '')"
+  sleep 3
+  expect "^https://login\.$SV_DOMAIN/realms/workforce/" "the sign-in the rule matches now goes to $T" "$(login_lands '&login_hint=routing-check')"
+  heal "$NEXT" "$NNS"
+  expect '^[0-9]+s$' "$NEXT healthy again: the rule routes to it again" "$(within 35 route_is verify "$NEXT")"
+  K patch idc "$IC" -n "$NS" --type merge -p "{\"spec\":{\"routing\":$(echo "$ORIG" | jq -c .routing)}}" >/dev/null
+else
+  skipped "routing to a second IdP: needs S&V's contingency IdP after $T in ENTERPRISE_IDP"
+fi
 
 step "Directory sync: the primary IdP into S&V's profile, out to the failovers"
 # On the IdPs as installed: S&V's own Keycloak (keycloak) has a directory.

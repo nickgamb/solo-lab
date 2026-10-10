@@ -7,7 +7,10 @@ its password-only contingency IdP) and maps each into one profile. The broker is
 it holds no employee passwords, only break-glass accounts for platform admins.
 S&V's own services trust only the broker. When an IdP goes down, new sign-ins
 move to the next healthy one and nothing downstream changes: same issuer,
-same `sub`, same groups. The broker also vouches for S&V's users to the apps
+same `sub`, same groups. Which IdP each sign-in goes to is policy at the
+firm's gateway: the fabric's [routing rules](#routing) send AI clients,
+sign-ins for one resource, or any sign-in a CEL rule can describe to an IdP
+of their own, and everything else to the active one. The broker also vouches for S&V's users to the apps
 they reach through Cross App Access (Ledgerline), whichever of S&V's IdPs
 signed them in, so those apps trust one issuer and never see the chain or
 its failover
@@ -168,6 +171,8 @@ doesn't create flows or roles, so the realm needs them first
 | `sync.schedule` | cron, UTC; `sync.suspend` pauses it |
 | `sync.removeMissing` | remove the broker account (and its failover accounts) of a workforce user the primary no longer has or has disabled ([Directory sync](#directory-sync)) |
 | `sync.credentialsRef` | Secret with the sync's realm client (default `continuity-sync`) |
+| `routing.policy` | the gateway policy the controller writes the routing into: `apiVersion`, `kind`, `namespace`, `name` (an agentgateway policy on the broker's sign-in route) |
+| `routing.rules[]` | first match wins: `name`, `when` (CEL over the sign-in request), `idps` (oidc tiers, in order: the first that can sign people in now takes the sign-in), `description` ([Routing](#routing)) |
 
 ### status
 
@@ -382,6 +387,56 @@ across `make down` / `make up`, put it in `config/continuity.local.yaml`
 attributes, each IdP's mappings, an optional sync schedule. A fresh install
 takes it as it is; `make layer-47` on an existing lab adds only what the
 instance doesn't have yet.
+
+## Routing
+
+Every sign-in to the broker passes the firm's gateway first, which decides
+which of S&V's IdPs it goes to. The edge sends the broker's authorization
+endpoint (and only that) to the ai-gateway, whose policy `fabric-routing`
+sets the broker's IdP hint and puts it first in the request
+(`platform/47-continuity/routing.yaml`). The broker reads the first hint, and
+refuses a request that carries a second one, so a client can't choose its
+own IdP. Tokens, keys and the login pages go straight to the broker.
+
+The rules are the identity team's, in the IdentityContinuity
+(`spec.routing.rules`). Each has a CEL condition over the sign-in request
+(agentgateway's request variables: `request.uri` with its `client_id`, the
+`resource` it is for, a `login_hint`; `request.headers`) and a list of IdPs
+in order of preference:
+
+```yaml
+routing:
+  policy: {apiVersion: enterpriseagentgateway.solo.io/v1alpha1, kind: EnterpriseAgentgatewayPolicy,
+           namespace: agentgateway-system, name: fabric-routing}
+  rules:
+  - name: ledgerline
+    when: 'request.uri.matches("[?&]resource=https(%3A|:)(%2F|/){2}mcp.sterling.lab(%2F|/)mcp(%2F|/)ledgerline")'
+    idps: [gluu, keycloak]
+  - name: ai-clients
+    when: 'request.uri.matches("[?&]client_id=sv-mcp-client(&|$)")'
+    idps: [keycloak]
+```
+
+The controller resolves each rule against the chain on every pass: the
+first IdP in its list that can sign people in now (enabled, not drained,
+configured, healthy, set up at the broker), or, when none can, the active
+tier. It writes the result into the gateway policy as one CEL expression and
+into `status.routing`, so a failover changes the routing the moment it
+changes the chain. An IdP that a rule sends sign-ins to is enabled at the
+broker alongside the active one; every other upstream stays disabled. The
+condition `Routed` says what the gateway runs now; an Event `RouteChanged`
+marks each move.
+
+A session from an IdP a rule routes to is a session from an IdP signing
+people in now, for workloads that take only those
+(`sessions: ActiveIdPOnly`). The assurance gate still judges what it proves:
+a rule that falls back to a weaker IdP fails closed where the workload needs
+more.
+
+`make routes` prints each rule's IdP now and where a browser app, an AI
+client and an AI client for Ledgerline land. In the Observatory, **Routing
+policy** edits the rules (the CEL as written) and shows the gateway policy
+the controller wrote.
 
 ## Kill switch
 
@@ -693,6 +748,13 @@ whatever it says: the Observatory says so.
 
   ![Schedule: cron presets, next runs, the last run and Run now](images/observatory-directory-sync-schedule.jpg)
 
+- **Routing policy** (from the rule builder, beside Directory sync): the
+  fabric's [routing rules](#routing). **Rules** edits them as written, each
+  a header (`rule <name> -> <idp>, <idp>`), its description as comments and
+  its CEL, and shows each rule's IdP now; Save writes them to the chain as
+  you. **Gateway policy** shows, read-only, the policy the controller wrote
+  for the gateway, CEL and all. On the map, an IdP a rule sends sign-ins to
+  is live too, its wire labelled with the rules.
 - **Transitions** and **Identity traffic** (bottom): failovers, cuts and
   restores, and OIDC calls.
 
@@ -721,7 +783,11 @@ then that cut too, failing over to `break-glass` (the broker's form), and
 back; Manual and Automatic failback; the directory sync written out to a
 failover and read in from the primary, with `status.sync` and Test
 connection; an IdP removed and re-added at runtime; the trust checks, and the
-broker's callback removed at S&V's own Keycloak and caught; and, with an
+broker's callback removed at S&V's own Keycloak and caught; the routing
+policy (written to the gateway, a client's own IdP hint refused, a rule's
+sign-ins sent to the contingency IdP while S&V's Keycloak is active, falling
+back when the contingency IdP is cut and routing to it again once healthy);
+and, with an
 external IdP configured, its partition at `sv-egress` and the browser landing
 on it. `keycloak` must be in `ENTERPRISE_IDP`. Bob's sign-in at an external
 IdP is interactive and is skipped.

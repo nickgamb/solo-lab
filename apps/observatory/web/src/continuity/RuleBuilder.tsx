@@ -3,6 +3,8 @@ import { isConflict, putContinuity, putSecret, type ContinuitySpec, type Identit
 import { AssuranceRules } from './AssuranceRules'
 import { enforced } from './rulesCode'
 import { DirectorySync } from './DirectorySync'
+import { RoutingPolicy } from './RoutingPolicy'
+import { routingSummary } from './routingCode'
 import { clone, noFill, stable, syncSummary } from './mapping'
 
 const DNS = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
@@ -41,6 +43,7 @@ export function RuleBuilder({ ic, broker, profiles }: { ic: IdentityContinuity; 
   const [busy, setBusy] = useState(false)
   const [mapping, setMapping] = useState(false)
   const [rules, setRules] = useState(false)
+  const [routes, setRoutes] = useState(false)
   const staged = useMemo(() => new Set(secrets.current.keys()), [secretsVersion]) // eslint-disable-line react-hooks/exhaustive-deps
   const dirty = norm(spec) !== base || staged.size > 0
 
@@ -181,6 +184,12 @@ export function RuleBuilder({ ic, broker, profiles }: { ic: IdentityContinuity; 
         <span className="subtle small">{syncSummary(ic.spec)}</span>
       </div>
       {mapping && <DirectorySync ic={ic} onSaved={adopt} onClose={() => setMapping(false)} />}
+      <div className="cm-open">
+        <button className="btn small" disabled={dirty} onClick={() => setRoutes(true)}
+          title={dirty ? 'Save or reset the rule changes first' : 'Which IdP each sign-in goes to, decided at the gateway: the rules and the CEL it runs'}>Routing policy</button>
+        <span className="subtle small">{routingSummary(ic)}</span>
+      </div>
+      {routes && <RoutingPolicy ic={ic} onSaved={adopt} onClose={() => setRoutes(false)} />}
       <div className="cm-open">
         <button className="btn small" disabled={dirty} onClick={() => setRules(true)}
           title={dirty ? 'Save or reset the rule changes first' : 'What a sign-in must prove to reach each resource, whichever IdP it came through'}>Assurance rules</button>

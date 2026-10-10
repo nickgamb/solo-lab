@@ -77,11 +77,18 @@ export type ContinuitySpec = {
   profile?: Profile
   sync?: Sync
   assurancePolicy?: AssurancePolicy
+  routing?: Routing
 }
+// the identity fabric's routing, applied at the gateway on every sign-in
+export type Routing = {
+  policy: { apiVersion: string; kind: string; namespace: string; name: string }
+  rules?: { name: string; when: string; idps: string[]; description?: string }[]
+}
+export type RouteStatus = { name: string; idp?: string; reason?: string }
 export type IdentityContinuity = {
   metadata: { name: string; namespace: string; resourceVersion?: string }
   spec: ContinuitySpec
-  status?: { active?: string; activeSince?: string; broker?: { issuer?: string }; tiers?: TierStatus[]; transitions?: { time: string; from: string; to: string; reason: string }[]; sync?: SyncStatus }
+  status?: { active?: string; activeSince?: string; routing?: RouteStatus[]; broker?: { issuer?: string }; tiers?: TierStatus[]; transitions?: { time: string; from: string; to: string; reason: string }[]; sync?: SyncStatus }
 }
 export type SignInPath = { instance: string; name: string; hosts: string[]; entry?: string; broker: string; app: string; after: string[][] }
 // a gateway that verifies the broker's tokens, and a resource behind it
