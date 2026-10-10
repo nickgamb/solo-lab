@@ -15,6 +15,10 @@ Cross App Access.
     `buildTokenExchangeResponse(...)`. main's version of that block also fires
     a `TokenExchangeResponseContext` client-policy event, a class that doesn't
     exist in 26.7.4, so the backport keeps 26.7.4's behavior and drops it.
+- `patches/0002-idjag-lifespan-audience-cap.patch`: an ID-JAG lives the
+  requesting client's access token lifespan, or less when the client for
+  its audience (the resource authorization server) has a shorter one: how
+  long the issuer vouches to that server.
 - Only `keycloak-core` and `keycloak-services` change. The Dockerfile rebuilds
   those two jars and overlays them on `quay.io/keycloak/keycloak:26.7.5`.
 

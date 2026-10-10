@@ -26,6 +26,14 @@ spec:
             whenUnsatisfiable: ScheduleAnyway
             labelSelector:
               matchLabels: {gateway.networking.k8s.io/gateway-name: ai-gateway}
+          # the public roots plus the lab's CA (trust-manager, layer 00): the
+          # lab's own hosts, such as the broker's discovery the front door
+          # hands to AI clients, are signed by it
+          volumes: [{name: lab-ca, configMap: {name: lab-ca-bundle}}]
+          containers:
+          - name: agentgateway
+            env: [{name: SSL_CERT_FILE, value: /etc/lab-ca/ca.crt}]
+            volumeMounts: [{name: lab-ca, mountPath: /etc/lab-ca, readOnly: true}]
   horizontalPodAutoscaler:
     spec:
       minReplicas: 2

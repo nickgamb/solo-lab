@@ -161,6 +161,10 @@ xaa_gateway_apply() {
     | K apply -f - >/dev/null || die "XAA: Ledgerline's endpoint backend"
   XAA_AS_REF=$(echo "$ep" | jq -c .ref) XAA_AS_HOST=$(echo "$ep" | jq -r .host) XAA_AS_PATH=$(echo "$ep" | jq -r .path) \
     apply_tmpl "$dir/xaa/ledgerline.yaml" || die "XAA: the route and its checks"
+  # earlier labs: a lane that listed Ledgerline's tools without a user
+  K delete httproute xaa-ledgerline-discovery -n agentgateway-system --ignore-not-found >/dev/null
+  K delete "$AGW_POLICY_KIND" xaa-ledgerline-discovery -n agentgateway-system --ignore-not-found >/dev/null
+  K delete "$AGW_BACKEND_KIND" xaa-ledgerline-catalog -n agentgateway-system --ignore-not-found >/dev/null
   # an endpoint no longer used
   for n in $(K get "$AGW_BACKEND_KIND" -n agentgateway-system -l lab.solo.io/xaa-endpoint -o name); do
     [ "${n##*/}" = "$(echo "$ep" | jq -r .backend.name)" ] || K delete -n agentgateway-system "$n" >/dev/null
@@ -206,10 +210,12 @@ xaa_client_jwks() { realm_signing_key sv-xaa-client; jwks_of "$LAB_STATE/keys/sv
 
 # ledgerline_realm <realm.json>: Ledgerline's realm, trusting S&V's broker for
 # sign-in and for ID-JAGs, for S&V's domain only, and naming S&V's client
-# there SV_CLIENT_AT_LEDGERLINE
+# there SV_CLIENT_AT_LEDGERLINE; its token for that client lives no longer
+# than the ID-JAG it was given (MCP_TOKEN_LIFETIME)
 ledgerline_realm() {
-  jq --arg domain "$SV_DOMAIN" --arg cid "$SV_CLIENT_AT_LEDGERLINE" '
+  jq --arg domain "$SV_DOMAIN" --arg cid "$SV_CLIENT_AT_LEDGERLINE" --arg life "$MCP_TOKEN_LIFETIME_S" '
     (.identityProviders[] | select(.alias == "sterling-vance") | .config.claimFilterValue) = (".*@" + ($domain | gsub("\\."; "\\.")))
+    | (.clients[] | select(.clientId == "sterling-vance-kagent") | .attributes."access.token.lifespan") = $life
     | (.clients[] | select(.clientId == "sterling-vance-kagent") | .clientId) = $cid' "$1"
 }
 

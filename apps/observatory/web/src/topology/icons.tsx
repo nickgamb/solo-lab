@@ -21,7 +21,7 @@ const glyph: Record<string, string> = {
 export function NodeIcon({ n, size = 18 }: { n: LabNode; size?: number }) {
   const cls = String(n.summary?.class ?? '')
   const raw = n.kind === 'agent' ? kagent
-    : cls.includes('agentgateway') ? agw
+    : cls.includes('agentgateway') || n.kind === 'fabric' ? agw
       : cls === 'kgateway' || cls.includes('enterprise-kgateway') ? kgw
         : undefined
   if (raw) return <span className="nicon" style={{ width: size, height: size }} dangerouslySetInnerHTML={{ __html: raw }} />
@@ -37,6 +37,7 @@ export const kindLabel: Record<string, string> = {
   gateway: 'Gateway', waypoint: 'Waypoint', agent: 'Agent', mcp: 'MCP server', idp: 'Identity provider',
   db: 'Data', llm: 'Model provider', ui: 'UI', controller: 'Control plane', substrate: 'Worker pool',
   workload: 'Workload', external: 'External', cluster: 'Cluster', tool: 'Test tool',
+  fabric: 'agentgateway attachment',
 }
 
 // The Solo products the map can highlight, in display order.

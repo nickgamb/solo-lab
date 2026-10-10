@@ -102,12 +102,13 @@ workers in zones a, b and c). The full lab uses about 17 GB of memory.
 | https://idp.sterling.lab/realms/sterling-vance/account | S&V broker account: sign-in through S&V's active IdP | S&V sign-in, as for kagent |
 | https://login.sterling.lab/realms/workforce/account | S&V's own Keycloak (an IdP in `ENTERPRISE_IDP`): a user's own account | `bob` / `bob-demo`, then the code from `make totp` |
 | https://login-dr.sterling.lab/realms/contingency/account | S&V's contingency IdP (password only, after S&V's own Keycloak in `ENTERPRISE_IDP`) | `bob` / `bob-demo` |
+| https://mcp.sterling.lab/mcp/bob-workspace, https://mcp.sterling.lab/mcp/ledgerline | the firm's MCP front door for AI clients (Claude Code, an IDE): add the URL as a remote MCP server and sign in when asked | Bob at S&V's active IdP, as for kagent |
 | https://llm.sterling.lab/v1 | the firm's model route for developers: OpenAI chat completions or Anthropic messages | API key `LLM_API_KEY` in `.lab/secrets.env` (docs/COMMANDS.md) |
 
 APIs on the edge, for agents and the checks rather than browsers:
 `https://as.alice.lab` (Alice's authorization server), `https://gateway.meridian.lab/mcp`
 (Meridian's MCP gateway; UMA-protected), `https://mcp.ledgerline.lab/mcp`
-(Ledgerline Research; needs a Ledgerline token), and each party's issuer,
+(Ledgerline Research; needs a Ledgerline token, which S&V's users get only through S&V's gateway), and each party's issuer,
 `https://idp.<party>.lab/realms/<realm>` (`sterling-vance`, `alice`,
 `ledgerline`, `ops`).
 

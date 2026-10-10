@@ -115,7 +115,7 @@ The sign-in chain for each `IdentityContinuity`, the outage button, the rule
 builder, and the directory sync window. See
 [IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#in-the-observatory).
 
-![Identity Continuity: the chain from the apps through the broker and the egress to each IdP, with the rule builder](images/observatory-continuity-connected.jpg)
+![Identity Continuity: resources and apps, through the gateways and the broker, to each IdP, with the rule builder](images/observatory-continuity-connected.jpg)
 
 - **Directory sync, Canvas:** the IdPs in chain order on the left (the
   primary is read, the failovers are written), S&V's profile on the right.

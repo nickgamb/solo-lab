@@ -26,6 +26,7 @@ type Index struct {
 	edgeGW  string
 	l4      map[string]float64
 	sso     []SSO
+	trusts  []Trust
 	next    map[string][]string // request-path adjacency
 }
 

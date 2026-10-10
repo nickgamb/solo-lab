@@ -20,8 +20,8 @@
 # and the access log keeps their claims, never the tokens. Only ai-gateway may
 # call those routes.
 #
-# Discovery lane: the kagent controller (no user) may list Ledgerline's public
-# tool catalog; it can never obtain a Ledgerline token.
+# There is no lane without a user: Ledgerline lists nothing without its own
+# token, and only a user's call gets one.
 apiVersion: ${AGW_BACKEND_API}
 kind: ${AGW_BACKEND_KIND}
 metadata: {name: xaa-ledgerline, namespace: agentgateway-system}
@@ -46,6 +46,7 @@ spec:
               audience: ${LEDGERLINE_AS_ISSUER}                # Ledgerline's AS: the ID-JAG is for it alone
               scopes: [xaa-ledgerline, research:read]     # the approved connection, requested from S&V's broker
               accessTokenScopes: [research:read]          # what Ledgerline's token may do
+              cache: {inMemory: {maxEntries: 0}}          # a fresh ID-JAG and Ledgerline token per call
               identityProvider:
                 backendRef: {kind: Service, name: ai-gateway, port: 80}
                 path: /xaa-legs/ledgerline/idp/token
@@ -236,51 +237,8 @@ spec:
                json(string(base64.decode(h.replace("-", "+").replace("_", "/") + ["", "===", "==", "="][size(h) % 4]))).typ)
              == "oauth-id-jag+jwt"
           && jwt.client_id == "${SV_CLIENT_AT_LEDGERLINE}"
-          && int(jwt.exp) - int(jwt.iat) <= 300
+          && int(jwt.exp) - int(jwt.iat) <= ${MCP_TOKEN_LIFETIME_S}
           && jwt.scope.split(" ").all(s, s in ["xaa-ledgerline", "research:read", "openid", "profile", "email"])
----
-# ---- discovery lane: kagent controller lists Ledgerline's public catalog ---------
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata: {name: xaa-ledgerline-discovery, namespace: agentgateway-system}
-spec:
-  parentRefs: [{name: ai-gateway, sectionName: http}]
-  rules:
-  - matches: [{path: {type: PathPrefix, value: /xaa/ledgerline}}]
-    # no user on this lane: nothing that looks like a credential goes on
-    filters:
-    - type: RequestHeaderModifier
-      requestHeaderModifier: {remove: [authorization, x-id-token]}
-    backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: xaa-ledgerline-catalog}]
----
-apiVersion: ${AGW_BACKEND_API}
-kind: ${AGW_BACKEND_KIND}
-metadata: {name: xaa-ledgerline-catalog, namespace: agentgateway-system}
-spec:
-  mcp:
-    targets:
-    - name: ledgerline-research
-      static:
-        host: mcp.${LEDGERLINE_DOMAIN}
-        port: 443
-        path: /mcp
-        protocol: StreamableHTTP
-        policies:
-          tls:
-            sni: mcp.${LEDGERLINE_DOMAIN}
-            caCertificateRefs: [{name: lab-ca-bundle}]
----
-apiVersion: ${AGW_POLICY_API}
-kind: ${AGW_POLICY_KIND}
-metadata: {name: xaa-ledgerline-discovery, namespace: agentgateway-system}
-spec:
-  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: xaa-ledgerline-discovery}]
-  traffic:
-    authorization:
-      action: Allow
-      policy:
-        matchExpressions:
-        - 'source.identity.namespace == "kagent" && source.identity.serviceAccount == "kagent-controller"'
 ---
 # ---- idtoken-exchange: ai-gateway's external processor (apps/idtoken-exchange)
 # Bob's ID token from S&V's broker, as kagent (the requesting app).

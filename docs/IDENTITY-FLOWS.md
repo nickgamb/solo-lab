@@ -16,6 +16,12 @@ ID, from the mesh) and the **user** (Bob, from a token). Neither alone is enough
 The agent holds no credential of its own: no model key, no tool token, no
 cross-company token.
 
+Every path, from the firm's own agents or from an AI client on a laptop,
+comes in through S&V's gateway ([AI clients at S&V's front
+door](#ai-clients-at-svs-front-door)), and the gateway is the only party that
+mints what a tool accepts. [Why this shape](#why-this-shape) sums up what that
+buys.
+
 ## Where the user's tokens come from
 
 1. Bob opens `https://kagent.sterling.lab`. The kgateway edge runs the OIDC
@@ -46,6 +52,58 @@ Access (section 2), has the egress gateway get it from S&V's broker, which
 vouches for Bob. The edge forwards the access token because Keycloak's
 standard token exchange only accepts an access token as its subject.
 
+## AI clients at S&V's front door
+
+An AI client outside the mesh (Claude Code, an IDE, any MCP client) reaches
+the firm's tools at the same gateway, through the edge
+(`demos/bob/manifests/22-ai-clients.yaml`):
+
+| URL | Reaches |
+| --- | --- |
+| `https://mcp.sterling.lab/mcp/bob-workspace` | Bob's workspace (section 1) |
+| `https://mcp.sterling.lab/mcp/ledgerline` | Ledgerline Research (section 2) |
+
+```mermaid
+sequenceDiagram
+  participant C as AI client (Bob's laptop)
+  participant G as ai-gateway (via the edge)
+  participant F as identity fabric (S&V's broker)
+  participant I as S&V's primary IdP
+  C->>G: initialize, no token
+  G-->>C: 401, WWW-Authenticate: resource_metadata
+  C->>G: protected-resource metadata, then authorization-server metadata
+  G-->>C: authorization server: the gateway; authorize and token: the fabric; client: sv-mcp-client
+  C->>F: authorize (PKCE, loopback redirect)
+  F->>I: redirect to the IdP that is primary now
+  I-->>F: Bob signed in
+  F-->>C: code, then Bob's access token (aud ai-gateway)
+  C->>G: tools/call, Authorization: Bob's access token
+  G->>G: verify, client and groups, assurance gate, tool allowlist
+  G->>G: mint the server its own token for this call (or an ID-JAG toward Ledgerline)
+```
+
+- **Sign-in is a redirect, never a chooser.** A client with no token gets a
+  401 that points at the protected-resource metadata (agentgateway's MCP
+  authorization, `traffic.jwtAuthentication.mcp`). That names the gateway
+  as the authorization server, and the gateway's metadata sends the
+  client's authorize and token requests to the identity fabric, which
+  redirects straight to whichever of S&V's IdPs is primary at that moment.
+  On failover the same URL lands at the next IdP; the client never knows.
+- **No open registration.** The gateway hands every client the one client
+  S&V registered for them, `sv-mcp-client` (public, PKCE S256, loopback
+  redirects only, no password grant), rather than letting each register
+  itself.
+- **The same checks as the firm's agents.** JWT from the fabric, audience
+  `ai-gateway`; the call comes through the edge, from `sv-mcp-client`, for a
+  user in `advisors`; the same assurance rule (`advisor-workspace`,
+  `ledgerline-research`); the same per-tool allowlist; and the server gets a
+  token minted for that call alone, or Ledgerline an ID-JAG made for it.
+  Bob's token never leaves S&V.
+- **Ledgerline has no door of its own for S&V's users.** A client that goes
+  to `mcp.ledgerline.lab` with S&V's token is refused there; S&V's users
+  reach Ledgerline only through S&V's gateway, which is what Ledgerline
+  trusts.
+
 ## 1. Delegation at the firm's gateway
 
 Every S&V MCP server sits behind the firm's one gateway, the `ai-gateway`
@@ -62,10 +120,14 @@ accepts.
 | `/mcp/alice-vault` | `sv-u4a/u4a-adapter` (section 3) | `sv-agents/bob-assistant`, for a user in `advisors` | no token (the adapter signs with its own key) |
 | `/xaa/ledgerline/mcp` | Ledgerline (section 2) | the agents' worker pools | an ID-JAG, then Ledgerline's token |
 
-Each path has two lanes: the user lane (a bearer token) and the discovery
+AI clients outside the mesh reach the same servers at
+`https://mcp.sterling.lab/mcp/<name>` ([front
+door](#ai-clients-at-svs-front-door)).
+
+Each S&V path has two lanes: the user lane (a bearer token) and the discovery
 lane (no token, only the kagent controller's SPIFFE ID, and only
 `tools/list`, so the UI can list tools and nothing on that lane can call
-one). Each path lets through only the tools its agents are given
+one). Ledgerline's has the user lane only (section 2). Each path lets through only the tools its agents are given
 (`/mcp/kagent-tools`: the tools the ops agents name, computed at install).
 The gateway finds each server by its Service's `lab.solo.io/mcp` label and
 reaches it over the mesh as itself, and the mesh
@@ -187,11 +249,13 @@ Checks (`make bob-verify`, from real pods with their own identities):
 
 Ledgerline Research is a SaaS S&V subscribes to, a separate company with its
 own authorization server. Bob's agent uses Ledgerline as Bob, with no consent
-screen and no shared credential. S&V's broker vouches for Bob to
-Ledgerline for one approved connection, and Ledgerline issues its own
-short-lived token. Every exchange happens at the firm's egress, so the agent
-holds only Bob's S&V access token: never an ID token, the ID-JAG or
-Ledgerline's token.
+screen and no shared credential. On every call, S&V's identity fabric vouches
+for Bob to Ledgerline for one approved connection (a fresh ID-JAG, living
+`MCP_TOKEN_LIFETIME`, 5 s), and Ledgerline issues its own token, which lives
+no longer than that vouch and comes with no refresh token. Every exchange
+happens at the firm's gateway, so the agent holds only Bob's S&V access
+token: never an ID token, the ID-JAG or Ledgerline's token. Sign-in is never
+an ID-JAG: the ID-JAG is only the gateway-to-SaaS hop.
 
 Two settings in `config/lab.env` (`scripts/idp.sh`):
 
@@ -220,8 +284,8 @@ it, even by hint) and never called. Every S&V call to an upstream leaves
 through `sv-egress`, so cutting an upstream there cuts all of them. Cross
 App Access calls no upstream: the broker vouches from Bob's session there,
 and the assurance gate refuses a session from an IdP that is no longer
-active. Ledgerline tokens already issued live out their five minutes in the
-gateway's cache.
+active. Nothing is cached: every call gets a fresh ID-JAG and a fresh
+Ledgerline token, so a refusal takes effect on the next call.
 
 ```mermaid
 sequenceDiagram
@@ -276,7 +340,8 @@ sequenceDiagram
     (`xaa/ledgerline.yaml`, applied by `xaa_gateway_apply` in
     `scripts/idp.sh`): subject from header `x-id-token`, type ID token;
     audience Ledgerline's AS issuer; scopes `xaa-ledgerline research:read`
-    for the ID-JAG and `research:read` for Ledgerline's token. S&V
+    for the ID-JAG and `research:read` for Ledgerline's token; no cache
+    (`maxEntries: 0`), so each call asks for both again. S&V
     authenticates at the broker as `kagent` (its client secret), and at
     Ledgerline's AS with `private_key_jwt` (client `sterling-vance-kagent`,
     assertion audience the AS's issuer, key `.lab/keys/sv-xaa-client.key`).
@@ -291,7 +356,7 @@ sequenceDiagram
       `xaa-as-ledgerline`): the ID-JAG in the grant is verified against
       S&V's broker, the only issuer it trusts (signature, `iss`, `aud` =
       Ledgerline's AS, `exp`, `sub`), then `typ` `oauth-id-jag+jwt`, `client_id` =
-      `sterling-vance-kagent`, at most 300 s, scopes within the
+      `sterling-vance-kagent`, living at most `MCP_TOKEN_LIFETIME`, scopes within the
       connection's and `openid profile email`. A refusal fails the call.
     - Both legs are in ai-gateway's access log with the verified claims,
       never the tokens (`make xaa-logs`).
@@ -306,7 +371,9 @@ sequenceDiagram
 
   Scope `xaa-ledgerline` adds `client_id=sterling-vance-kagent` and
   Ledgerline's AS issuer as audience: the connection exists because the firm
-  approved this scope for this client. `make xaa-keys` writes the public
+  approved this scope for this client. The broker's client for Ledgerline's
+  AS sets how long the broker vouches to it (`access.token.lifespan` =
+  `MCP_TOKEN_LIFETIME`): an ID-JAG for it lives no longer. `make xaa-keys` writes the public
   keys other parties register.
 - **Resource AS**, Ledgerline's own Keycloak (`RESOURCE_AS=keycloak`, realm
   `ledgerline`, feature `identity-assertion-jwt`,
@@ -324,7 +391,9 @@ sequenceDiagram
   - Client `sterling-vance-kagent` may use the JWT authorization grant with
     that identity provider, authenticates with `private_key_jwt` (S&V's
     certificate and `kid`, no secret), and gets scope `research:read`
-    (audience `ledgerline-research`) only when it asks. No full scope.
+    (audience `ledgerline-research`) only when it asks. No full scope. Its
+    token lives `MCP_TOKEN_LIFETIME`, no longer than the ID-JAG it was given,
+    with no refresh token: when it expires, S&V's gateway must vouch again.
   - Ledgerline's services reach the internet only through Ledgerline's
     egress waypoint (`ledgerline-egress`, one ServiceEntry per host): with
     an AS outside the lab, its keys, for the MCP server.
@@ -336,16 +405,17 @@ sequenceDiagram
   [IDPS.md](IDPS.md#ledgerlines-authorization-server)).
 - **Resource server** (`demos/bob/ledgerline/research.yaml`): Ledgerline's own
   agentgateway (`mcp-gateway`) in front of its MCP server, reached only from
-  the edge. It reads each MCP request and decides per tool on a token from
-  Ledgerline's AS (audience `ledgerline-research`): anyone may list the
-  catalog, `sector_outlook` and `research_note` need scope `research:read`,
-  `account_info` a signed-in subject. A method header that disagrees with
-  the request is refused. The server verifies the token again (signature, issuer,
+  the edge. Without a token from Ledgerline's AS (audience
+  `ledgerline-research`) it answers 401 and nothing more, not even its tool
+  list. With one, it reads each MCP request and decides per tool: any
+  Ledgerline token may list the tools, `sector_outlook` and `research_note`
+  need scope `research:read`, `account_info` a signed-in subject. A method
+  header that disagrees with the request is refused. The server verifies the token again (signature, issuer,
   audience, scope, a registered client) before any tool runs, and records
   any ID token that reaches it.
-- **Discovery lane:** the kagent controller's SPIFFE ID may list Ledgerline's
-  public catalog through `/xaa/ledgerline` without a user. The route strips
-  `Authorization` and `X-Id-Token`, and it can never get a Ledgerline token.
+- **No lane without a user.** Unlike S&V's own servers, Ledgerline has no
+  discovery lane: its tools are listed only on a user's call, with the
+  Ledgerline token that call gets.
 
 Checks (`make bob-verify`). It signs Bob in through S&V's own Keycloak,
 draining the IdPs ahead of it for its run (the Observatory shows the
@@ -355,6 +425,9 @@ transitions); the chain is restored on exit.
 | --- | --- |
 | `account_info` with Bob's access token from an S&V agent workload | Ledgerline's own account for Bob |
 | the ID-JAG ai-gateway verified | from S&V's broker, `aud` Ledgerline's AS, `client_id` S&V's client there |
+| its lifetime | at most `MCP_TOKEN_LIFETIME` |
+| three calls in a row | three different ID-JAGs, none reused |
+| the token Ledgerline issued for it | lives no longer than the ID-JAG, no refresh token |
 | an agent workload calling the gateway's Ledgerline leg directly | refused |
 | `sector_outlook` through XAA | result |
 | another user's ID token in `x-id-token` | replaced: still Bob's Ledgerline account |
@@ -362,10 +435,22 @@ transitions); the chain is restored on exit.
 | right token, wrong workload (`observability`) | refused |
 | an agent workload calling `idtoken-exchange` directly | refused by the mesh |
 | Bob's S&V token sent straight to `mcp.ledgerline.lab` | refused by Ledgerline |
-| Ledgerline's tool list, no token | listed (the catalog is public) |
-| a research call claiming to be `tools/list` in the `mcp-method` header | refused at Ledgerline's MCP gateway (header and body disagree) |
-| a research call with no Ledgerline token | refused at Ledgerline's MCP gateway |
+| Ledgerline's tool list, no token | 401, nothing listed |
+| a research call with no Ledgerline token | 401 at Ledgerline's MCP gateway |
 | Bob asks his agent, in chat, which Ledgerline account he's using | Ledgerline's own account for Bob |
+
+Checks for AI clients at the front door (`make bob-verify`, from a pod
+outside S&V, through the edge):
+
+| Case | Expected |
+| --- | --- |
+| no token | 401 with `resource_metadata` |
+| the protected-resource metadata | names the gateway as authorization server |
+| Bob signed in as `sv-mcp-client`, `whoami` on Bob's workspace | `acting_for: bob`, issuer the gateway's minter |
+| `export_book` | refused |
+| Bob's kagent token (another client) | refused |
+| Dana (not in `advisors`) | refused |
+| `account_info` at `/mcp/ledgerline` | Ledgerline's own account for Bob, through S&V's gateway |
 
 ## 3. UMA for agents (Bob to Alice)
 
@@ -460,6 +545,33 @@ Checks (`make alice-verify`):
 `make reset` clears Alice's grants, ledger and terms, and gives the adapter a
 new agent key, so the next run starts as a first contact.
 
+## Why this shape
+
+- **One door.** Every agent and every AI client reaches every tool, the
+  firm's or a SaaS's, through S&V's gateway. Policy, assurance, guardrails
+  and logs sit in one place, not in each tool.
+- **Per call, not per session.** The gateway mints what a tool accepts for
+  one call (5 s), and asks the fabric for a fresh ID-JAG on every call to a
+  SaaS. Nothing it mints is cached. An agent that drifts past the call it
+  was allowed has nothing to reuse: it has to come back to the gateway,
+  which can say no. The common pattern caches an exchanged token for its
+  whole lifetime, or hands the agent a session-long token.
+- **The agent never holds a token a tool accepts.** It holds Bob's access
+  token, which no MCP server and no SaaS takes. The usual delegation hands
+  the agent the downstream token itself.
+- **One issuer, however many IdPs.** Resource servers and SaaS trust the
+  fabric alone. S&V's IdPs don't know each other or the resources, and a
+  failover changes nothing downstream. ID-JAG as usually drawn has each IdP
+  issue its own, so every SaaS trusts every IdP in the estate.
+- **A SaaS token no longer than the vouch.** Ledgerline's token lives as
+  long as the ID-JAG it was given, with no refresh token, so the SaaS can't
+  outlive S&V's decision.
+- **Identity in two places.** The user from a token, the workload from the
+  mesh (SPIFFE), both checked on every call.
+- **Standards where the resource is.** MCP servers and the SaaS see OAuth
+  tokens and RFC 7523 grants they already understand; the new parts live at
+  the gateway.
+
 ## Patches these flows need
 
 | Patch | Needed for | Why |
@@ -468,7 +580,8 @@ new agent key, so the next run starts as a first contact.
 | `tools/kagent` 0002 | writes that wait for approval, UMA holds | a turn sent as the last one closes (after a human approval) no longer races the actor's suspend (OSS controller) |
 | `tools/substrate-mesh` 0001, 0002 | all three | a worker pool runs as its agent's ServiceAccount, so the agent's calls carry that SPIFFE ID (which the ai-gateway checks), and only serves its own namespace |
 | `tools/substrate-mesh` 0003 | all three | actors work under the mesh's in-pod traffic capture |
-| `tools/keycloak-idjag` | Cross App Access | ID-JAG issuing (keycloak/keycloak#49998) |
+| `tools/keycloak-idjag` 0001 | Cross App Access | ID-JAG issuing (keycloak/keycloak#49998) |
+| `tools/keycloak-idjag` 0002 | Cross App Access | the client for an ID-JAG's audience may hold it shorter: how long the issuer vouches to that authorization server |
 
 ## Seeing them in the Observatory
 

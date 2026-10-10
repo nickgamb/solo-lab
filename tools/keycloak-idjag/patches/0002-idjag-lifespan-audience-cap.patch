@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lab <lab@solo.lab>
+Date: Sat, 10 Oct 2026 09:00:00 -0700
+Subject: [PATCH] ID-JAG lifespan: the audience client may cap it
+
+An ID-JAG lives the requesting client's access token lifespan, or less
+when the client for its audience (the resource authorization server) has a
+shorter one: how long the issuer vouches to that server.
+---
+diff --git a/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/IDJWTTokenExchangeProvider.java b/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/IDJWTTokenExchangeProvider.java
+--- a/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/IDJWTTokenExchangeProvider.java
++++ b/services/src/main/java/org/keycloak/protocol/oidc/tokenexchange/IDJWTTokenExchangeProvider.java
+@@ -253,6 +253,24 @@
+                 }
+             } catch (NumberFormatException e) {
+                 // Ignore parse failure and fallback to realm default
++            }
++        }
++        // The audience may hold it shorter: how long this issuer vouches to that
++        // authorization server, its client's access token lifespan.
++        if (lifespan != -1 && targetAudienceClients != null) {
++            for (ClientModel target : targetAudienceClients) {
++                String targetLifespanStr = target.getAttribute(org.keycloak.protocol.oidc.OIDCConfigAttributes.ACCESS_TOKEN_LIFESPAN);
++                if (targetLifespanStr == null || targetLifespanStr.trim().isEmpty()) {
++                    continue;
++                }
++                try {
++                    int targetLifespan = Integer.parseInt(targetLifespanStr.trim());
++                    if (targetLifespan > 0) {
++                        lifespan = Math.min(lifespan, targetLifespan);
++                    }
++                } catch (NumberFormatException e) {
++                    // Ignore parse failure: the requesting client's lifespan stands
++                }
+             }
+         }
+         long expiration;
+-- 
+2.0
+

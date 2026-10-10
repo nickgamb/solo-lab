@@ -100,6 +100,29 @@ check '"k8s_get_resources"'                     "the kagent controller lists the
 check 'Unknown tool|http": 40[013]|isError": true' "the kagent controller calls an ops tool (no user): refused, it may only list" kagent/probe-kagent-controller $OPS_GW call k8s_get_resources '{"resource_type": "pods"}'
 check 'http": 0|http": 40[13]|refused|reset|Broken pipe|Connection' \
                                                 "skip the front door: an ops agent's worker dials kagent-tools" kagent/probe-kagent-ops http://kagent-tools.kagent:8084/mcp list
+step "AI clients outside the mesh: sign in at the front door"
+# an MCP client (Claude Code, an IDE) at https://mcp.<firm>, through the edge:
+# told where to sign in, then the same per-call path as the firm's agents
+FRONT=https://mcp.$SV_DOMAIN/mcp/bob-workspace
+hdr=$(K exec -n observability probe -- sh -c "curl -s -m 10 -o /dev/null -D - -X POST '$FRONT' -H 'content-type: application/json' -d '{}'" 2>&1) || hdr=""
+if echo "$hdr" | head -1 | grep -q ' 401' && echo "$hdr" | grep -qi 'www-authenticate:.*resource_metadata'; then
+  res ok "no token: 401, pointing the client to where it signs in (protected-resource metadata)"
+else res no "no token: 401, pointing the client to where it signs in" "$(echo "$hdr" | head -1)"; fi
+prm=$(K exec -n observability probe -- sh -c "curl -s -m 10 https://mcp.$SV_DOMAIN/.well-known/oauth-protected-resource/mcp/bob-workspace" 2>&1 | jq -r '.authorization_servers[0] // empty' 2>/dev/null) || prm=""
+if [ -n "$prm" ]; then res ok "the metadata names the authorization server the client signs in at ($prm)"
+else res no "the metadata names the authorization server the client signs in at" "none"; fi
+CLIENT=$(mcp_client_token bob bob-demo | jq -r '.access_token // empty') || CLIENT=""
+if [ -z "$CLIENT" ]; then res no "Bob signs in as an AI client (sv-mcp-client), through S&V's own IdP" "no token"
+else
+  check '\\"acting_for\\": \\"bob@.*\\"audience\\": \\"bob-workspace\\"' \
+                                                "an AI client, for Bob: whoami acts as bob, a token minted for the workspace" observability $FRONT call whoami '{}' --token "$CLIENT"
+  check "issuer[^0-9a-z]{0,6}$ISS_RE" "an AI client's call: the workspace's token is the gateway's, not Bob's" observability $FRONT call whoami '{}' --token "$CLIENT"
+  check 'Unknown tool|isError": true|http": 40[13]' "an AI client, for Bob: export_book is still compliance-only" observability $FRONT call export_book '{}' --token "$CLIENT"
+fi
+check 'http": 40[13]|isError": true'            "the front door with a token for another app (kagent): refused" observability $FRONT call whoami '{}' --token "$BOB"
+DANA_CLIENT=$(mcp_client_token dana dana-demo | jq -r '.access_token // empty') || DANA_CLIENT=""
+check 'http": 40[13]|isError": true'            "an AI client for a platform engineer (not an advisor): refused" observability $FRONT call whoami '{}' --token "$DANA_CLIENT"
+
 XAA=http://ai-gateway.agentgateway-system/xaa/ledgerline/mcp
 # Ledgerline's account for Bob: its own user ID (its own Keycloak), or a token
 # an AS outside the lab issued for Bob
@@ -112,8 +135,9 @@ if ras_external; then
 fi
 step "Cross App Access: Bob's agent -> Ledgerline Research (ID-JAG)"
 check "$ACCOUNT"                                "account_info: Ledgerline's own account for Bob"  $AGENT $XAA call account_info '{}' --token "$BOB"
+check "$ACCOUNT"                                "an AI client at S&V's front door, for Bob: Ledgerline's own account, through S&V's gateway" observability https://mcp.$SV_DOMAIN/mcp/ledgerline call account_info '{}' --token "$CLIENT"
 # the ID-JAG the gateway verified at the Ledgerline leg (ai-gateway's access
-# log: its claims; the gateway caches Ledgerline's token for up to five minutes)
+# log: its claims; a fresh one per call, living MCP_TOKEN_LIFETIME at most)
 # S&V's broker vouches for every S&V user, whichever IdP signed them in
 WANT_ISS="https://idp.$SV_DOMAIN/realms/sterling-vance"
 if ! gw_log=$(K logs -n agentgateway-system -l gateway.networking.k8s.io/gateway-name=ai-gateway --since=6m --tail=-1 2>&1); then
@@ -127,9 +151,12 @@ for line in sys.stdin:
     if i >= 0:
         last = json.JSONDecoder().raw_decode(line[i + 5:])[0]
 if last:
-    print(last.get("iss", ""), "aud=%s client_id=%s" % (last.get("aud"), last.get("client_id")))') || vouched=""
+    print(last.get("iss", ""), "aud=%s client_id=%s" % (last.get("aud"), last.get("client_id")), int(last.get("exp", 0)) - int(last.get("iat", 0)))') || vouched=""
+  life=${vouched##* }; vouched=${vouched% *}
   if [ -n "$vouched" ] && [ "${vouched%% *}" = "${WANT_ISS%/}" ]; then res ok "ID-JAG from S&V's broker, verified at S&V's egress: ${vouched#* }"
   else res no "ID-JAG from S&V's broker, verified at S&V's egress" "${vouched:-no ID-JAG in the ai-gateway log}"; fi
+  if [ -n "$life" ] && [ "$life" -le "$MCP_TOKEN_LIFETIME_S" ] 2>/dev/null; then res ok "the ID-JAG lives ${life}s: no longer than a minted tool token ($MCP_TOKEN_LIFETIME)"
+  else res no "the ID-JAG lives no longer than a minted tool token ($MCP_TOKEN_LIFETIME)" "${life:-no ID-JAG}s"; fi
 fi
 # the token requests go out through ai-gateway's own routes: no one else may use them
 code=$(K exec -n sv-agents probe-bob-assistant -- curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST \
@@ -138,6 +165,28 @@ case "$code" in 401|403) res ok "Bob's agent asks Ledgerline's token endpoint th
   *) res no "Bob's agent asks Ledgerline's token endpoint through the gateway's leg: refused" "HTTP ${code:-no answer}" ;; esac
 check 'overweight'                              "sector_outlook through XAA"                       $AGENT $XAA call sector_outlook '{"sector":"technology"}' --token "$BOB"
 check "$ACCOUNT"                                "another user's ID token is replaced: still Bob"   $AGENT $XAA call account_info '{}' --token "$BOB" --header "x-id-token=$OTHER_ID"
+# every call vouched afresh: as many distinct ID-JAGs as calls through the leg
+# to Ledgerline's AS; and, at Ledgerline's own AS, a token no longer lived
+jags=$(K logs -n agentgateway-system -l gateway.networking.k8s.io/gateway-name=ai-gateway --since=2m --tail=-1 2>/dev/null \
+  | grep 'route=agentgateway-system/xaa-as-ledgerline ' | grep -oE '"jti": "[^"]+"' | sort | uniq -c) || jags=""
+calls=$(echo "$jags" | awk 'NF {n++} END {print n+0}'); reused=$(echo "$jags" | awk '$1 > 1 {n++} END {print n+0}')
+if [ "$calls" -ge 3 ] && [ "$reused" = 0 ]; then res ok "a fresh ID-JAG for every call to Ledgerline ($calls, none reused)"
+else res no "a fresh ID-JAG for every call to Ledgerline" "$calls distinct, $reused reused"; fi
+if ras_external; then
+  skipped "Ledgerline's token lives no longer than the ID-JAG: set at its own AS ($LEDGERLINE_AS_ISSUER)"
+else
+  ll_life=$(K logs -n ledgerline -l gateway.networking.k8s.io/gateway-name=mcp-gateway --since=2m --tail=-1 2>/dev/null | python3 -c '
+import json, sys
+last = None
+for line in sys.stdin:
+    i = line.find(" jwt={")
+    if i >= 0:
+        last = json.JSONDecoder().raw_decode(line[i + 5:])[0]
+if last:
+    print(int(last.get("exp", 0)) - int(last.get("iat", 0)))') || ll_life=""
+  if [ -n "$ll_life" ] && [ "$ll_life" -le "$MCP_TOKEN_LIFETIME_S" ] 2>/dev/null; then res ok "Ledgerline's token lives ${ll_life}s: no longer than the ID-JAG it was given"
+  else res no "Ledgerline's token lives no longer than the ID-JAG it was given" "${ll_life:-no token in the log of Ledgerline gateway}s"; fi
+fi
 # Ledgerline's server records any ID token that reaches it: none may
 # (an unreadable log is a failure, not a clean one)
 if [ -z "$(K get pods -n ledgerline -l app.kubernetes.io/name=ledgerline-research -o name 2>/dev/null)" ]; then
@@ -160,11 +209,9 @@ if [ "$KGATEWAY_EDITION" = enterprise ]; then
 else
   skipped "SQL injection at the edge refused: the WAF is Solo Enterprise for kgateway's"
 fi
-# Ledgerline's own MCP gateway decides per tool from the MCP request itself
-check 'sector_outlook'                          "Ledgerline's catalog is public: listed without a token" $AGENT https://mcp.ledgerline.lab/mcp list
-check 'http": 400.*[Mm]ismatch'                 "a call claiming to be tools/list (mcp-method header): refused at Ledgerline's gateway" $AGENT https://mcp.ledgerline.lab/mcp call sector_outlook '{"sector": "technology"}' --header mcp-method=tools/list
-check 'http": 40[13]|not allowed|[Uu]nknown tool|[Ff]orbidden' \
-                                                "a research call with no Ledgerline token: refused at Ledgerline's gateway" $AGENT https://mcp.ledgerline.lab/mcp call sector_outlook '{"sector": "technology"}'
+# Ledgerline answers nothing without its own token: not even its tool list
+check 'http": 401'                              "Ledgerline with no token: 401, nothing listed" $AGENT https://mcp.ledgerline.lab/mcp list
+check 'http": 401'                              "a research call with no Ledgerline token: 401 at Ledgerline's gateway" $AGENT https://mcp.ledgerline.lab/mcp call sector_outlook '{"sector": "technology"}'
 # and through Bob's agent itself, as in the chat (the model picks the tool)
 if ! why=$(llm_ready); then
   skipped "Bob's agent, in chat: needs the model ($why)"

@@ -40,10 +40,11 @@ comparison of the editions.
 
 Both editions run the rest of the lab the same way: MCP federation and
 per-tool authorization, token exchange and Cross App Access toward tools
-(agentgateway's `crossAppAccess`, one backend with S&V's broker vouching, with
-the ID-JAG verified on the gateway's own routes; the lab's
+(agentgateway's `crossAppAccess`, one backend with S&V's broker vouching, a
+fresh ID-JAG per call, verified on the gateway's own routes; the lab's
 `idtoken-exchange` supplies the ID token from the broker), prompt guards, provider failover, cost per
-call, API keys and format translation, and MCP guardrails. Assurance rules
+call, API keys and format translation, MCP guardrails, and the MCP sign-in
+front door for AI clients (agentgateway's MCP authorization). Assurance rules
 and the assurance gate are the lab's own too: agentgateway's `extAuth` asks
 the gate on both editions (`AgentgatewayPolicy` or
 `EnterpriseAgentgatewayPolicy`).

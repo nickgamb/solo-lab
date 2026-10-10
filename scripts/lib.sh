@@ -614,23 +614,27 @@ sso_token() {
     | curl -s --cacert "$LAB_CA_DIR/ca.crt" "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/token" --data @-
 }
 
-# ui_token <user> <pass>: an S&V employee signs in to the Solo UI as in the
-# browser (its public client kagent-ui, authorization code with PKCE) through
-# the broker's active IdP, which must be one of S&V's own. Prints the tokens.
-ui_token() {
-  local verifier challenge state cb code
+# pkce_token <client> <redirect URI> <user> <pass>: an S&V employee signs in
+# with a public client (authorization code with PKCE) through the broker's
+# active IdP, which must be one of S&V's own. Prints the tokens.
+pkce_token() {
+  local client=$1 redirect=$2 verifier challenge state cb code
   verifier=$(openssl rand -hex 32) state=$(openssl rand -hex 8)
   challenge=$(printf '%s' "$verifier" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
-  cb="https://kagent.$SV_DOMAIN/callback"
-  cb=$(browser_signin "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/auth?client_id=kagent-ui&response_type=code&scope=openid&redirect_uri=$(jq -rn --arg u "$cb" '$u|@uri')&state=$state&code_challenge=$challenge&code_challenge_method=S256" \
-    "$cb" "$1" "$2") || return 1
+  cb=$(browser_signin "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/auth?client_id=$client&response_type=code&scope=openid&redirect_uri=$(jq -rn --arg u "$redirect" '$u|@uri')&state=$state&code_challenge=$challenge&code_challenge_method=S256" \
+    "$redirect" "$3" "$4") || return 1
   code=$(echo "$cb" | sed -nE 's/.*[?&]code=([^&]+).*/\1/p')
-  [ -n "$code" ] || { echo "ui_token: no code in $cb" >&2; return 1; }
-  _C=$code _V=$verifier _R="https://kagent.$SV_DOMAIN/callback" jq -rn \
-    '{grant_type: "authorization_code", client_id: "kagent-ui", code: $ENV._C, code_verifier: $ENV._V, redirect_uri: $ENV._R}
+  [ -n "$code" ] || { echo "pkce_token: no code in $cb" >&2; return 1; }
+  _C=$code _V=$verifier _R=$redirect _I=$client jq -rn \
+    '{grant_type: "authorization_code", client_id: $ENV._I, code: $ENV._C, code_verifier: $ENV._V, redirect_uri: $ENV._R}
      | to_entries | map("\(.key)=\(.value | @uri)") | join("&")' \
     | curl -s --cacert "$LAB_CA_DIR/ca.crt" "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/token" --data @-
 }
+# ui_token <user> <pass>: the Solo UI's sign-in (its public client kagent-ui)
+ui_token() { pkce_token kagent-ui "https://kagent.$SV_DOMAIN/callback" "$1" "$2"; }
+# mcp_client_token <user> <pass>: an AI client's sign-in at S&V's front door
+# (the client the gateway hands out, sv-mcp-client, on a loopback redirect)
+mcp_client_token() { pkce_token sv-mcp-client "http://127.0.0.1:33418/callback" "$1" "$2"; }
 
 # a2a_send <access token> <json-rpc body>: one A2A turn with Bob's agent, sent
 # as kagent's UI would (from a probe running as its service account,

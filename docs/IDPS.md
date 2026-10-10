@@ -299,7 +299,7 @@ The same for every AS:
 | S&V's client | `LEDGERLINE_NAME_CLIENT_ID`, `private_key_jwt` RS256, JWKS `sv-ras-client.jwks.json` from `make xaa-keys` |
 | Grant type | `urn:ietf:params:oauth:grant-type:jwt-bearer`; assertion reuse refused; assertion lifetime at most 300 s |
 | Subject | the ID-JAG's `sub` (the user's broker account) mapped to Ledgerline's user, or its verified `email` |
-| Access token | JWT; `aud` `ledgerline-research`; `scope` `research:read` when requested; `client_id` S&V's client; `user_name` or `email`; at most 300 s |
+| Access token | JWT; `aud` `ledgerline-research`; `scope` `research:read` when requested; `client_id` S&V's client; `user_name` or `email`; living no longer than the ID-JAG it was issued for (`MCP_TOKEN_LIFETIME`); no refresh token |
 
 Ledgerline's MCP server and gateway accept tokens from that issuer only; the
 server requires scope `research:read` from S&V's client, and fetches the AS's

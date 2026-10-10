@@ -637,14 +637,20 @@ whatever it says: the Observatory says so.
 
 **Identity Continuity** tab, one `IdentityContinuity` at a time:
 
-![Connected: Auth0 signing people in, through the S&V egress](images/observatory-continuity-connected.jpg)
+![Connected: Auth0 signing people in](images/observatory-continuity-connected.jpg)
 
 ![Failover: the network to Auth0 cut at the egress, sign-in through the next IdP](images/observatory-continuity-failover.jpg)
 
-- **Map:** every app that signs people in through the broker (found from the
-  edge's SSO configuration, and from the broker's own sign-in clients,
-  `status.broker.signIn`), the broker, the egress gateway, and the IdPs in
-  chain order. The live path is green.
+- **Map:** on the left, the resources S&V's gateways admit the broker's
+  tokens to (each gateway policy that verifies the broker's issuer, and
+  where its routes and backends land; another party's, such as Ledgerline,
+  as one tile), and the apps people sign in to (the edge's SSO
+  configuration and the broker's own sign-in clients,
+  `status.broker.signIn`). Then the gateway each comes in through
+  (agentgateway for agents and AI clients, the edge for the consoles), the
+  identity fabric (the broker attached to them, drawn as part of the
+  gateway, not as another IdP), and the IdPs in chain order. The live path is
+  green; an outage is cut at the egress, on the wire to that IdP.
 - **Banner:**
 
 | State | Banner |

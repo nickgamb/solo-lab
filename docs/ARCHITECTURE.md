@@ -20,8 +20,9 @@ Bob is an employee of Sterling & Vance. S&V's broker (Keycloak, realm
 failover order (Auth0, the Keycloak S&V runs itself in `sv-workforce`, its
 password-only contingency IdP in `sv-contingency`, Okta, Gluu) and holds only
 the profiles those IdPs provision (no employee passwords), plus break-glass
-accounts for platform admins. It is never an IdP itself, and stays the only
-issuer anything trusts (see Identity continuity).
+accounts for platform admins. It is never an IdP itself: it is the identity
+fabric attached to S&V's gateway, the only issuer anything trusts, so S&V's
+IdPs never know each other or the resources (see Identity continuity).
 Alice is a user of her own IdP (realm `alice` in `alice-identity`).
 
 ## Workloads and identities
@@ -46,7 +47,7 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | `kagent` | controller, UI, tools | `kagent-*` | S&V | UI: edge (after sign-in); controller: the UI, the agents' worker pools, the Observatory, and on Enterprise agentregistry (its kagent runtime); tools: ai-gateway only. The controller's RBAC covers only `kagent`, `sv-agents` and `sv-mcp` |
 | `kagent` | ops agents (k8s, istio, helm, promql, kgateway): SandboxAgents on pool `kagent-ops` | `kagent-ops` | S&V | atenet-router only |
 | `ate-system` | Agent Substrate: ate-api, atenet-router, atelet, ate-controller, valkey, rustfs | one SA per component | platform | ate-api and router: kagent controller only; the rest: `ate-system` only |
-| `agentgateway-system` | ai-gateway (models, every MCP server, Cross App Access) | `ai-gateway` | S&V | the agents' worker pools, by ServiceAccount (models, MCP servers, Cross App Access); the kagent controller (listing MCP servers' tools, Ledgerline's public catalog); the edge (`llm.sterling.lab`, with an API key); `sv-mcp` (the STS's keys, Enterprise); itself (the Cross App Access token requests) |
+| `agentgateway-system` | ai-gateway (models, every MCP server, Cross App Access) | `ai-gateway` | S&V | the agents' worker pools, by ServiceAccount (models, MCP servers, Cross App Access); the kagent controller (listing S&V's MCP servers' tools); the edge (`llm.sterling.lab`, with an API key); `sv-mcp` (the STS's keys, Enterprise); itself (the Cross App Access token requests) |
 | `agentgateway-system` | agentgateway controller (xDS; on Enterprise the STS on port 7777, which mints the tokens MCP servers accept) | `agentgateway` (`enterprise-agentgateway` on Enterprise) | S&V | xDS (9978): the agentgateway proxies; STS: ai-gateway only, and MCP servers read its keys through the ai-gateway (`/sts/jwks.json`, GET, from `sv-mcp`); metrics (9092): Prometheus |
 | `agentgateway-system` | Enterprise shared services: ext-auth, rate limiter, WAF, their cache | the chart's | S&V | `agentgateway-system`'s workloads, Alice's waypoint, Ledgerline's `mcp-gateway`, Meridian's gateway, Prometheus |
 | `agentgateway-system` | `mcp-guard` (ai-gateway's MCP guardrail: masks account numbers and SSNs in tool results) | `mcp-guard` | S&V | ai-gateway only |
@@ -130,15 +131,19 @@ as kagent controller → atenet-router → worker, each hop mTLS.
      (IDENTITY-CONTINUITY.md#assurance-rules).
    - ai-gateway ([agentgateway](https://docs.solo.io/agentgateway/), S&V): the front door for every MCP
      server, a path each (`/mcp/bob-workspace`, `/mcp/kagent-tools`,
-     `/mcp/alice-vault`, `/xaa/ledgerline/mcp`). It finds each server by
+     `/mcp/alice-vault`, `/xaa/ledgerline/mcp`), and for AI clients outside
+     the mesh, through the edge at `mcp.sterling.lab` (MCP authorization:
+     a 401 that sends the client to sign in at S&V's primary IdP through the
+     fabric, as the one client S&V registered for them). It finds each server by
      its Service's `lab.solo.io/mcp` label and reaches it over the mesh as
      itself. JWT validation against
      S&V's broker, the caller's workload and groups, per-tool MCP
      authorization in CEL (an allowlist on every path), a guardrail on tool
      results, and a short-lived token of its own for each MCP server, minted
      per call (agentgateway's STS on Enterprise,
-     an RFC 8693 exchange at S&V's broker on OSS), or an ID-JAG toward
-     Ledgerline; the user's token never reaches a tool. Provider credentials
+     an RFC 8693 exchange at S&V's broker on OSS), or a fresh ID-JAG per
+     call toward Ledgerline; nothing minted is cached, and the user's token
+     never reaches a tool. Provider credentials
      for LLMs. The model route admits only
      the agents' worker pools, by ServiceAccount; the user's token the
      agents send there names whose turn it is and stops at the gateway, so
@@ -373,7 +378,8 @@ installs every story, so any card runs in any order on the same lab.
 
 | Where | What | Upstream |
 | --- | --- | --- |
-| `tools/keycloak-idjag` | Keycloak 26.7.5 + PR #49998 (ID-JAG issuing), backported; plus identity continuity's IdP mapper (`session-claims/`, a provider, not a patch) | keycloak/keycloak#49998 |
+| `tools/keycloak-idjag` 0001 | Keycloak 26.7.5 + PR #49998 (ID-JAG issuing), backported; plus identity continuity's IdP mapper (`session-claims/`, a provider, not a patch) | keycloak/keycloak#49998 |
+| `tools/keycloak-idjag` 0002 | an ID-JAG lives no longer than its audience's client allows (how long the issuer vouches to that authorization server) | keycloak/keycloak (PR to open) |
 | `tools/kagent` 0001 | Go ADK: SandboxAgents call the controller back with the caller's credential (they have no ServiceAccount token). Both editions run this ADK | kagent-dev/kagent (PR to open) |
 | `tools/kagent` 0002 | OSS controller: a SandboxAgent turn sent as the last one closes (HITL approval) no longer races its suspend | kagent-dev/kagent (PR to open) |
 | `tools/substrate-mesh` 0001 | Substrate 0.0.9: WorkerPool pod identity (`serviceAccountName`, labels, annotations) | kagent-dev/substrate (PR to open) |

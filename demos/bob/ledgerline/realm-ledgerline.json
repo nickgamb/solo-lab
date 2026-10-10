@@ -70,7 +70,7 @@
         "jwt.credential.certificate": "${SV_XAA_CLIENT_CERT}",
         "jwt.credential.kid": "${SV_XAA_CLIENT_KID}",
         "use.jwks.url": "false",
-        "access.token.lifespan": "300"
+        "use.refresh.tokens": "false"
       },
       "fullScopeAllowed": false,
       "defaultClientScopes": [

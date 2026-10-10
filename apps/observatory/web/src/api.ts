@@ -6,7 +6,7 @@ export type Pod = { name: string; phase: string; ready: boolean; node?: string; 
 export type Group = { id: string; label: string; domain?: string; order: number }
 export type NodeKind =
   | 'gateway' | 'waypoint' | 'agent' | 'mcp' | 'idp' | 'db' | 'llm' | 'ui' | 'controller'
-  | 'substrate' | 'workload' | 'external' | 'cluster' | 'tool'
+  | 'substrate' | 'workload' | 'external' | 'cluster' | 'tool' | 'fabric'
 export type LabNode = {
   id: string; kind: NodeKind; label: string; sub?: string; group: string; namespace?: string
   ref?: Ref; related?: Ref[]; pods?: Pod[]; badges?: string[]; products?: string[]; status: 'ok' | 'warn' | 'down' | 'idle'
@@ -84,8 +84,11 @@ export type IdentityContinuity = {
   status?: { active?: string; activeSince?: string; broker?: { issuer?: string }; tiers?: TierStatus[]; transitions?: { time: string; from: string; to: string; reason: string }[]; sync?: SyncStatus }
 }
 export type SignInPath = { instance: string; name: string; hosts: string[]; entry?: string; broker: string; app: string; after: string[][] }
+// a gateway that verifies the broker's tokens, and a resource behind it
+export type ResourcePath = { instance: string; broker: string; gateway: string; resource: string }
 export type ContinuityView = {
   items: IdentityContinuity[]; partitions: { tier: string; namespace: string; name: string; since?: string; by?: string; path?: string }[]; paths: SignInPath[]
+  resources?: ResourcePath[]
   // each resource's assurance rules on its chain: met, or failed closed
   profiles?: { namespace: string; name: string; continuity: string; phase?: string; mode?: string }[]
 }
