@@ -94,7 +94,13 @@ K delete secret egress-client-key op-gluu op-keycloak -n agentgateway-system --i
 K delete role,rolebinding idtoken-exchange-continuity -n sv-identity --ignore-not-found >/dev/null
 # Bob's agent is a SandboxAgent; an Agent of the same name (older labs) must go first.
 K delete agent bob-assistant -n sv-agents --ignore-not-found --wait >/dev/null
-apply_kustomize "$D/agent"
+# with story 2 installed, its overlay (story 1's agent and one more tool):
+# re-running this install never takes that tool away
+if K get remotemcpserver alice-vault-via-u4a -n sv-agents >/dev/null 2>&1; then
+  apply_kustomize "$LAB_ROOT/demos/bob-to-alice/agent"
+else
+  apply_kustomize "$D/agent"
+fi
 K delete secret llm-via-gateway -n sv-agents --ignore-not-found >/dev/null   # earlier labs: a placeholder model key
 rollout sv-mcp deploy/bob-workspace
 rollout agentgateway-system deploy/mcp-guard deploy/idtoken-exchange
