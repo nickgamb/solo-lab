@@ -308,6 +308,8 @@ export type EvalDraft = { policy?: AssurancePolicy; tiers?: Record<string, TierA
 export type EvalSession = { idp: string; acr?: string; amr?: string[]; authTime?: number }
 export const evaluate = (ns: string, name: string, draft?: EvalDraft, session?: EvalSession) =>
   api<Evaluation>(`/api/assurance/${ns}/${name}/evaluate`, { method: 'POST', body: JSON.stringify({ draft, session }) })
+// The gate's decision logic: the Rego it decides every request with.
+export const getAssuranceLogic = (ns: string, name: string) => api<string>(`/api/assurance/${ns}/${name}/policy`)
 
 // A rule: an update at the resourceVersion it was read at (409 if changed
 // since), or a new rule without one.

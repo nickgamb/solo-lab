@@ -172,6 +172,7 @@ func main() {
 	api.HandleFunc("POST /api/continuity/{ns}/{name}/check-trust", assurance.CheckTrust)
 	api.HandleFunc("GET /api/assurance/{ns}/{name}", assurance.Get)
 	api.HandleFunc("POST /api/assurance/{ns}/{name}/evaluate", assurance.Evaluate)
+	api.HandleFunc("GET /api/assurance/{ns}/{name}/policy", assurance.Policy)
 	api.HandleFunc("PUT /api/assurance/{ns}/{name}/policy-points/{pns}/{pname}", assurance.PutPolicyPoint)
 	api.HandleFunc("PUT /api/assurance/{ns}/profiles/{profile}", assurance.PutProfile)
 	api.HandleFunc("DELETE /api/assurance/{ns}/profiles/{profile}", assurance.DeleteProfile)

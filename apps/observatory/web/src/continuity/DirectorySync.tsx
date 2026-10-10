@@ -5,7 +5,7 @@ import { SyncCanvas } from './SyncCanvas'
 import { SyncContext, type SyncActions, type TestResult } from './syncContext'
 import { cronError } from './cron'
 import * as m from './mapping'
-import { applyCode, toCode } from './mappingCode'
+import { applyCode, MappingError, toCode } from './mappingCode'
 import { ScheduleTab } from './ScheduleTab'
 import { Guard } from '../topology/DetailsPanel'
 
@@ -37,7 +37,7 @@ export function DirectorySync({ ic, onClose, onSaved }: { ic: IdentityContinuity
   const [tab, setTab] = useState<Tab>('canvas')
   const [code, setCode] = useState('')
   const [codeBase, setCodeBase] = useState('')
-  const [codeErr, setCodeErr] = useState<string>()
+  const [codeErr, setCodeErr] = useState<{ line: number; col: number; message: string }>()
   const [msg, setMsg] = useState<{ ok: boolean; text: string; conflict?: boolean }>()
   const [busy, setBusy] = useState(false)
   const dialog = useRef<HTMLDivElement>(null)
@@ -122,7 +122,10 @@ export function DirectorySync({ ic, onClose, onSaved }: { ic: IdentityContinuity
   // leaving the Code tab applies it; a bad document keeps you there
   const fromCode = (): ContinuitySpec | undefined => {
     if (code === codeBase) return spec
-    try { const s = applyCode(spec, code); setSpec(s); setCodeErr(undefined); return s } catch (e) { setCodeErr((e as Error).message); return undefined }
+    try { const s = applyCode(spec, code); setSpec(s); setCodeErr(undefined); return s } catch (e) {
+      const at = e instanceof MappingError ? e : { line: 1, col: 1 }
+      setCodeErr({ line: at.line, col: at.col, message: (e as Error).message }); return undefined
+    }
   }
   const go = (next: Tab): boolean => {
     if (next === tab) return true
@@ -207,7 +210,7 @@ export function DirectorySync({ ic, onClose, onSaved }: { ic: IdentityContinuity
             {TABS.map(([t, label]) => (
               <button key={t} id={`cm-tab-${t}`} role="tab" aria-selected={tab === t} aria-controls={`cm-panel-${t}`} tabIndex={tab === t ? 0 : -1}
                 className={tab === t ? 'tab active' : 'tab'} onClick={() => go(t)}
-                title={t === 'code' ? 'Advanced: the attribute mapping as JSON' : `${label} view`}>
+                title={t === 'code' ? 'Advanced: the attribute mapping as YAML' : `${label} view`}>
                 {label}{t === 'code' && <span className="cm-adv">advanced</span>}
               </button>
             ))}
@@ -233,15 +236,15 @@ export function DirectorySync({ ic, onClose, onSaved }: { ic: IdentityContinuity
             )}
             {tab === 'code' && (
               <div className="cm-code">
-                <p className="subtle small">Each attribute of the broker's profile, and each IdP's attribute paired with it as <span className="mono">"idp.attribute"</span>, in chain order: the primary's is read into the profile, the failovers' are written from it. A new key adds an attribute to the profile. Leaving this tab applies it.</p>
+                <p className="subtle small">Each attribute of the broker's profile, and each IdP's attribute paired with it as <span className="mono">idp.attribute</span>, in chain order: the primary's is read into the profile, the failovers' are written from it. A new key adds an attribute to the profile. Leaving this tab applies it.</p>
                 <div className="monaco">
                   <Guard>
                     <Suspense fallback={<div className="subtle small">Loading editor…</div>}>
-                      <CodeEditor value={code} onChange={setCode} />
+                      <CodeEditor value={code} onChange={v => { setCode(v); if (codeErr) setCodeErr(undefined) }} language="yaml" markers={codeErr && [codeErr]} />
                     </Suspense>
                   </Guard>
                 </div>
-                {codeErr && <div className="note bad" role="alert">{codeErr}</div>}
+                {codeErr && <div className="note bad" role="alert"><span className="mono">{codeErr.line}:{codeErr.col}</span> {codeErr.message}</div>}
               </div>
             )}
             {tab === 'schedule' && <ScheduleTab ic={ic} spec={spec} setSpec={setSpec} dirty={dirty} />}

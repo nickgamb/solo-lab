@@ -236,20 +236,16 @@ func (a *Assurance) View(ctx context.Context, ic *unstructured.Unstructured) Ass
 			ResourceVersion: pol.GetResourceVersion()}
 		gw := policyGateway(a.k, pol, ix)
 		pp.Gateway, pp.Workloads = labelOf(ix, gw), workloadsOf(ix, gw)
-		if ext := obj(pol.Object, "spec", "traffic", "extAuth"); ext != nil {
-			if !asksGate(pol, gates) {
-				pp.ExtAuth = backendKey(pol, ext)
-			} else {
-				rule := str(ext, "grpc", "contextExtensions", "profile")
-				chain := str(ext, "grpc", "contextExtensions", "continuity")
-				if (rule != "" && !rules[rule]) || (rule == "" && chain != "" && chain != ic.GetName()) {
-					continue // another chain's rule
-				}
-				pp.Rule, pp.FailureMode = &rule, str(ext, "failureMode")
-				if pp.FailureMode == "" {
-					pp.FailureMode = "FailClosed"
-				}
+		if rule, chain, asks, other := askedRule(pol, gates); other != "" {
+			pp.ExtAuth = other
+		} else if asks {
+			if rule == ic.GetName()+defaultRuleSuffix && !rules[rule] {
+				rule, chain = "", ic.GetName()
 			}
+			if (rule != "" && !rules[rule]) || (rule == "" && chain != "" && chain != ic.GetName()) {
+				continue // another chain's rule
+			}
+			pp.Rule, pp.FailureMode = &rule, failureMode(pol)
 		}
 		if pp.Rule == nil && (issuer == "" || !trustsIssuer(pol, issuer)) {
 			continue
@@ -342,6 +338,50 @@ func (a *Assurance) gate(ns string) *GateRef {
 		return g
 	}
 	return nil
+}
+
+// An Enterprise policy asks Solo's ext-auth service for a rule through the
+// AuthConfig the continuity controller writes for it: assurance-<rule>, the
+// chain's default rule assurance-<chain>-default.
+const (
+	authConfigPrefix  = "assurance-"
+	defaultRuleSuffix = "-default"
+)
+
+// askedRule: the rule a policy asks for (and the chain, when it names one),
+// through the gate (extAuth) or Solo's ext-auth service (entExtAuth); other:
+// where its ext-auth goes when that's something else.
+func askedRule(pol *unstructured.Unstructured, gates map[string]bool) (rule, chain string, asks bool, other string) {
+	if ext := obj(pol.Object, "spec", "traffic", "extAuth"); ext != nil {
+		if !asksGate(pol, gates) {
+			return "", "", false, backendKey(pol, ext)
+		}
+		return str(ext, "grpc", "contextExtensions", "profile"), str(ext, "grpc", "contextExtensions", "continuity"), true, ""
+	}
+	if ent := obj(pol.Object, "spec", "traffic", "entExtAuth"); ent != nil {
+		ref := str(ent, "authConfigRef", "name")
+		if ref == "" || !strings.HasPrefix(ref, authConfigPrefix) {
+			if ref == "" {
+				return "", "", false, backendKey(pol, ent)
+			}
+			ns := str(ent, "authConfigRef", "namespace")
+			if ns == "" {
+				ns = pol.GetNamespace()
+			}
+			return "", "", false, "AuthConfig " + ns + "/" + ref
+		}
+		return strings.TrimPrefix(ref, authConfigPrefix), "", true, ""
+	}
+	return "", "", false, ""
+}
+
+// failureMode: what a policy asking for a rule does when nothing answers;
+// Solo's ext-auth service always fails closed.
+func failureMode(pol *unstructured.Unstructured) string {
+	if m := str(pol.Object, "spec", "traffic", "extAuth", "failureMode"); m != "" {
+		return m
+	}
+	return "FailClosed"
 }
 
 // asksGate: the policy's extAuth is one of the gates (a backendRef without a
@@ -521,14 +561,9 @@ func (a *Assurance) Get(w http.ResponseWriter, r *http.Request) {
 // the rules as saved or with the body's draft over them, and optionally one
 // session (what if).
 func (a *Assurance) Evaluate(w http.ResponseWriter, r *http.Request) {
-	ns, name := r.PathValue("ns"), r.PathValue("name")
-	if a.instance(ns, name) == nil {
-		http.Error(w, "no such IdentityContinuity", http.StatusNotFound)
-		return
-	}
-	g := a.gate(ns)
-	if g == nil || g.EvaluatePort == 0 {
-		http.Error(w, fmt.Sprintf("no assurance gate in %s: a Service labelled %s with a port named evaluate", ns, gateLabel), http.StatusServiceUnavailable)
+	name := r.PathValue("name")
+	g := a.evaluateGate(w, r)
+	if g == nil {
 		return
 	}
 	var body map[string]any
@@ -552,6 +587,46 @@ func (a *Assurance) Evaluate(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, io.LimitReader(resp.Body, 4<<20))
+}
+
+// Policy (GET /api/assurance/{ns}/{name}/policy): the gate's decision
+// logic, the Rego it decides every request with, as text. Read-only: the
+// rules are what people edit.
+func (a *Assurance) Policy(w http.ResponseWriter, r *http.Request) {
+	g := a.evaluateGate(w, r)
+	if g == nil {
+		return
+	}
+	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, g.url("/v1/policy"), nil)
+	resp, err := a.http.Do(req)
+	if err != nil {
+		http.Error(w, "the assurance gate didn't answer: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, fmt.Sprintf("the assurance gate's policy answer: %s %s", resp.Status, strings.TrimSpace(string(body))), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write(body)
+}
+
+// evaluateGate: the gate serving the request's chain, by its evaluate port;
+// nil (with the error written) when there's no such chain or gate.
+func (a *Assurance) evaluateGate(w http.ResponseWriter, r *http.Request) *GateRef {
+	ns, name := r.PathValue("ns"), r.PathValue("name")
+	if a.instance(ns, name) == nil {
+		http.Error(w, "no such IdentityContinuity", http.StatusNotFound)
+		return nil
+	}
+	g := a.gate(ns)
+	if g == nil || g.EvaluatePort == 0 {
+		http.Error(w, fmt.Sprintf("no assurance gate in %s: a Service labelled %s with a port named evaluate", ns, gateLabel), http.StatusServiceUnavailable)
+		return nil
+	}
+	return g
 }
 
 func (g *GateRef) url(path string) string {
@@ -687,12 +762,15 @@ func (a *Assurance) PutPolicyPoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cur.SetResourceVersion(in.ResourceVersion)
-	if ext := obj(cur.Object, "spec", "traffic", "extAuth"); ext != nil && !asksGate(cur, a.gates()) {
-		http.Error(w, fmt.Sprintf("%s/%s already sends extAuth to %s: the gate can't be added beside it", pns, pname, backendKey(cur, ext)), http.StatusConflict)
+	if _, _, _, other := askedRule(cur, a.gates()); other != "" {
+		http.Error(w, fmt.Sprintf("%s/%s already sends ext-auth to %s: the rules can't be added beside it", pns, pname, other), http.StatusConflict)
 		return
 	}
+	// whichever way it asks now goes; the decision service's own answer
+	// says how it asks from here on
+	unstructured.RemoveNestedField(cur.Object, "spec", "traffic", "extAuth")
+	unstructured.RemoveNestedField(cur.Object, "spec", "traffic", "entExtAuth")
 	if in.Rule == nil {
-		unstructured.RemoveNestedField(cur.Object, "spec", "traffic", "extAuth")
 		if len(obj(cur.Object, "spec", "traffic")) == 0 {
 			unstructured.RemoveNestedField(cur.Object, "spec", "traffic")
 		}
@@ -701,17 +779,19 @@ func (a *Assurance) PutPolicyPoint(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "bad rule name", http.StatusBadRequest)
 			return
 		}
-		ext, err := a.policyPoint(r.Context(), g, *in.Rule, name)
+		pp, err := a.policyPoint(r.Context(), g, *in.Rule, name)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
-		ext["backendRef"] = map[string]any{"kind": "Service", "name": g.Name, "namespace": g.Namespace, "port": g.GRPCPort}
-		if err := a.allowCaller(r.Context(), cl, g, cur); err != nil {
-			httpErr(w, err)
-			return
+		if pp.NeedsBackendRef {
+			pp.Spec["backendRef"] = map[string]any{"kind": "Service", "name": g.Name, "namespace": g.Namespace, "port": g.GRPCPort}
+			if err := a.allowCaller(r.Context(), cl, g, cur); err != nil {
+				httpErr(w, err)
+				return
+			}
 		}
-		if err := unstructured.SetNestedField(cur.Object, ext, "spec", "traffic", "extAuth"); err != nil {
+		if err := unstructured.SetNestedField(cur.Object, pp.Spec, "spec", "traffic", pp.Field); err != nil {
 			httpErr(w, err)
 			return
 		}
@@ -728,8 +808,17 @@ func (a *Assurance) PutPolicyPoint(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"resourceVersion": out.GetResourceVersion()})
 }
 
-// policyPoint: the extAuth the gate says a policy needs to ask it for a rule.
-func (a *Assurance) policyPoint(ctx context.Context, g *GateRef, rule, continuity string) (map[string]any, error) {
+// pointSpec: how a policy asks for a rule, as the gate answers it: the
+// policy field (extAuth to the gate itself, entExtAuth to Solo's ext-auth
+// service) and its value; NeedsBackendRef: the gate's Service goes in it.
+type pointSpec struct {
+	Field           string         `json:"field"`
+	Spec            map[string]any `json:"spec"`
+	NeedsBackendRef bool           `json:"needsBackendRef"`
+}
+
+// policyPoint: how the gate says a policy asks for a rule.
+func (a *Assurance) policyPoint(ctx context.Context, g *GateRef, rule, continuity string) (*pointSpec, error) {
 	q := url.Values{"continuity": {continuity}}
 	if rule != "" {
 		q.Set("rule", rule)
@@ -740,11 +829,12 @@ func (a *Assurance) policyPoint(ctx context.Context, g *GateRef, rule, continuit
 		return nil, fmt.Errorf("the assurance gate didn't answer: %w", err)
 	}
 	defer resp.Body.Close()
-	var ext map[string]any
-	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&ext) != nil {
+	var pp pointSpec
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&pp) != nil ||
+		(pp.Field != "extAuth" && pp.Field != "entExtAuth") || pp.Spec == nil {
 		return nil, fmt.Errorf("the assurance gate's policy-point answer: %s", resp.Status)
 	}
-	return ext, nil
+	return &pp, nil
 }
 
 // allowCaller: the policy's namespace may name the gate, and its gateway may

@@ -17,18 +17,14 @@ import 'monaco-editor/features/multicursor/register'
 import 'monaco-editor/features/suggest/register'
 import 'monaco-editor/features/wordHighlighter/register'
 import 'monaco-editor/features/wordOperations/register'
-import 'monaco-editor/languages/features/json/register'
 import 'monaco-editor/languages/definitions/yaml/register'
-import 'monaco-editor/languages/definitions/hcl/register'
 import editorWorker from 'monaco-editor/editor/editor.worker?worker'
-import jsonWorker from 'monaco-editor/language/json/json.worker?worker'
 
 // Monaco from the bundle, not a CDN: the observatory works offline and
 // under a strict CSP. Only the editor core, the editing features it uses,
-// and three languages: YAML (the resource editor) and HCL (the assurance
-// rules' Code tab), tokenized in the page, and JSON (the directory sync's
-// Code tab, checked in its own worker).
-self.MonacoEnvironment = { getWorker: (_, label) => (label === 'json' ? new jsonWorker() : new editorWorker()) }
+// and the languages tokenized in the page: YAML (the resource editor, the
+// directory sync's and assurance rules' Code tabs), and the two below.
+self.MonacoEnvironment = { getWorker: () => new editorWorker() }
 loader.config({ monaco })
 monaco.editor.defineTheme('solo-dark', {
   base: 'vs-dark', inherit: true, rules: [{ token: 'type', foreground: 'b082fb' }, { token: 'string', foreground: 'e6d6ff' }],
@@ -51,6 +47,23 @@ monaco.languages.setMonarchTokensProvider('fabric-routing', {
       [/\b(request|source|jwt|mcp)\b/, 'variable'],
       [/[&|!=<>?:]+/, 'operator'],
       [/\d+/, 'number'],
+    ],
+  },
+})
+
+// Rego, read-only in the assurance rules' Code tab: the gate's decision
+// logic. Monaco has no Rego of its own.
+monaco.languages.register({ id: 'rego' })
+monaco.languages.setMonarchTokensProvider('rego', {
+  keywords: ['package', 'import', 'default', 'if', 'else', 'not', 'some', 'every', 'in', 'contains', 'with', 'as', 'true', 'false', 'null'],
+  tokenizer: {
+    root: [
+      [/#.*$/, 'comment'],
+      [/`[^`]*`/, 'string'],
+      [/"([^"\\]|\\.)*"/, 'string'],
+      [/[A-Za-z_][A-Za-z0-9_]*/, { cases: { '@keywords': 'keyword', '@default': 'identifier' } }],
+      [/\d+(\.\d+)?([eE][-+]?\d+)?/, 'number'],
+      [/:=|==|!=|<=|>=|[=<>|&+\-*/%]/, 'operator'],
     ],
   },
 })
