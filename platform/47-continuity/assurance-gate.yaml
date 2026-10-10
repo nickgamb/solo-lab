@@ -58,6 +58,9 @@ spec:
         env:
         - name: POD_NAMESPACE
           valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+        # Enterprise: policy points name the rule's AuthConfig in Solo's
+        # ext-auth service; the gate still answers the Observatory and AuthZEN
+        - {name: EXTAUTH_NAMESPACE, value: "${ASSURANCE_EXTAUTH_NS}"}
         ports:
         - {name: grpc, containerPort: 9001}
         - {name: evaluate, containerPort: 9002}
@@ -67,8 +70,8 @@ spec:
         livenessProbe:
           grpc: {port: 9001}
         resources:
-          requests: {cpu: 10m, memory: 24Mi}
-          limits: {memory: 64Mi}
+          requests: {cpu: 10m, memory: 48Mi}
+          limits: {memory: 160Mi}   # the compiled Rego (OPA) as well
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true

@@ -45,9 +45,10 @@ fresh ID-JAG per call, verified on the gateway's own routes; the lab's
 `idtoken-exchange` supplies the ID token from the broker), prompt guards, provider failover, cost per
 call, API keys and format translation, MCP guardrails, and the MCP sign-in
 front door for AI clients (agentgateway's MCP authorization). Assurance rules
-and the assurance gate are the lab's own too: agentgateway's `extAuth` asks
-the gate on both editions (`AgentgatewayPolicy` or
-`EnterpriseAgentgatewayPolicy`).
+are decided by the same Rego module on both: on Enterprise, Solo's ext-auth
+service runs it (`entExtAuth` on `EnterpriseAgentgatewayPolicy`, an
+AuthConfig per rule, replicated with the class's shared extensions); on OSS,
+the lab's assurance gate does (`extAuth` on `AgentgatewayPolicy`).
 
 Solo Enterprise also offers, per Solo's pages, and this lab doesn't show yet:
 

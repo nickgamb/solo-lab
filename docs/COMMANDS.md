@@ -147,7 +147,11 @@ jq -r .access_token /tmp/bob.json | jq -R 'split(".")[1] | gsub("-";"+") | gsub(
 | `kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o jsonpath='{.spec.assurancePolicy}'` | the default rule: what every rule starts from |
 | `kubectl --context kind-solo-lab get wlp advisor-workspace -n sv-identity -o jsonpath='{.status}' \| jq` | a rule's eligible IdPs, clients as the broker has them, and conditions |
 | `kubectl --context kind-solo-lab get events -n sv-identity --field-selector involvedObject.kind=WorkloadProfile` | rules failing closed and recovering |
-| `kubectl --context kind-solo-lab get "$(kubectl --context kind-solo-lab api-resources -o name \| grep agentgatewaypolicies \| paste -sd, -)" -A -o custom-columns='NAMESPACE:.metadata.namespace,POLICY:.metadata.name,EXTAUTH:.spec.traffic.extAuth.backendRef.name,RULE:.spec.traffic.extAuth.grpc.contextExtensions.profile,FAILURE:.spec.traffic.extAuth.failureMode'` | every gateway policy, the external authorization it asks (the assurance gate, for which rule) and how it fails |
+| `kubectl --context kind-solo-lab get "$(kubectl --context kind-solo-lab api-resources -o name \| grep agentgatewaypolicies \| paste -sd, -)" -A -o custom-columns='NAMESPACE:.metadata.namespace,POLICY:.metadata.name,AUTHCONFIG:.spec.traffic.entExtAuth.authConfigRef.name,EXTAUTH:.spec.traffic.extAuth.backendRef.name,RULE:.spec.traffic.extAuth.grpc.contextExtensions.profile,FAILURE:.spec.traffic.extAuth.failureMode'` | every gateway policy and the rule it asks for: on Enterprise the AuthConfig (`assurance-<rule>`), on OSS the gate, the rule and how it fails |
+| `kubectl --context kind-solo-lab get authconfig -n agentgateway-system -l continuity.lab.solo.io/instance` | Enterprise: one AuthConfig per rule, written by the continuity controller, and whether Solo's ext-auth service accepted it |
+| `kubectl --context kind-solo-lab get cm assurance-state-sterling-vance -n agentgateway-system -o jsonpath='{.data.state\.rego}' \| tail -n +4 \| sed 's/^state := //' \| jq '{generated_at, current, rules}'` | Enterprise: the state Solo's ext-auth service decides from |
+| `kubectl --context kind-solo-lab get pods,pdb -n agentgateway-system -l app.kubernetes.io/instance=ext-auth-service-enterprise-agentgateway` | Enterprise: Solo's ext-auth service's replicas and how many may be down at once |
+| `kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o jsonpath='{.status.conditions[?(@.type=="AssuranceDelivered")].message}'` | Enterprise: the rules delivered to Solo's ext-auth service |
 | `kubectl --context kind-solo-lab get svc -A -l continuity.lab.solo.io/assurance-gate` | the assurance gates (any Service with the label, whatever its name) |
 | `kubectl --context kind-solo-lab get pods -n sv-identity -l app=assurance-gate -o wide` | the gate's pods and their nodes |
 | `kubectl --context kind-solo-lab get pdb assurance-gate -n sv-identity` | how many may be down at once |
@@ -155,10 +159,12 @@ jq -r .access_token /tmp/bob.json | jq -R 'split(".")[1] | gsub("-";"+") | gsub(
 | `kubectl --context kind-solo-lab get referencegrant,authorizationpolicy -n sv-identity -l continuity.lab.solo.io/assurance-gate-caller` | the grants the Observatory added when enforcement was turned on at another gateway |
 | `kubectl --context kind-solo-lab -n sv-identity logs -l app=assurance-gate --prefix -f \| grep '"msg":"decision"'` | the gate's decisions: rule, allow, deny or would-deny, why, the session's IdP and acr |
 | `kubectl --context kind-solo-lab -n agentgateway-system logs deploy/ai-gateway \| grep -o 'continuity.decision="[^"]*"'` | the decisions as ai-gateway logged them |
-| `kubectl --context kind-solo-lab patch wlp advisor-workspace -n sv-identity --type merge -p '{"spec":{"assurance":{"minimum":"AAL1"}}}'` | change what a rule requires (the gate applies it to the next request) |
+| `kubectl --context kind-solo-lab patch wlp advisor-workspace -n sv-identity --type merge -p '{"spec":{"assurance":{"minimum":"AAL1"}}}'` | change what a rule requires (applied to the next request, within a controller pass on Enterprise) |
 | `kubectl --context kind-solo-lab patch wlp advisor-workspace -n sv-identity --type merge -p '{"spec":{"mode":"ReportOnly"}}'` | let its refusals through, logged as `would-deny`, to see a change's effect first (`Enforce` to enforce again) |
 | `kubectl --context kind-solo-lab -n sv-identity port-forward svc/assurance-gate 19002:evaluate` | the gate's evaluate port on your machine (its mesh policy lets only the Observatory call it in the cluster) |
 | `curl -s localhost:19002/v1/evaluate -d '{"continuity": "sterling-vance", "session": {"idp": "contingency", "acr": "aal1"}}' \| jq` | what every rule decides for one sign-in, from the gate, through that port-forward |
+| `curl -s localhost:19002/access/v1/evaluation -d '{"subject": {"type": "user", "id": "bob", "properties": {"idp": "contingency", "acr": "aal1"}}, "resource": {"type": "assurance_rule", "id": "advisor-workspace"}, "action": {"name": "call"}}' \| jq` | the same, as an AuthZEN access evaluation |
+| `curl -s localhost:19002/v1/policy` | the Rego module that decides the rules |
 | `make continuity-verify` | the failover, kill switch and live-rule checks |
 
 The kill switch itself is in [IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#kill-switch).

@@ -28,7 +28,7 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "gate" {
 		os.Exit(runGate(os.Args[2:]))
 	}
-	var ns, caFile, metrics, health, syncImage, syncCA string
+	var ns, caFile, metrics, health, syncImage, syncCA, extAuthNS string
 	var leaderElect bool
 	flag.StringVar(&ns, "namespace", os.Getenv("POD_NAMESPACE"), "namespace to watch (IdentityContinuity and credential Secrets)")
 	flag.StringVar(&caFile, "ca-file", "", "extra CA bundle to trust for upstream probes (system roots always apply)")
@@ -37,6 +37,7 @@ func main() {
 	flag.BoolVar(&leaderElect, "leader-elect", true, "")
 	flag.StringVar(&syncImage, "sync-image", os.Getenv("SYNC_IMAGE"), "image of the scheduled profile sync (this controller's)")
 	flag.StringVar(&syncCA, "sync-ca-configmap", "", "ConfigMap (ca.crt) the profile sync trusts besides the system roots")
+	flag.StringVar(&extAuthNS, "extauth-namespace", os.Getenv("EXTAUTH_NAMESPACE"), "namespace of Solo's ext-auth service, which enforces the assurance rules (Enterprise); empty: the assurance gate does")
 	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -71,8 +72,9 @@ func main() {
 		Recorder: mgr.GetEventRecorder("continuity-controller"),
 		Prober:   prober,
 
-		SyncImage:       syncImage,
-		SyncCAConfigMap: syncCA,
+		SyncImage:        syncImage,
+		SyncCAConfigMap:  syncCA,
+		ExtAuthNamespace: extAuthNS,
 	}
 	if err := r.SetupWithManager(mgr); err != nil {
 		log.Error(err, "controller")

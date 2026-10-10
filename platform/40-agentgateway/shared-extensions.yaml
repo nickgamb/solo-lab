@@ -1,0 +1,28 @@
+# Enterprise: the services every enterprise-agentgateway gateway shares,
+# set once for the class (its parametersRef, install.sh).
+# Solo's ext-auth service decides every assurance rule (layer 47), so it is
+# replicated like the gateways it serves: 3 replicas across zones, never
+# fewer than 2 through a drain. A gateway that can't reach it refuses.
+apiVersion: ${AGW_PARAMS_API}
+kind: ${AGW_PARAMS_KIND}
+metadata:
+  name: shared-extensions
+  namespace: agentgateway-system
+spec:
+  sharedExtensions:
+    extauth:
+      enabled: true
+      deployment:
+        spec:
+          replicas: 3
+          template:
+            spec:
+              topologySpreadConstraints:
+              - maxSkew: 1
+                topologyKey: topology.kubernetes.io/zone
+                whenUnsatisfiable: ScheduleAnyway
+                labelSelector:
+                  matchLabels: {app.kubernetes.io/instance: ext-auth-service-enterprise-agentgateway}
+      podDisruptionBudget:
+        spec:
+          minAvailable: 2

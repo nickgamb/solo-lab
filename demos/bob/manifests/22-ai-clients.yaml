@@ -63,6 +63,7 @@ spec:
   targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: bob-workspace-clients}]
   traffic:
     jwtAuthentication:
+      ${ASSURANCE_JWT_KEEP}
       mode: Strict
       providers:
       - issuer: https://idp.${SV_DOMAIN}/realms/sterling-vance
@@ -85,16 +86,7 @@ spec:
         # an AI client S&V registered, through the edge, acting for an advisor
         - 'source.identity.namespace == "kgateway-system" && source.identity.serviceAccount == "edge" && jwt.azp == "sv-mcp-client" && "advisors" in jwt.groups'
     # the same assurance rule as the firm's own agents (advisor-workspace)
-    extAuth:
-      backendRef: {kind: Service, name: assurance-gate, namespace: sv-identity, port: 9001}
-      failureMode: FailClosed
-      grpc:
-        contextExtensions: {profile: advisor-workspace}
-        requestMetadata:
-          continuity: >-
-            {"iss": jwt.iss, "sub": jwt.sub, "idp": has(jwt.idp) ? jwt.idp : "",
-             "acr": has(jwt.idp_acr) ? jwt.idp_acr : "", "amr": has(jwt.idp_amr) ? jwt.idp_amr : "",
-             "auth_time": has(jwt.idp_auth_time) ? jwt.idp_auth_time : 0}
+    ${ASSURANCE_POINT_OPEN}advisor-workspace${ASSURANCE_POINT_CLOSE}
 ---
 apiVersion: ${AGW_POLICY_API}
 kind: ${AGW_POLICY_KIND}
@@ -103,6 +95,7 @@ spec:
   targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: ledgerline-clients}]
   traffic:
     jwtAuthentication:
+      ${ASSURANCE_JWT_KEEP}
       mode: Strict
       providers:
       - issuer: https://idp.${SV_DOMAIN}/realms/sterling-vance
@@ -124,16 +117,7 @@ spec:
         matchExpressions:
         - 'source.identity.namespace == "kgateway-system" && source.identity.serviceAccount == "edge" && jwt.azp == "sv-mcp-client" && "advisors" in jwt.groups'
     # the same assurance rule as the firm's agents' way to Ledgerline
-    extAuth:
-      backendRef: {kind: Service, name: assurance-gate, namespace: sv-identity, port: 9001}
-      failureMode: FailClosed
-      grpc:
-        contextExtensions: {profile: ledgerline-research}
-        requestMetadata:
-          continuity: >-
-            {"iss": jwt.iss, "sub": jwt.sub, "idp": has(jwt.idp) ? jwt.idp : "",
-             "acr": has(jwt.idp_acr) ? jwt.idp_acr : "", "amr": has(jwt.idp_amr) ? jwt.idp_amr : "",
-             "auth_time": has(jwt.idp_auth_time) ? jwt.idp_auth_time : 0}
+    ${ASSURANCE_POINT_OPEN}ledgerline-research${ASSURANCE_POINT_CLOSE}
     # the subject of the ID-JAG exchange, as for the firm's agents
     # (xaa/ledgerline.yaml): Bob's ID token from S&V's broker
     extProc:

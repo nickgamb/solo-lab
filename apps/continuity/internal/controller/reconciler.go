@@ -74,12 +74,16 @@ type Reconciler struct {
 	// The profile sync's image (this controller's) and the CA bundle
 	// ConfigMap it mounts.
 	SyncImage, SyncCAConfigMap string
+	// Where Solo's ext-auth service reads the assurance rules (Enterprise);
+	// empty: the lab's assurance gate enforces them, nothing is written.
+	ExtAuthNamespace string
 
 	mu        sync.Mutex
 	brokers   map[types.NamespacedName]*keycloak.Client
 	discovery map[string]*probe.Discovery // last good discovery per instance/tier
 	profiles  map[types.NamespacedName]profileMark
 	signIn    map[types.NamespacedName]signInMark // when each broker's sign-in clients were last read
+	extauth   map[types.NamespacedName]extAuthMark
 }
 
 type signInMark struct {
@@ -165,6 +169,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		// after Keycloak, so a hint only ever names an IdP set up there
 		r.reconcileRouting(ctx, &ic, byName, keep)
 	}
+	r.reconcileExtAuth(ctx, &ic)
 	r.setConditions(&ic, byName, active, kcErr, egressErr)
 	r.setProfileCondition(&ic, profileErr)
 	r.setTrustCondition(&ic)

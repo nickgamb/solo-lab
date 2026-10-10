@@ -22,8 +22,9 @@ The broker carries how the upstream authenticated each sign-in (its `acr`,
 ([assurance](#assurance)), and each group of workloads says what it requires
 when identity fails over ([assurance rules](#assurance-rules)): how
 critical it is, which IdPs may vouch for its users, and the assurance level a
-sign-in must prove. The assurance gate enforces that at the workloads'
-gateways and refuses what can't meet it. The broker never steps anyone up
+sign-in must prove. One Rego module decides that at the workloads'
+gateways (Solo's ext-auth service on Enterprise, the lab's assurance gate on
+OSS) and refuses what can't meet it. The broker never steps anyone up
 itself: a stronger sign-in happens at the user's IdP, or the request fails
 closed. The controller also checks that every IdP in the chain still accepts
 S&V's registration the way the broker uses it
@@ -31,7 +32,7 @@ S&V's registration the way the broker uses it
 
 [![Identity continuity at 4x speed: the upstream IdP signing people in, a simulated outage at the firm's egress, failover to the next IdP, and failback](videos/identity-continuity.gif)](videos/identity-continuity.mp4)
 
-- API and controller: `apps/continuity` (`IdentityContinuity` and `WorkloadProfile`, `continuity.lab.solo.io/v1alpha1`; the assurance gate is its `gate` command)
+- API and controller: `apps/continuity` (`IdentityContinuity` and `WorkloadProfile`, `continuity.lab.solo.io/v1alpha1`; the decision logic is `internal/assurance/assurance.rego`; the assurance gate is its `gate` command)
 - Install: `platform/47-continuity` (`make layer-47`, after `45-identity`)
 - Demo cards: [cards/identity-continuity.html](cards/identity-continuity.html) (failover), [cards/assurance.html](cards/assurance.html) (assurance rules)
 - Checks: `make continuity-verify`
@@ -614,12 +615,55 @@ With S&V's own Keycloak cut, the chain fails over to the contingency IdP:
 `advisor-workspace` and `ledgerline-research` go `FailedClosed`, and
 `agent-console` keeps serving (`Degraded`).
 
-### The assurance gate
+### Where the rules are decided
 
-The gate enforces the rules: an Envoy external authorization service
-(gRPC), the continuity image's `gate` command, three replicas in
-`sv-identity` (`platform/47-continuity/assurance-gate.yaml`). A gateway
-policy asks it in the same agentgateway policy as its JWT check:
+One Rego module decides the rules:
+`apps/continuity/internal/assurance/assurance.rego`. Whatever runs it gives
+the same answer, so the gateways, the Observatory's what-if and any AuthZEN
+client agree:
+
+| Edition | Decides each request | How a gateway policy asks |
+| --- | --- | --- |
+| Enterprise | Solo's ext-auth service (`agentgateway-system`), its OPA running the module | `entExtAuth`, naming the rule's AuthConfig |
+| OSS | the assurance gate (`sv-identity`), the continuity image's `gate` command, running the module through OPA's Go library | `extAuth` (Envoy external authorization, gRPC), failing closed |
+
+The gate runs on both editions: it answers the Observatory and AuthZEN
+clients, and says how a policy asks for a rule (`GET
+/v1/policy-point?rule=&continuity=` on its evaluate port), so whatever
+writes a policy point writes what the edition's decision service reads. The
+demo's policies take that line from `config/lab.env`
+(`ASSURANCE_POINT_OPEN`/`CLOSE`).
+
+**Enterprise.** The policy asks in the same agentgateway policy as its JWT
+check:
+
+```yaml
+traffic:
+  jwtAuthentication: {mode: Strict, providers: [...]}   # the broker's tokens
+  entExtAuth:
+    authConfigRef: {namespace: agentgateway-system, name: assurance-advisor-workspace}
+```
+
+The continuity controller writes, in `agentgateway-system`:
+
+- ConfigMap `assurance-state-<chain>`, a Rego data module: every rule as it
+  applies, the chain's IdPs and what their assertions mean, the IdPs signing
+  people in now, and the broker's issuer and signing keys. It is rewritten
+  when any of that changes, and every 20 s regardless;
+- one AuthConfig per rule, `assurance-<rule>` (the default rule:
+  `assurance-<chain>-default`), each loading the module (ConfigMap
+  `assurance-policy`, from the install) beside the chain's state and asking
+  it for that rule.
+
+The ext-auth service verifies the bearer token itself against the broker's
+keys (signature, issuer, expiry) before reading its claims. The
+IdentityContinuity's `AssuranceDelivered` condition says which rules were
+delivered. Solo's ext-auth service is shared by the class's gateways and set
+once for it (`platform/40-agentgateway/shared-extensions.yaml`): three
+replicas across zones, a PodDisruptionBudget of 2. A gateway that can't
+reach it refuses the request.
+
+**OSS.** The policy asks the gate:
 
 ```yaml
 traffic:
@@ -637,45 +681,67 @@ traffic:
 ```
 
 `contextExtensions` names the rule (`profile`) and, where the namespace has
-more than one chain, the chain (`continuity`). The gate publishes this
-stanza itself (`GET /v1/policy-point?rule=&continuity=` on its evaluate
-port), so whatever writes a policy point writes what the gate reads.
+more than one chain, the chain (`continuity`). The gate reads the verified
+token's claims as metadata, never a header the caller could set.
 
-It reads the verified token's claims as metadata, never a header the caller
-could set, and admits the session if the rule takes sessions from that IdP
-(`allowedIdPs`, break-glass, `sessions`) and what the IdP asserted meets its
-requirements:
+**The answers**, either way. A session is admitted if the rule takes
+sessions from that IdP (`allowedIdPs`, break-glass, `sessions`) and what the
+IdP asserted meets its requirements:
 
 | Answer | When |
 | --- | --- |
 | allowed | the session meets the rule, or the rule is `ReportOnly` (`would-deny` when it wouldn't) or `Off` |
 | `401`, `WWW-Authenticate: Bearer error="insufficient_user_authentication"` (RFC 9470) | the user could pass by authenticating more strongly at their IdP: below the minimum, not phishing-resistant, or too long ago. `acr_values` names what to ask the active IdP for, when one of its mapped values meets the rule; `max_age`, when age was the reason |
-| `403` | the rule doesn't take this session at all: an IdP not allowed, break-glass, a session from an IdP the chain has moved off (`ActiveIdPOnly`), no verified token, or a rule the gate doesn't know |
-| `503` | the gate can't decide: it hasn't read the rules yet, or, for an `ActiveIdPOnly` rule, it has had no word from the chain for 30 s |
+| `403` | the rule doesn't take this session at all: an IdP not allowed, break-glass, a session from an IdP the chain has moved off (`ActiveIdPOnly`), no verified token, or a rule it doesn't know |
+| `503` | it can't decide an `ActiveIdPOnly` rule: no word from the chain for 30 s (the gate) or a state module older than 60 s (Solo's ext-auth service); the gate also until it has read the rules |
 
 Each answer carries `x-continuity-decision: <allow|deny|would-deny|off|unavailable>
 <rule>: <reason>`, which S&V's gateways log (`continuity.decision`), and a
 refusal's body names the rule and the reason.
 
 **What the rules decide, asked of the gate.** On a second port (`evaluate`,
-9002), the gate answers from the same code that enforces the rules:
-`POST /v1/evaluate` with a chain, optionally a draft of its rules (the
-default rule, IdPs' assurance, rules added, changed or removed), and
-optionally one session (`idp`, `acr`, `amr`, `authTime`). For every rule
-and the default rule it returns the phase, the IdPs that can meet it, each
-IdP's outcome (`Admit`; `Conditional`, when the IdP asserts the value named;
-`Refuse`) with the reason, and the session's decision. It is read only, and
-only the Observatory may call it.
+9002), the gate answers from the same module:
+
+- `POST /v1/evaluate` with a chain, optionally a draft of its rules (the
+  default rule, IdPs' assurance, rules added, changed or removed), and
+  optionally one session (`idp`, `acr`, `amr`, `authTime`). For every rule
+  and the default rule it returns the phase, the IdPs that can meet it, each
+  IdP's outcome (`Admit`; `Conditional`, when the IdP asserts the value
+  named; `Refuse`) with the reason, and the session's decision;
+- `GET /v1/policy`: the module itself;
+- AuthZEN (OpenID AuthZEN Authorization API 1.0): `POST
+  /access/v1/evaluation`, `POST /access/v1/evaluations` and `GET
+  /.well-known/authzen-configuration`. The subject's properties are a
+  verified broker token's claims (`iss`, `idp`, `acr`, `amr`, `auth_time`),
+  the resource is a rule (type `assurance_rule`, id the rule or `default`,
+  property `continuity` optional), and the answer's context carries the
+  verdict, the reason and, for a step-up, `acr_values` and `max_age`:
+
+```sh
+curl -s localhost:19002/access/v1/evaluation -d '{
+  "subject":  {"type": "user", "id": "bob", "properties": {"iss": "https://idp.sterling.lab/realms/sterling-vance", "idp": "contingency", "acr": "aal1"}},
+  "resource": {"type": "assurance_rule", "id": "advisor-workspace"},
+  "action":   {"name": "call"}}'
+```
+
+It is read only, and only the Observatory may call it in the cluster.
 
 It is built not to become what it protects against:
 
-- no secrets, and no call to the broker or an IdP per request;
-- it watches the rules and the chain, so a failover reaches it as it
+- no secrets in the gate, and no call to the broker or an IdP per request
+  by either decision service: Solo's ext-auth service checks tokens against
+  the keys in the state module;
+- the gate watches the rules and the chain, so a failover reaches it as it
   happens, and decides from what it last saw, so an API server outage
   changes nothing but `ActiveIdPOnly` rules (the controller's status writes
-  are its heartbeat);
-- three replicas spread across zones and nodes, a PodDisruptionBudget of 2;
-- only the gateways whose policies ask it may call its gRPC port
+  are its heartbeat; for Solo's ext-auth service, the state module's
+  rewrites are);
+- three replicas of each spread across zones and nodes, a
+  PodDisruptionBudget of 2;
+- the controller may write only its state modules and AuthConfigs in
+  `agentgateway-system` (ValidatingAdmissionPolicy
+  `continuity-assurance-writes`);
+- only the gateways whose policies ask the gate may call its gRPC port
   (AuthorizationPolicy `assurance-gate-callers`, and one per gateway the
   Observatory turns enforcement on at), and a ValidatingAdmissionPolicy
   (`assurance-gate-fail-closed`) refuses any policy that asks it without
@@ -686,8 +752,8 @@ with ports named `grpc` and `evaluate`: that, not its name, is how the
 Observatory finds it, and how the admission policy knows which policies must
 fail closed (each labelled Service is one of its parameters).
 
-Changing the default rule or a rule changes the gate's next decision; no
-gateway policy is touched. A rule no gateway policy asks for isn't enforced,
+Changing the default rule or a rule changes the next decision; no gateway
+policy is touched. A rule no gateway policy asks for isn't enforced,
 whatever it says: the Observatory says so.
 
 ## In the Observatory
@@ -737,16 +803,16 @@ whatever it says: the Observatory says so.
   `keycloak`), URL, scopes, audience (Auth0) and credentials (write-only,
   written to Secret `directory-<idp>`); **Remove** stops syncing it. Each
   IdP's directory has **Test connection** (the saved settings, run as the
-  sync). **Code** edits the same mapping as JSON, each S&V
+  sync). **Code** edits the same mapping as YAML, each S&V
   attribute and the IdPs' attributes paired with it, in chain order
-  (`"department": ["auth0.user_metadata.department", "keycloak.department"]`);
+  (`department: [auth0.user_metadata.department, keycloak.department]`);
   **Schedule** sets the sync's cron, pauses it, switches `removeMissing`,
   shows the last run and runs it now. Directory credentials are write-only and readable by the sync
   alone.
 
   ![Directory sync canvas: Auth0's detected attributes wired to S&V's profile, S&V's own Keycloak written from it](images/observatory-directory-sync-canvas.jpg)
 
-  ![The same mapping as JSON](images/observatory-directory-sync-code.jpg)
+  ![The same mapping as code](images/observatory-directory-sync-code.jpg)
 
   ![Schedule: cron presets, next runs, the last run and Run now](images/observatory-directory-sync-schedule.jpg)
 
@@ -763,8 +829,8 @@ whatever it says: the Observatory says so.
 **Assurance rules** (a button in the rule builder, beside Directory sync):
 the rules, what relies on the broker without one, and the default rule, each
 in the same form; the IdPs and what their sign-ins prove; a what-if for one
-sign-in; and the same as HCL
-([OBSERVATORY.md](OBSERVATORY.md#identity-continuity)). What each rule
+sign-in; and the same as YAML, beside the gate's decision logic in Rego,
+read-only ([OBSERVATORY.md](OBSERVATORY.md#identity-continuity)). What each rule
 decides comes from the assurance gate. Each IdP in the rule builder shows its
 trust checks as a badge, and the banner names the enforced rules failing
 closed.

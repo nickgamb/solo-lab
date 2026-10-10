@@ -265,7 +265,7 @@ scripts/         cluster lifecycle, DNS, CA, machine setup, preflight, helpers (
 platform/NN-*/   one install.sh per layer, applied in order by make platform
 demos/           each story: install.sh, verify.sh, manifests, agents, tools
 apps/observatory Observatory: Go server (server/) and React UI (web/)
-apps/continuity  IdentityContinuity and WorkloadProfile CRDs, controller, directory sync, assurance gate
+apps/continuity  IdentityContinuity and WorkloadProfile CRDs, controller, directory sync, the assurance rules (Rego) and gate
 apps/idtoken-exchange
                  Cross App Access at S&V's egress: the user's ID token from S&V's broker
 tools/           patched upstream builds (kagent, Substrate, Keycloak), the probe
@@ -283,7 +283,7 @@ Layers:
 | `30-kgateway` | the edge: per-party TLS listeners on NodePorts 30080/30443 |
 | `40-agentgateway` | ai-gateway: LLM backend, MCP; on Enterprise the STS for MCP servers' tokens |
 | `45-identity` | S&V's mesh baseline, S&V's broker (Keycloak, `idp.sterling.lab`), S&V's own Keycloak (`login.sterling.lab`, realm `workforce`), its contingency IdP (`login-dr.sterling.lab`), client secrets for S&V components |
-| `47-continuity` | IdentityContinuity and WorkloadProfile CRDs and controller, the directory sync, the assurance gate, S&V egress waypoint |
+| `47-continuity` | IdentityContinuity and WorkloadProfile CRDs and controller, the directory sync, the assurance rules (Solo's ext-auth service on Enterprise, the assurance gate on OSS), S&V egress waypoint |
 | `50-substrate` | Agent Substrate (patched), in the mesh |
 | `60-kagent` | kagent + kmcp (patched), ops agents on Substrate, their tools (kagent-tools, its own release) behind ai-gateway, edge SSO (OSS) |
 | `70-agentregistry` | agentregistry behind S&V SSO |

@@ -103,22 +103,26 @@ else
 fi
 
 step "Admission: the assurance gate fails closed"
-# a policy that asks the gate, changed to let requests through when it can't
-# answer (as an admin might in the policy editor)
+# a policy that asks for the assurance rules, changed to ask a gate and let
+# requests through when it can't answer (as an admin might in the policy
+# editor; on Enterprise it asks Solo's ext-auth service, which always fails
+# closed)
 kind=$(echo "$AGW_POLICY_KIND" | tr '[:upper:]' '[:lower:]')
 gate=$(K get "$kind" bob-workspace-caller -n agentgateway-system -o json 2>/dev/null \
   | jq -c '{apiVersion, kind, metadata: {name: .metadata.name, namespace: .metadata.namespace, resourceVersion: .metadata.resourceVersion}, spec}') || gate=""
 if [ -n "$gate" ]; then
   plural=$(echo "$kind" | sed 's/y$/ie/')s
-  expect '^201 ' "may change the policy that asks the gate (still FailClosed)" \
+  # failopen <gate>: the policy asking that gate, failing open
+  failopen() { jq -c --arg n "$1" '.spec.traffic |= (del(.entExtAuth) | .extAuth = ((.extAuth // {grpc: {}}) + {backendRef: {kind: "Service", name: $n, namespace: "sv-identity", port: 9001}, failureMode: "FailOpen"}))' <<<"$gate"; }
+  expect '^201 ' "may change the policy that asks for the rules (unchanged)" \
     "$(as_admin PUT "/apis/$AGW_POLICY_API/namespaces/agentgateway-system/$plural/bob-workspace-caller" "$gate")"
   expect '^(403|422) .*fails closed' "may not make it fail open" \
-    "$(as_admin PUT "/apis/$AGW_POLICY_API/namespaces/agentgateway-system/$plural/bob-workspace-caller" "$(jq -c '.spec.traffic.extAuth.failureMode = "FailOpen"' <<<"$gate")")"
+    "$(as_admin PUT "/apis/$AGW_POLICY_API/namespaces/agentgateway-system/$plural/bob-workspace-caller" "$(failopen assurance-gate)")"
   # a gate is whatever Service carries the label, not a name: one more, briefly
   K create service clusterip assurance-gate-verify -n sv-identity --tcp=9001 --dry-run=client -o json \
     | jq '.metadata.labels["continuity.lab.solo.io/assurance-gate"] = "true"' | K apply -f - >/dev/null
   on_exit "K delete service assurance-gate-verify -n sv-identity --ignore-not-found >/dev/null 2>&1"
-  other=$(jq -c '.spec.traffic.extAuth.backendRef.name = "assurance-gate-verify" | .spec.traffic.extAuth.failureMode = "FailOpen"' <<<"$gate")
+  other=$(failopen assurance-gate-verify)
   t=0; until r=$(as_admin PUT "/apis/$AGW_POLICY_API/namespaces/agentgateway-system/$plural/bob-workspace-caller" "$other"); echo "$r" | grep -q 'assurance-gate-verify fails closed' || [ $t -ge 10 ]; do sleep 1; t=$((t+1)); done
   expect '^(403|422) .*sv-identity/assurance-gate-verify fails closed' "nor a policy asking another gate, found by its label" "$r"
   K delete service assurance-gate-verify -n sv-identity --ignore-not-found >/dev/null

@@ -362,7 +362,7 @@ else
   restore_llm
 fi
 
-step "Assurance rules: assurance through failover (the assurance gate)"
+step "Assurance rules: assurance through failover ($([ -n "$ASSURANCE_EXTAUTH_NS" ] && echo "Solo's ext-auth service" || echo "the assurance gate"), the same Rego)"
 wlp() { K get wlp "$1" -n sv-identity -o jsonpath="{.status.$2}" 2>/dev/null; }
 claim() { echo "$1" | cut -d. -f2 | python3 -c 'import base64,json,sys; s=sys.stdin.read().strip(); print(json.loads(base64.urlsafe_b64decode(s+"="*(-len(s)%4))).get(sys.argv[1],""))' "$2"; }
 # what the gate said, as the caller sees it
@@ -371,6 +371,14 @@ gate_says() {  # gate_says <token> <url> [tool]: "<status> <x-continuity-decisio
     -H "authorization: Bearer $t" -H "content-type: application/json" -H "accept: application/json, text/event-stream" \
     -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"verify\",\"version\":\"1\"}}}"' "$2" \
     | awk 'NR==1{s=$2} tolower($1)=="x-continuity-decision:"{sub(/^[^:]*: /,""); d=$0} END{gsub(/\r/,"",d); print s, d}'
+}
+# says_within <pattern> <token> <url>: the answer once it matches (a rule
+# change reaches the decision service within a controller pass, and Solo's
+# ext-auth service reloads it), else the last answer after 40 s
+says_within() {
+  local out t=0
+  until out=$(gate_says "$2" "$3"); echo "$out" | grep -qE "$1" || [ $t -ge 40 ]; do sleep 2; t=$((t+2)); done
+  echo "$out"
 }
 if ! K get ns sv-contingency >/dev/null 2>&1 || ! K get idc sterling-vance -n sv-identity -o json | jq -e '.spec.tiers | any(.name == "contingency")' >/dev/null; then
   skipped "failover to a weaker IdP: S&V's contingency IdP isn't in ENTERPRISE_IDP"
@@ -407,24 +415,49 @@ YAML
   # the rule is policy: change it, and the gate follows with no gateway change
   WLP0=$(K get wlp advisor-workspace -n sv-identity -o json | jq -c '{spec: {assurance: .spec.assurance, allowedIdPs: (.spec.allowedIdPs // null), mode: (.spec.mode // "Enforce")}}')
   on_exit "K patch wlp advisor-workspace -n sv-identity --type merge -p '$WLP0' >/dev/null 2>&1"
-  K patch wlp advisor-workspace -n sv-identity --type merge -p '{"spec":{"assurance":{"minimum":"AAL1"}}}' >/dev/null; sleep 4
-  expect_res '^200 allow advisor-workspace: AAL1 via contingency' "minimum lowered to AAL1 on the rule: his contingency session allowed, no policy changed" "$(gate_says "$WEAK" "$GW")"
-  K patch wlp advisor-workspace -n sv-identity --type merge -p '{"spec":{"allowedIdPs":["keycloak"]}}' >/dev/null; sleep 4
-  expect_res '^403 deny advisor-workspace: .*keycloak only, not contingency' "allowedIdPs [keycloak]: a contingency session refused (403)" "$(gate_says "$WEAK" "$GW")"
+  K patch wlp advisor-workspace -n sv-identity --type merge -p '{"spec":{"assurance":{"minimum":"AAL1"}}}' >/dev/null
+  expect_res '^200 allow advisor-workspace: AAL1 via contingency' "minimum lowered to AAL1 on the rule: his contingency session allowed, no policy changed" \
+    "$(says_within '^200 allow' "$WEAK" "$GW")"
+  K patch wlp advisor-workspace -n sv-identity --type merge -p '{"spec":{"allowedIdPs":["keycloak"]}}' >/dev/null
+  expect_res '^403 deny advisor-workspace: .*keycloak only, not contingency' "allowedIdPs [keycloak]: a contingency session refused (403)" \
+    "$(says_within '^403 ' "$WEAK" "$GW")"
   K patch wlp advisor-workspace -n sv-identity --type merge -p "$WLP0" >/dev/null
-  K patch wlp advisor-workspace -n sv-identity --type merge -p '{"spec":{"mode":"ReportOnly"}}' >/dev/null; sleep 4
-  expect_res '^200 would-deny advisor-workspace: assurance AAL1 below AAL2' "mode ReportOnly: his contingency session let through, the gate saying it would refuse it" "$(gate_says "$WEAK" "$GW")"
+  K patch wlp advisor-workspace -n sv-identity --type merge -p '{"spec":{"mode":"ReportOnly"}}' >/dev/null
+  expect_res '^200 would-deny advisor-workspace: assurance AAL1 below AAL2' "mode ReportOnly: his contingency session let through, the decision saying it would refuse it" \
+    "$(says_within '^200 would-deny' "$WEAK" "$GW")"
   K patch wlp advisor-workspace -n sv-identity --type merge -p "$WLP0" >/dev/null
-  # the gate itself: replicated, and never fails open
-  gate_ok() { [ "$(gate_says "$BOB" "$GW" | cut -d' ' -f1)" = 200 ]; }
-  K delete pod -n sv-identity "$(K get pods -n sv-identity -l app=assurance-gate -o jsonpath='{.items[0].metadata.name}')" --wait=false >/dev/null
-  expect_res '^200 ' "one gate replica gone: decisions go on" "$(gate_says "$BOB" "$GW")"
-  K scale deploy assurance-gate -n sv-identity --replicas=0 >/dev/null
-  on_exit "K scale deploy assurance-gate -n sv-identity --replicas=3 >/dev/null 2>&1"
-  K wait pods -n sv-identity -l app=assurance-gate --for=delete --timeout=60s >/dev/null 2>&1
-  expect_res '^(403|500|502|503) ' "no gate at all: refused, never let through (FailClosed)" "$(gate_says "$BOB" "$GW")"
-  K scale deploy assurance-gate -n sv-identity --replicas=3 >/dev/null
-  K rollout status deploy/assurance-gate -n sv-identity --timeout=120s >/dev/null
+  says_within '^401 ' "$WEAK" "$GW" >/dev/null
+  if [ -n "$ASSURANCE_EXTAUTH_NS" ]; then
+    # Solo's ext-auth service decides: replicated, and never fails open
+    EA="-n $ASSURANCE_EXTAUTH_NS -l app.kubernetes.io/instance=ext-auth-service-enterprise-agentgateway"
+    K delete pod -n "$ASSURANCE_EXTAUTH_NS" "$(K get pods $EA -o jsonpath='{.items[0].metadata.name}')" --wait=false >/dev/null
+    expect_res '^200 ' "one ext-auth replica gone: decisions go on" "$(gate_says "$BOB" "$GW")"
+    cut_extauth() { K delete authorizationpolicy verify-extauth-cut -n "$ASSURANCE_EXTAUTH_NS" --ignore-not-found >/dev/null; }
+    on_exit cut_extauth
+    K apply -f - >/dev/null <<YAML
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: verify-extauth-cut, namespace: $ASSURANCE_EXTAUTH_NS}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/instance: ext-auth-service-enterprise-agentgateway}}
+  action: DENY
+  rules: [{from: [{source: {principals: [cluster.local/ns/agentgateway-system/sa/ai-gateway]}}]}]
+YAML
+    expect_res '^(403|500|502|503) ' "the gateway cut off from Solo's ext-auth service: refused, never let through" \
+      "$(says_within '^(403|500|502|503) ' "$BOB" "$GW")"
+    cut_extauth
+    expect_res '^200 ' "reachable again: decisions go on" "$(says_within '^200 ' "$BOB" "$GW")"
+  else
+    # the gate itself: replicated, and never fails open
+    K delete pod -n sv-identity "$(K get pods -n sv-identity -l app=assurance-gate -o jsonpath='{.items[0].metadata.name}')" --wait=false >/dev/null
+    expect_res '^200 ' "one gate replica gone: decisions go on" "$(gate_says "$BOB" "$GW")"
+    K scale deploy assurance-gate -n sv-identity --replicas=0 >/dev/null
+    on_exit "K scale deploy assurance-gate -n sv-identity --replicas=3 >/dev/null 2>&1"
+    K wait pods -n sv-identity -l app=assurance-gate --for=delete --timeout=60s >/dev/null 2>&1
+    expect_res '^(403|500|502|503) ' "no gate at all: refused, never let through (FailClosed)" "$(gate_says "$BOB" "$GW")"
+    K scale deploy assurance-gate -n sv-identity --replicas=3 >/dev/null
+    K rollout status deploy/assurance-gate -n sv-identity --timeout=120s >/dev/null
+  fi
   heal_kc
   t=0; until is_phase Degraded keycloak || is_phase Available keycloak || [ $t -ge 60 ]; do sleep 1; t=$((t+1)); done
   expect_res '^(Available|Degraded) keycloak$' "keycloak healed: advisor-workspace serves again" "$(wlp advisor-workspace phase) $(wlp advisor-workspace serving)"
