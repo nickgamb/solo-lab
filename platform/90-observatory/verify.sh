@@ -38,7 +38,9 @@ expect '^no$' "may not create a Job outside identity continuity" "$(can create j
 
 # raw requests as the admin, through a local proxy: kubectl's own write
 # commands read the object first, which the admin may not do for a Secret
-port=$(free_port); K proxy --port="$port" >/dev/null 2>&1 & proxy=$!; on_exit "kill $proxy 2>/dev/null"
+# kubectl itself in the background (not the K function, whose subshell would
+# be what's killed, leaving kubectl running)
+port=$(free_port); kubectl --context "$KCTX" proxy --port="$port" >/dev/null 2>&1 & proxy=$!; on_exit "kill $proxy 2>/dev/null"
 wait_for "kubectl proxy" 10 1 curl -sf -o /dev/null "http://127.0.0.1:$port/api"
 as_admin() {  # as_admin <method> <path> <json>: the API server's status code and message, as the admin, dry run
   curl -s -X "$1" "http://127.0.0.1:$port$2?dryRun=All&fieldManager=observatory" -H 'Content-Type: application/json' \

@@ -306,13 +306,17 @@ idc_settled() {
 restore_tiers() {
   local cur patch gen s t=${IDC_SWITCH_TIMEOUT:-90}
   [ -n "$_IDP_DRAINED" ] || return 0
-  cur=$(K get idc sterling-vance -n sv-identity -o json) || { warn "restore: no IdentityContinuity sterling-vance"; return 1; }
-  patch=$(echo "$cur" | jq -c --arg d " $_IDP_DRAINED " '[.spec.tiers | to_entries[] | select((.value.name as $n | $d | contains(" \($n) ")) and .value.drain == true)
-    | {op: "test", path: "/spec/tiers/\(.key)/name", value: .value.name}, {op: "remove", path: "/spec/tiers/\(.key)/drain"}]')
-  gen=$(echo "$cur" | jq -r '.metadata.generation')
-  if [ "$patch" != "[]" ] && ! gen=$(K patch idc sterling-vance -n sv-identity --type json -p "$patch" -o jsonpath='{.metadata.generation}'); then
-    warn "could not put back $_IDP_DRAINED: kubectl -n sv-identity edit idc sterling-vance, remove their drain"; return 1
-  fi
+  # the API server may be briefly unavailable (a restart, a lost lease):
+  # keep trying for a minute rather than leave the chain drained
+  s=$(date +%s)
+  until cur=$(K get idc sterling-vance -n sv-identity -o json 2>/dev/null) \
+    && patch=$(echo "$cur" | jq -c --arg d " $_IDP_DRAINED " '[.spec.tiers | to_entries[] | select((.value.name as $n | $d | contains(" \($n) ")) and .value.drain == true)
+         | {op: "test", path: "/spec/tiers/\(.key)/name", value: .value.name}, {op: "remove", path: "/spec/tiers/\(.key)/drain"}]') \
+    && gen=$(echo "$cur" | jq -r '.metadata.generation') \
+    && { [ "$patch" = "[]" ] || gen=$(K patch idc sterling-vance -n sv-identity --type json -p "$patch" -o jsonpath='{.metadata.generation}' 2>/dev/null); }; do
+    [ $(( $(date +%s) - s )) -lt 60 ] || { warn "could not put back $_IDP_DRAINED: kubectl -n sv-identity edit idc sterling-vance, remove their drain"; return 1; }
+    sleep 2
+  done
   _IDP_DRAINED=""
   [ "${1:-}" = wait ] && [ -n "$_IDP_BEFORE" ] || return 0
   s=$(date +%s)
