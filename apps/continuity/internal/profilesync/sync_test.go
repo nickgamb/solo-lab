@@ -759,3 +759,21 @@ func TestRemovesWhoThePrimaryNoLongerHas(t *testing.T) {
 		t.Fatalf("removed %v while the primary can't be listed (result %+v)", b.deleted, res)
 	}
 }
+
+// A primary that says nothing about groups (no directory: the run has no
+// primary) leaves every failover's groups as they are, however few the
+// broker has.
+func TestNoPrimaryLeavesFailoverGroups(t *testing.T) {
+	b := &fakeBroker{users: []keycloak.User{bob()}, links: map[string]map[string]string{"bob": {"kc": "k-bob"}},
+		groups: map[string][]string{}}
+	failover := &groupDir{fakeDir: fakeDir{recs: map[string]map[string]any{"k-bob": {"email": "bob@sterling.lab"}}},
+		groups: map[string][]string{"k-bob": {"advisors"}}}
+	res := Run(context.Background(), b, nil, []IdP{{Name: "kc", Attributes: mappings, Dir: failover}}, writable, nil,
+		Shape{Groups: []string{"advisors", "compliance"}}, nop)
+	if len(res.Errors) > 0 {
+		t.Fatal(res.Errors)
+	}
+	if got, ok := failover.set["k-bob"]; ok {
+		t.Fatalf("failover groups written: %v (the primary said nothing about them)", got)
+	}
+}
