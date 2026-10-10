@@ -150,7 +150,6 @@
         "continuity-assurance"
       ],
       "optionalClientScopes": [
-        "offline_access",
         "address",
         "phone",
         "microprofile-jwt",
@@ -171,7 +170,7 @@
       "serviceAccountsEnabled": false,
       "attributes": {
         "standard.token.exchange.enabled": "true",
-        "access.token.lifespan": "120"
+        "access.token.lifespan": "${MCP_TOKEN_LIFETIME_S}"
       },
       "protocolMappers": [
         {

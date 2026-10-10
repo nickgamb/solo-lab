@@ -24,7 +24,7 @@ AS="https://as.$ALICE_DOMAIN"; CA=(--cacert "$LAB_CA_DIR/ca.crt")
 
 ask_bob() {  # ask_bob <question> -> the agent's last reply (what the UI shows), in a new session
   local body; body=$(jq -nc --arg q "$1" --arg c "$(new_uuid)" '{jsonrpc:"2.0",id:"1",method:"message/send",params:{message:{role:"user",kind:"message",messageId:(now|tostring),contextId:$c,parts:[{kind:"text",text:$q}]}}}')
-  a2a_send "$BOB" "$body" | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"'
+  a2a_ask "$BOB" "$body" | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"'
 }
 alice_decides() {  # alice_decides approved|denied: waits for her next pending ask
   local p fam kind
@@ -90,6 +90,10 @@ expect 'connection failed|http": 0' "Bob's agent's adapter, skipping the firm's 
 o=$(probe_exec sv-agents http://ai-gateway.agentgateway-system/mcp/alice-vault list 2>&1 | tail -1) || true
 probe_ran "$o" || o="probe did not run: $o"
 expect 'http": 40[13]' "another S&V workload can't use Bob's agent's adapter at the gateway" "$o"
+probe_pod kagent kagent-controller
+o=$(probe_exec kagent/probe-kagent-controller http://ai-gateway.agentgateway-system/mcp/alice-vault call get_positions '{}' 2>&1 | tail -1) || true
+probe_ran "$o" || o="probe did not run: $o"
+expect 'Unknown tool|http": 40[013]|isError": true' "the kagent controller calls the vault (no user): refused, it may only list" "$o"
 o=$(probe_exec sv-agents http://alice-vault.meridian:9020/mcp list 2>&1 | tail -1) || true
 probe_ran "$o" || o="probe did not run: $o"
 expect 'connection failed|http": 0' "straight to Alice's vault, skipping Meridian's gateway" "$o"

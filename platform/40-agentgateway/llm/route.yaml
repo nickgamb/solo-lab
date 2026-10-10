@@ -32,7 +32,8 @@ spec:
     # whose turn a call serves: the user's S&V token, which kagent passes on
     # as the API key (apiKeyPassthrough). Verified and logged when valid;
     # Permissive, so a long turn whose token expired mid-way still finishes,
-    # and the pool's identity below still decides who may call.
+    # and the pool's identity below still decides who may call. Valid or not,
+    # it stops here (transformation): no model provider ever sees it.
     jwtAuthentication:
       mode: Permissive
       providers:
@@ -50,6 +51,9 @@ spec:
         - >-
           (source.identity.namespace == "sv-agents" && source.identity.serviceAccount in ["bob-assistant", "advisor-desk"])
           || (source.identity.namespace == "kagent" && source.identity.serviceAccount == "kagent-ops")
+    transformation:
+      request:
+        remove: [authorization]
     # one retry: the call that finds a provider down goes to the next healthy
     # one (llm/policy.yaml takes the failed provider out of rotation)
     retry:

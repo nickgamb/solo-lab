@@ -46,7 +46,7 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | `kagent` | ops agents (k8s, istio, helm, promql, kgateway): SandboxAgents on pool `kagent-ops` | `kagent-ops` | S&V | atenet-router only |
 | `ate-system` | Agent Substrate: ate-api, atenet-router, atelet, ate-controller, valkey, rustfs | one SA per component | platform | ate-api and router: kagent controller only; the rest: `ate-system` only |
 | `agentgateway-system` | ai-gateway (models, every MCP server, Cross App Access) | `ai-gateway` | S&V | the agents' worker pools, by ServiceAccount (models, MCP servers, Cross App Access); the kagent controller (listing MCP servers' tools, Ledgerline's public catalog); itself (the Cross App Access token requests) |
-| `agentgateway-system` | agentgateway's STS (Enterprise: the controller's port 7777, which mints the tokens MCP servers accept) | `enterprise-agentgateway` | S&V | ai-gateway (mints); MCP servers (its keys) |
+| `agentgateway-system` | agentgateway's STS (Enterprise: the controller's port 7777, which mints the tokens MCP servers accept) | `enterprise-agentgateway` | S&V | ai-gateway only; MCP servers read its keys through the ai-gateway (`/sts/jwks.json`, GET, from `sv-mcp`) |
 | `agentgateway-system` | `mcp-guard` (ai-gateway's MCP guardrail: masks account numbers and SSNs in tool results) | `mcp-guard` | S&V | ai-gateway only |
 | `agentgateway-system` | `idtoken-exchange` (ai-gateway's ext-auth for Cross App Access: Bob's ID token from S&V's broker) | `idtoken-exchange` | S&V | ai-gateway only |
 | `agentregistry` | agentregistry | `agentregistry` | S&V | edge only (after S&V sign-in, kgateway OAuth2); its database: agentregistry only |
@@ -130,7 +130,9 @@ as kagent controller → atenet-router → worker, each hop mTLS.
      an RFC 8693 exchange at S&V's broker on OSS) or an ID-JAG toward
      Ledgerline; the user's token never reaches a tool. Provider credentials
      for LLMs. The model route admits only
-     the agents' worker pools, by ServiceAccount. Every model call meets
+     the agents' worker pools, by ServiceAccount; the user's token the
+     agents send there names whose turn it is and stops at the gateway, so
+     no model provider sees it. Every model call meets
      prompt guards (an attempt to override the agent's instructions is
      refused; card and social security numbers are masked before the prompt
      leaves and in the answer), and with `LLM_FALLBACK` a provider that

@@ -198,44 +198,72 @@ func (d *keycloakDir) SetGroups(ctx context.Context, id string, want, managed []
 // manage).
 
 func (d *scim) List(ctx context.Context, first, max int) ([]Entry, error) {
-	var r struct {
-		Resources []map[string]any `json:"Resources"`
-	}
-	q := fmt.Sprintf("/Users?startIndex=%d&count=%d", first+1, max) // SCIM counts from 1
-	if err := d.call(ctx, http.MethodGet, q, nil, &r); err != nil {
-		return nil, err
-	}
-	out := make([]Entry, 0, len(r.Resources))
-	for _, u := range r.Resources {
-		id, _ := u["id"].(string)
-		email, verified := scimEmail(u)
-		out = append(out, Entry{ID: id, Email: email, Verified: verified})
+	out := make([]Entry, 0, max)
+	for len(out) < max {
+		var r struct {
+			Total     int              `json:"totalResults"`
+			Resources []map[string]any `json:"Resources"`
+		}
+		start := first + len(out) // from 0; SCIM counts from 1
+		q := fmt.Sprintf("/Users?startIndex=%d&count=%d", start+1, max-len(out))
+		if err := d.call(ctx, http.MethodGet, q, nil, &r); err != nil {
+			return nil, err
+		}
+		for _, u := range r.Resources {
+			id, _ := u["id"].(string)
+			email, verified := scimEmail(u)
+			out = append(out, Entry{ID: id, Email: email, Verified: verified})
+		}
+		// a server may answer with fewer than asked for (its own page size):
+		// ask again from where it stopped, while it says there are more
+		if len(r.Resources) == 0 || start+len(r.Resources) >= r.Total {
+			break
+		}
 	}
 	return out, nil
 }
 
 // scimEmail is the user's primary email (else the first), and whether the
-// directory verified it: SCIM has no core attribute for that, so it is the
-// email's own "verified" or an extension's emailVerified (Gluu's), else
-// unknown.
+// directory verified that one: SCIM has no core attribute for it, so it is
+// the email's own "verified", else an extension's emailVerified (Gluu's),
+// else unknown.
 func scimEmail(u map[string]any) (string, *bool) {
-	var email string
-	var verified *bool
 	emails, _ := u["emails"].([]any)
+	pick := -1
 	for i, e := range emails {
-		m, _ := e.(map[string]any)
-		v, _ := m["value"].(string)
-		if p, _ := m["primary"].(bool); p || i == 0 {
-			email = v
-			if b, ok := m["verified"].(bool); ok {
-				verified = &b
+		if m, _ := e.(map[string]any); m != nil {
+			if p, _ := m["primary"].(bool); p {
+				pick = i
+				break
 			}
 		}
 	}
-	for k, ext := range u {
-		if m, ok := ext.(map[string]any); ok && strings.HasPrefix(k, "urn:") && verified == nil {
-			if b, ok := m["emailVerified"].(bool); ok {
-				verified = &b
+	if pick < 0 && len(emails) > 0 {
+		pick = 0
+	}
+	var email string
+	var verified *bool
+	if pick >= 0 {
+		m, _ := emails[pick].(map[string]any)
+		email, _ = m["value"].(string)
+		if b, ok := m["verified"].(bool); ok {
+			verified = &b
+		}
+	}
+	if verified == nil {
+		exts := make([]string, 0, len(u))
+		for k := range u {
+			if strings.HasPrefix(k, "urn:") {
+				exts = append(exts, k)
+			}
+		}
+		slices.Sort(exts) // the same answer every time
+		for _, k := range exts {
+			if m, ok := u[k].(map[string]any); ok {
+				if b, ok := m["emailVerified"].(bool); ok {
+					verified = &b
+					break
+				}
 			}
 		}
 	}

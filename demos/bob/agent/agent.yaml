@@ -53,13 +53,13 @@ spec:
       istio.io/reroute-virtual-interfaces: ateom0   # actor egress through ztunnel, as the worker
       ambient.istio.io/dns-capture: "false"         # the actor's DNS is forwarded, not local
 ---
-# Substrate resolves the actor's secret env at resume time: its config and the
-# gateway placeholder key. Nothing else in sv-agents.
+# Substrate resolves the actor's secret env at resume time: its config.
+# Nothing else in sv-agents.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata: {name: substrate-env-sources, namespace: sv-agents}
 rules:
-- {apiGroups: [""], resources: [secrets], resourceNames: [bob-assistant, llm-via-gateway], verbs: [get]}
+- {apiGroups: [""], resources: [secrets], resourceNames: [bob-assistant], verbs: [get]}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

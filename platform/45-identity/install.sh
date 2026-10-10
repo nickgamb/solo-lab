@@ -32,6 +32,7 @@ secret_apply sv-identity kc-secrets \
   KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret SV_KC_ADMIN_PASSWORD)" \
   SV_KAGENT_CLIENT_SECRET="$(lab_secret SV_KAGENT_CLIENT_SECRET)" \
   SV_AI_GATEWAY_CLIENT_SECRET="$(lab_secret SV_AI_GATEWAY_CLIENT_SECRET)" \
+  MCP_TOKEN_LIFETIME_S="$MCP_TOKEN_LIFETIME_S" \
   SV_AGENTREGISTRY_CLIENT_SECRET="$(lab_secret SV_AGENTREGISTRY_CLIENT_SECRET)" \
   SV_AGENTREGISTRY_CATALOG_SECRET="$(lab_secret SV_AGENTREGISTRY_CATALOG_SECRET)" \
   SV_CLIENT_AT_LEDGERLINE="$SV_CLIENT_AT_LEDGERLINE" \
@@ -54,6 +55,18 @@ wait_for "https://idp.$SV_DOMAIN discovery" 30 3 \
   sh -c "curl -sf --cacert '$LAB_CA_DIR/ca.crt' https://idp.$SV_DOMAIN/realms/sterling-vance/.well-known/openid-configuration >/dev/null"
 ok "issuer https://idp.$SV_DOMAIN/realms/sterling-vance  (admin: see .lab/secrets.env)"
 apply_tmpl "$D/gateway-grants.yaml"   # the firm's gateway may use the broker
+# The broker keeps its accounts in memory (a restart, as on a realm change,
+# starts it empty): the directory sync (layer 47) makes them again from the
+# primary IdP now, not at its next scheduled run.
+if K get cronjob sterling-vance-profile-sync -n sv-identity >/dev/null 2>&1; then
+  job="sterling-vance-profile-sync-identity-$(date -u +%Y%m%d%H%M%S)"
+  K create job "$job" -n sv-identity --from=cronjob/sterling-vance-profile-sync >/dev/null
+  if K wait job "$job" -n sv-identity --for=condition=Complete --timeout=180s >/dev/null 2>&1; then
+    ok "directory sync: $(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.sync.message}')"
+  else
+    warn "directory sync didn't finish (kubectl logs -n sv-identity job/$job)"
+  fi
+fi
 
 step "Sterling & Vance workforce IdP, Keycloak $KEYCLOAK_VERSION (sv-workforce)"
 # The Keycloak S&V runs itself (keycloak in ENTERPRISE_IDP), apart from the

@@ -641,6 +641,18 @@ a2a_send() {
     'read -r t; read -r b; curl -s -m 300 http://kagent-controller.kagent:8083/api/a2a-sandboxes/sv-agents/bob-assistant/ \
        -H "authorization: Bearer $t" -H "content-type: application/json" -d "$b"'
 }
+# a2a_ask <token> <body>: a2a_send, asked again while the agent's worker pool
+# has no free worker (Agent Substrate: each conversation is an actor, and one
+# that just finished holds its worker for a few seconds), as a person would
+a2a_ask() {
+  local r i
+  for i in 1 2 3 4 5 6 7 8 9; do
+    r=$(a2a_send "$1" "$2")
+    echo "$r" | jq -e '.error.message // "" | test("no free workers")' >/dev/null 2>&1 || break
+    sleep 10
+  done
+  printf '%s\n' "$r"
+}
 # with_bearer <token> curl <args...>: curl with "Authorization: Bearer <token>"
 # read from stdin (-H @-), so the token isn't on curl's command line
 with_bearer() { local t=$1; shift; "$@" -H @- <<<"authorization: Bearer $t"; }

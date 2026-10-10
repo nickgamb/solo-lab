@@ -1,0 +1,28 @@
+# The ops agents' tool server (kagent-tools), its own release beside kagent,
+# with the settings kagent's charts give it. The chart default binds it to
+# cluster-admin and lets it write anything; here it reads (no Secrets), and
+# refuses writes itself. Agents reach it only through the firm's gateway
+# (front-door.yaml).
+fullnameOverride: kagent-tools
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile: {type: RuntimeDefault}
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities: {drop: [ALL]}     # it writes to /tmp: no read-only root filesystem
+tools:
+  args: [--read-only]
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: 1000m, memory: 1Gi}
+  env:
+  - {name: OTEL_TRACES_SAMPLER, value: always_on}   # every tool call traced, whatever the caller sampled
+  metrics:
+    port: 8085                    # apart from the MCP port (8084)
+rbac:
+  readOnly: true
+  additionalRules:
+  - apiGroups: [networking.istio.io, security.istio.io, telemetry.istio.io, gateway.networking.k8s.io,
+      gateway.kgateway.dev, agentgateway.dev, kagent.dev, ate.dev, apiextensions.k8s.io]
+    resources: ["*"]
+    verbs: [get, list, watch]

@@ -242,18 +242,22 @@ func (d *scim) User(ctx context.Context, id string) (map[string]any, error) {
 
 func (d *scim) Find(ctx context.Context, email string) (string, error) {
 	var r struct {
-		Resources []struct {
-			ID string `json:"id"`
-		} `json:"Resources"`
+		Resources []map[string]any `json:"Resources"`
 	}
 	filter := `emails.value eq ` + strconv.Quote(email)
-	if err := d.call(ctx, http.MethodGet, "/Users?count=2&attributes=id&filter="+url.QueryEscape(filter), nil, &r); err != nil {
+	if err := d.call(ctx, http.MethodGet, "/Users?count=2&attributes=id,emails&filter="+url.QueryEscape(filter), nil, &r); err != nil {
 		return "", err
 	}
 	if len(r.Resources) != 1 {
 		return "", ErrNoUser // none, or not one user: never guess
 	}
-	return r.Resources[0].ID, nil
+	// the filter matches any of a record's emails: the user is the record
+	// whose primary email this is, never one that only lists it
+	if primary, _ := scimEmail(r.Resources[0]); !strings.EqualFold(primary, email) {
+		return "", ErrNoUser
+	}
+	id, _ := r.Resources[0]["id"].(string)
+	return id, nil
 }
 
 // Update patches each path: a plain one is replaced; a filtered one

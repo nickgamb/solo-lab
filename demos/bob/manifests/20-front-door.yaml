@@ -169,7 +169,7 @@ spec:
       oauthTokenExchange: ${MCP_EXCHANGE_WORKSPACE}
 ---
 # Same tool surface on the discovery lane, so the UI never advertises a tool
-# the firm withholds from advisors.
+# the firm withholds from advisors, and nothing but the listing.
 apiVersion: ${AGW_POLICY_API}
 kind: ${AGW_POLICY_KIND}
 metadata:
@@ -183,4 +183,4 @@ spec:
         action: Allow
         policy:
           matchExpressions:
-          - 'mcp.tool.name in ["whoami", "list_clients", "get_client", "get_meeting_notes", "log_followup"]'
+          - 'mcp.methodName == "tools/list" && mcp.tool.name in ["whoami", "list_clients", "get_client", "get_meeting_notes", "log_followup"]'

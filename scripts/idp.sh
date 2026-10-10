@@ -15,11 +15,18 @@ SV_ISSUER="https://idp.$SV_DOMAIN/realms/sterling-vance"
 _idp_var() { local v; v="$(echo "$1" | tr '[:lower:]' '[:upper:]')_$2"; echo "${!v:-}"; }
 # idp_setting <name> <setting> <default>: a setting, or its default
 idp_setting() { local v; v=$(_idp_var "$1" "$2"); printf '%s' "${v:-$3}"; }
-# idp_secret <name> <setting>: a credential setting's value; lab:<SECRET> is a
-# secret the lab generates (.lab/secrets.env)
+# idp_secret <name> <setting>: a credential setting's value; lab:<NAME>_SECRET
+# is a secret the lab generates (.lab/secrets.env), by a name of its own: never
+# one of the lab's other secrets
 idp_secret() {
   local v; v=$(_idp_var "$1" "$2")
-  case "$v" in lab:*) lab_secret "${v#lab:}" ;; *) printf '%s' "$v" ;; esac
+  case "$v" in
+    lab:*)
+      [[ ${v#lab:} =~ ^[A-Z][A-Z0-9_]*_SECRET$ ]] \
+        || die "$(echo "$1" | tr '[:lower:]' '[:upper:]')_$2: lab:<NAME> must name a secret of its own, ending in _SECRET"
+      lab_secret "${v#lab:}" ;;
+    *) printf '%s' "$v" ;;
+  esac
 }
 # idp_discover <issuer>: OpenID configuration, fetched on the host. A lab
 # issuer (*.<LAB_TLD>) is checked against the lab CA, not the host's store.
@@ -63,16 +70,19 @@ idp_internal() { case "$(echo "$1" | sed -E 's#^https?://([^/:]+).*#\1#')" in *.
 # (agentgateway oauthTokenExchange, JSON): from agentgateway's STS on
 # Enterprise (MCP_TOKEN_ISSUER), as the gateway itself, which only gateways
 # may reach; else from S&V's broker as the ai-gateway's own client. The
-# subject is the user's verified token, which never goes upstream.
+# subject is the user's verified token, which never goes upstream. A token per
+# call: none is cached for reuse (MCP_TOKEN_LIFETIME bounds each one).
 mcp_exchange() {
   if [ "$AGW_EDITION" = enterprise ]; then
-    jq -nc --arg aud "$1" '{backendRef: {kind: "Service", name: "enterprise-agentgateway", namespace: "agentgateway-system", port: 7777},
+    jq -nc --arg aud "$1" --arg sts "$AGW_RELEASE" '{backendRef: {kind: "Service", name: $sts, namespace: "agentgateway-system", port: 7777},
       path: "/oauth2/token", grantType: "TokenExchange",
-      subjectToken: {source: {expression: "jwt.rawToken.unredacted()"}, tokenType: "Jwt"}, audiences: [$aud]}'
+      subjectToken: {source: {expression: "jwt.rawToken.unredacted()"}, tokenType: "Jwt"}, audiences: [$aud],
+      cache: {inMemory: {maxEntries: 0}}}'
   else
     jq -nc --arg aud "$1" '{backendRef: {kind: "Service", name: "keycloak", namespace: "sv-identity", port: 80},
       path: "/realms/sterling-vance/protocol/openid-connect/token", grantType: "TokenExchange",
       subjectToken: {source: {expression: "jwt.rawToken.unredacted()"}, tokenType: "AccessToken"}, audiences: [$aud],
+      cache: {inMemory: {maxEntries: 0}},
       clientAuth: {clientId: "ai-gateway", method: "ClientSecretBasic", secretRef: {name: "ai-gateway-oidc", key: "clientSecret"}}}'
   fi
 }
@@ -86,7 +96,16 @@ ras_env() {
   local d
   [ -n "$LEDGERLINE_AS_ISSUER" ] \
     || die "RESOURCE_AS=$RESOURCE_AS needs LEDGERLINE_$(echo "$RESOURCE_AS" | tr '[:lower:]' '[:upper:]')_ISSUER in .env"
+  # Ledgerline's AS is Ledgerline's, never one of S&V's IdPs or its broker
+  local n
+  [ "${LEDGERLINE_AS_ISSUER%/}" != "${SV_ISSUER%/}" ] || die "Ledgerline's AS can't be S&V's broker ($SV_ISSUER)"
+  for n in $(idp_names); do
+    [ "${LEDGERLINE_AS_ISSUER%/}" != "$(idp_setting "$n" ISSUER "" | sed 's#/$##')" ] \
+      || die "Ledgerline's AS can't be one of S&V's IdPs ($n: $LEDGERLINE_AS_ISSUER)"
+  done
   if ! ras_external; then
+    [ "${LEDGERLINE_AS_ISSUER%/}" = "${LEDGERLINE_KEYCLOAK_ISSUER%/}" ] \
+      || die "a lab issuer for Ledgerline's AS must be Ledgerline's own Keycloak ($LEDGERLINE_KEYCLOAK_ISSUER)"
     # Ledgerline's own Keycloak (demos/bob installs it after this runs)
     LEDGERLINE_AS_TOKEN_URL="${LEDGERLINE_AS_ISSUER%/}/protocol/openid-connect/token"
     LEDGERLINE_AS_JWKS_URI="http://keycloak.ledgerline-identity.svc/realms/ledgerline/protocol/openid-connect/certs"
@@ -96,6 +115,10 @@ ras_env() {
       || die "Ledgerline's AS issuer must match the issuer its discovery states: $(echo "$d" | jq -r .issuer)"
     LEDGERLINE_AS_TOKEN_URL=$(echo "$d" | jq -r .token_endpoint)
     LEDGERLINE_AS_JWKS_URI=$(echo "$d" | jq -r .jwks_uri)
+    # rendered into S&V's gateway route: a plain https URL on the issuer's own host
+    [[ $LEDGERLINE_AS_TOKEN_URL =~ ^https://([A-Za-z0-9.-]+)(:[0-9]+)?(/[A-Za-z0-9._~/%-]*)?$ ]] \
+      && [ "${BASH_REMATCH[1]}" = "$(echo "$LEDGERLINE_AS_ISSUER" | sed -E 's#^https://([^/:]+).*#\1#')" ] \
+      || die "Ledgerline's AS: its token endpoint must be a plain https URL on its issuer's host ($LEDGERLINE_AS_TOKEN_URL)"
   fi
   export LEDGERLINE_AS_TOKEN_URL LEDGERLINE_AS_JWKS_URI
 }

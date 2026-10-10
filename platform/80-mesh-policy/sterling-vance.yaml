@@ -42,10 +42,11 @@ spec:
   mtls: {mode: STRICT}
   portLevelMtls: {"9978": {mode: PERMISSIVE}}
 ---
-# The STS (Enterprise, port 7777): only the gateways that mint the tokens MCP
-# servers accept, and the MCP servers that verify them (its keys share the
-# port; they never hold a user's token to trade). An agent holding a user's
-# token can't trade it there for one an MCP server would take.
+# The STS (Enterprise, port 7777): only the gateway that mints the tokens MCP
+# servers accept. MCP servers read its keys through that gateway
+# (platform/40-agentgateway/sts.yaml), never from the STS, whose keys share a
+# port with minting. An agent, or an MCP server, holding a user's token can't
+# trade it there for one an MCP server would take.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata: {name: sts-callers, namespace: agentgateway-system}
@@ -56,8 +57,7 @@ spec:
   - from:
     - source:
         notPrincipals:
-        - cluster.local/ns/agentgateway-system/sa/ai-gateway       # the gateway: mints
-        - cluster.local/ns/sv-mcp/sa/bob-workspace                # MCP servers: keys
+        - cluster.local/ns/agentgateway-system/sa/ai-gateway
     to: [{operation: {ports: ["7777"]}}]
 ---
 apiVersion: security.istio.io/v1
@@ -226,6 +226,7 @@ spec:
     - source:
         principals:
         - cluster.local/ns/agentgateway-system/sa/ai-gateway
+    to: [{operation: {ports: ["8084"]}}]
 ---
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy

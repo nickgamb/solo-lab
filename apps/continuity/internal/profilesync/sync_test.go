@@ -303,7 +303,9 @@ func TestSCIMDirectory(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/scim/v2/Users" && r.URL.Query().Get("filter") == `emails.value eq "bob@sterling.lab"`:
-			w.Write([]byte(`{"totalResults":1,"Resources":[{"id":"inum-bob"}]}`))
+			w.Write([]byte(`{"totalResults":1,"Resources":[{"id":"inum-bob","emails":[{"value":"x@y"},{"value":"bob@sterling.lab","primary":true}]}]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/scim/v2/Users" && r.URL.Query().Get("filter") == `emails.value eq "x@y"`:
+			w.Write([]byte(`{"totalResults":1,"Resources":[{"id":"inum-bob","emails":[{"value":"x@y"},{"value":"bob@sterling.lab","primary":true}]}]}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/scim/v2/Users":
 			w.Write([]byte(`{"totalResults":42,"Resources":[]}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/scim/v2/Users/inum-bob":
@@ -330,6 +332,10 @@ func TestSCIMDirectory(t *testing.T) {
 	id, err := d.Find(ctx, "bob@sterling.lab")
 	if err != nil || id != "inum-bob" {
 		t.Fatalf("find: %q %v", id, err)
+	}
+	// a record that only lists an address beside its primary isn't that user's
+	if other, err := d.Find(ctx, "x@y"); !errors.Is(err, ErrNoUser) {
+		t.Fatalf("find by a secondary email: %q %v, want ErrNoUser", other, err)
 	}
 	rec, _ := d.User(ctx, id)
 	for path, want := range map[string]string{"name.givenName": "Bob", "emails[primary eq true].value": "bob@sterling.lab",
@@ -645,5 +651,44 @@ func TestRetryAfter(t *testing.T) {
 		if got := retryAfter(c.h, now); got != c.want {
 			t.Errorf("%v: %v, want %v", c.h, got, c.want)
 		}
+	}
+}
+
+func TestSCIMListFollowsShortPages(t *testing.T) {
+	// a server whose own page size (1) is below what was asked for
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			tokenOK(w)
+			return
+		}
+		switch r.URL.Query().Get("startIndex") {
+		case "1":
+			w.Write([]byte(`{"totalResults":2,"Resources":[{"id":"a","emails":[{"value":"a@sterling.lab"}]}]}`))
+		case "2":
+			w.Write([]byte(`{"totalResults":2,"Resources":[{"id":"b","emails":[{"value":"b@sterling.lab"}]}]}`))
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+	d, _ := New("scim", srv.URL+"/scim/v2", Credentials{TokenURL: srv.URL + "/token", ClientID: "c", ClientSecret: "s"}, srv.Client())
+	page, err := d.(Lister).List(context.Background(), 0, 100)
+	if err != nil || len(page) != 2 || page[1].ID != "b" {
+		t.Fatalf("list: %+v %v (want both users)", page, err)
+	}
+}
+
+func TestSCIMEmailVerifiedIsThePrimarys(t *testing.T) {
+	// the first email is verified, the primary isn't said: unknown, never the first's
+	_, v := scimEmail(map[string]any{"emails": []any{
+		map[string]any{"value": "old@x", "verified": true},
+		map[string]any{"value": "bob@sterling.lab", "primary": true}}})
+	if v != nil {
+		t.Fatalf("verified = %v, want unknown", *v)
+	}
+	// the update path reads a SCIM record the same way (Gluu's extension)
+	if v := emailVerified(map[string]any{"emails": []any{map[string]any{"value": "bob@sterling.lab"}},
+		"urn:ietf:params:scim:schemas:extension:gluu:2.0:User": map[string]any{"emailVerified": false}}); v == nil || *v {
+		t.Fatalf("emailVerified = %v, want false from the extension", v)
 	}
 }

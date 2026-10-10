@@ -463,6 +463,10 @@ func email(u keycloak.User) string { s, _ := u["email"].(string); return s }
 // emailVerified is whether a record's email is verified, when it says:
 // email_verified (OIDC, Auth0) or emailVerified (Keycloak).
 func emailVerified(rec map[string]any) *bool {
+	if _, ok := rec["emails"].([]any); ok { // a SCIM record
+		_, v := scimEmail(rec)
+		return v
+	}
 	for _, k := range []string{"email_verified", "emailVerified"} {
 		switch v := rec[k].(type) {
 		case bool:

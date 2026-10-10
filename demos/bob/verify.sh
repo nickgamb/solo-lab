@@ -22,7 +22,7 @@ OTHER_ID=$(sso_token carol carol-demo | jq -r '.id_token // empty') || OTHER_ID=
 [ -n "$OTHER_ID" ] || die "could not sign Carol in (her ID token is the one swapped in below)"
 # Bob's agent's workload identity (its worker pool's ServiceAccount), another
 # workload in the same namespace, and one in another namespace.
-probe_pod sv-agents bob-assistant; probe_pod sv-agents; probe_pod observability; probe_pod "$KAGENT_UI_NS" "$KAGENT_UI_SA"; probe_pod kagent kagent-ops
+probe_pod sv-agents bob-assistant; probe_pod sv-agents; probe_pod observability; probe_pod "$KAGENT_UI_NS" "$KAGENT_UI_SA"; probe_pod kagent kagent-ops; probe_pod kagent kagent-controller
 AGENT=sv-agents/probe-bob-assistant
 # Agents call the workspace at the firm's front door, the ai-gateway; the
 # workspace takes connections from that gateway alone.
@@ -49,15 +49,21 @@ check '\\"acting_for\\": \\"bob@.*\\"audience\\": \\"bob-workspace\\"' \
                                                 "whoami: acts as bob, token aud=bob-workspace" $AGENT $GW call whoami '{}' --token "$BOB"
 # the token the workspace accepts is the gateway's, short-lived, for it alone
 ISS_RE=$(echo "$MCP_TOKEN_ISSUER" | sed 's/[.]/\\./g')
-check "issuer.{0,6}$ISS_RE.*token_lifetime_s.{0,6}[1-5][^0-9]" \
+check "issuer[^0-9a-z]{0,6}$ISS_RE.*token_lifetime_s[^0-9]{0,6}[1-5][^0-9]" \
                                                 "whoami: the token was minted for the workspace by the gateway ($MCP_TOKEN_LIFETIME)" $AGENT $GW call whoami '{}' --token "$BOB"
 if [ "$AGW_EDITION" = enterprise ]; then
-  # the agent holds Bob's token, but can't trade it for one a tool accepts
-  code=$(printf '%s\n' "$BOB" | K exec -i -n sv-agents probe-bob-assistant -- sh -c 'read -r s; curl -s -m 10 -o /dev/null -w "%{http_code}" -X POST \
-    http://enterprise-agentgateway.agentgateway-system:7777/oauth2/token -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
-    --data-urlencode subject_token=$s -d subject_token_type=urn:ietf:params:oauth:token-type:jwt -d audience=bob-workspace' 2>/dev/null) || code=refused
-  case "$code" in 000|refused) res ok "the agent asks the STS for a workspace token with Bob's token: refused (only gateways may)" ;;
-    *) res no "the agent asks the STS for a workspace token with Bob's token: refused (only gateways may)" "HTTP $code" ;; esac
+  # the agent holds Bob's token, but can't trade it for one a tool accepts,
+  # and neither can a tool server: only the gateway reaches the STS. The token
+  # goes on stdin, never a command line; curl's own 000 (the mesh refused the
+  # connection) is the expected answer, a failed kubectl exec is not.
+  sts_try() {  # sts_try <ns>/<pod>: the STS's answer to Bob's token from that workload
+    printf 'subject_token=%s&grant_type=urn:ietf:params:oauth:grant-type:token-exchange&subject_token_type=urn:ietf:params:oauth:token-type:jwt&audience=bob-workspace' \
+      "$(jq -rn --arg t "$BOB" '$t|@uri')" | K exec -i -n "${1%%/*}" "${1#*/}" -- sh -c \
+      "curl -s -m 10 -o /dev/null -w 'sts:%{http_code}' -X POST http://$AGW_RELEASE.agentgateway-system:7777/oauth2/token --data-binary @-; true" 2>&1
+  }
+  expect_res '^sts:000$' "the agent asks the STS for a workspace token with Bob's token: refused (only the gateway may)" "$(sts_try sv-agents/probe-bob-assistant)"
+  probe_pod sv-mcp bob-workspace   # the workspace's own identity
+  expect_res '^sts:000$' "the workspace asks the STS with Bob's token: refused (only the gateway may)" "$(sts_try sv-mcp/probe-bob-workspace)"
 else
   skipped "the agent can't mint a tool's token itself: agentgateway's STS is Enterprise"
 fi
@@ -90,6 +96,8 @@ n=$(K get remotemcpserver kagent-tool-server -n kagent -o json 2>/dev/null \
 expect_res '^[1-9][0-9]*$' "kagent lists the ops tools through the gateway" "$n"
 check 'http": 40[13]|isError": true'            "an ops agent's worker, for Bob (not a platform admin): refused" kagent/probe-kagent-ops $OPS_GW list --token "$BOB"
 check 'http": 40[13]|isError": true'            "an ops agent's worker with no user token (discovery lane is controller-only)" kagent/probe-kagent-ops $OPS_GW list
+check '"k8s_get_resources"'                     "the kagent controller lists the ops tools (no user)" kagent/probe-kagent-controller $OPS_GW list
+check 'Unknown tool|http": 40[013]|isError": true' "the kagent controller calls an ops tool (no user): refused, it may only list" kagent/probe-kagent-controller $OPS_GW call k8s_get_resources '{"resource_type": "pods"}'
 check 'http": 0|http": 40[13]|refused|reset|Broken pipe|Connection' \
                                                 "skip the front door: an ops agent's worker dials kagent-tools" kagent/probe-kagent-ops http://kagent-tools.kagent:8084/mcp list
 XAA=http://ai-gateway.agentgateway-system/xaa/ledgerline/mcp
@@ -162,7 +170,7 @@ if ! why=$(llm_ready); then
   skipped "Bob's agent, in chat: needs the model ($why)"
 else
   ask='{jsonrpc:"2.0",id:"1",method:"message/send",params:{message:{role:"user",kind:"message",messageId:(now|tostring),contextId:$c,parts:[{kind:"text",text:"Which Ledgerline account am I using? Use account_info."}]}}}'
-  out=$(a2a_send "$CHAT_TOKEN" "$(jq -nc --arg c "$(new_uuid)" "$ask")" | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"' 2>&1) || true
+  out=$(a2a_ask "$CHAT_TOKEN" "$(jq -nc --arg c "$(new_uuid)" "$ask")" | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"' 2>&1) || true
   if echo "$out" | grep -qE "$CHAT"; then res ok "Bob's agent, in chat ($CHAT_VIA): Ledgerline's own account for Bob"
   else res no "Bob's agent, in chat ($CHAT_VIA): Ledgerline's own account for Bob" "$out"; fi
 fi
@@ -252,8 +260,15 @@ else
       | K exec -i -n sv-agents probe-advisor-desk -- sh -c \
         "curl -s -m 180 -o /dev/null -w '%{http_code}' http://ai-gateway.agentgateway-system/v1/chat/completions -H 'content-type: application/json' -d @-"
   }
-  first=$(ask_as_desk "$pad Summarize in one word.") || first=""
-  second=$(ask_as_desk "Say hi.") || second=""
+  # the limit counts per clock minute: a slow model can finish the first call
+  # at the end of one minute and leave the second to the next, so the pair is
+  # tried again only when it straddled a minute
+  for _ in 1 2 3; do
+    first=$(ask_as_desk "$pad Summarize in one word.") || first=""
+    m=$(date -u +%H%M)
+    second=$(ask_as_desk "Say hi.") || second=""
+    [ "$second" != 429 ] && [ "$m" != "$(date -u +%H%M)" ] || break
+  done
   if [ "$second" = 429 ]; then res ok "an agent over its token rate limit: refused (advisor-desk, 2000 tokens a minute)"
   else res no "an agent over its token rate limit: refused (advisor-desk, 2000 tokens a minute)" "first $first, then $second"; fi
   # key "capped" has a budget of one token a day: its second call, at the latest, is over

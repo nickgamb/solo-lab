@@ -72,14 +72,16 @@ metadata: {name: adapter-callers, namespace: sv-u4a}
 spec:
   selector: {matchLabels: {app: u4a-adapter}}
   action: ALLOW
-  rules: [{from: [{source: {principals: [cluster.local/ns/agentgateway-system/sa/ai-gateway]}}]}]
+  rules: [{from: [{source: {principals: [cluster.local/ns/agentgateway-system/sa/ai-gateway]}}], to: [{operation: {ports: ["9030"]}}]}]
 ---
 # The adapter behind the firm's gateway, like every MCP server, at
 #   http://ai-gateway.agentgateway-system.svc.cluster.local/mcp/alice-vault
 #   user lane       Bob's agent's workers, acting for an advisor; the advisor's
 #                   token stops here (the adapter speaks for the agent, by its
 #                   own key, and takes no token)
-#   discovery lane  no token -> only the kagent controller, listing tools
+#   discovery lane  no token -> only the kagent controller, and only to list
+#                   tools: the adapter takes no token, so the gateway is what
+#                   keeps a call off this lane
 apiVersion: ${AGW_BACKEND_API}
 kind: ${AGW_BACKEND_KIND}
 metadata: {name: alice-vault, namespace: agentgateway-system}
@@ -90,6 +92,47 @@ spec:
       selector:
         namespaces: {matchLabels: {kubernetes.io/metadata.name: sv-u4a}}
         services: {matchLabels: {lab.solo.io/mcp: alice-vault}}
+---
+apiVersion: ${AGW_BACKEND_API}
+kind: ${AGW_BACKEND_KIND}
+metadata: {name: alice-vault-discovery, namespace: agentgateway-system}
+spec:
+  mcp:
+    targets:
+    - name: alice-vault
+      selector:
+        namespaces:
+          matchLabels: {kubernetes.io/metadata.name: sv-u4a}
+        services:
+          matchLabels: {lab.solo.io/mcp: alice-vault}
+---
+# The tools Bob's agent is given (agent/kustomization.yaml), and on the
+# discovery lane only the listing of them.
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: alice-vault-tools, namespace: agentgateway-system}
+spec:
+  targetRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: alice-vault}]
+  backend:
+    mcp:
+      authorization:
+        action: Allow
+        policy:
+          matchExpressions:
+          - 'mcp.tool.name in ["get_positions", "get_transactions", "execute_trade"]'
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: alice-vault-discovery-tools, namespace: agentgateway-system}
+spec:
+  targetRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: alice-vault-discovery}]
+  backend:
+    mcp:
+      authorization:
+        action: Allow
+        policy:
+          matchExpressions:
+          - 'mcp.methodName == "tools/list" && mcp.tool.name in ["get_positions", "get_transactions", "execute_trade"]'
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -134,7 +177,7 @@ spec:
     filters:
     - type: RequestHeaderModifier
       requestHeaderModifier: {remove: [authorization, x-id-token]}
-    backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: alice-vault}]
+    backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: alice-vault-discovery}]
 ---
 apiVersion: ${AGW_POLICY_API}
 kind: ${AGW_POLICY_KIND}
