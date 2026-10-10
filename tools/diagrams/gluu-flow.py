@@ -35,12 +35,12 @@ NODES = [  # lane, product, kicker, title, body lines
     ("plat", "kc", "Keycloak · S&V's broker", "Links Bob to his broker account", ["by verified email: the ID-JAG's sub;", "S&V session for kagent at the edge"]),
     ("bob", "bob", "Bob · kagent chat", "Asks his agent", ["“Which Ledgerline account", "am I using?”"]),
     ("plat", "solo", "kagent · Bob's agent", "Calls the Ledgerline tool", ["tools/call account_info to ai-gateway,", "with Bob's S&V access token only"]),
-    ("plat", "solo", "agentgateway · S&V egress", "Admits it, checks assurance", ["JWT + agent's SPIFFE ID + advisors; gate:", "AAL2 passkey ✓; idtoken-exchange: ID token"]),
-    ("plat", "kc", "Keycloak · S&V's broker", "Vouches for Bob", ["token exchange as kagent: ID token", "→ ID-JAG for Ledgerline only"]),
-    ("plat", "solo", "agentgateway · S&V egress", "Checks the ID-JAG", ["verified against the broker's keys: iss,", "aud, sub, exp, typ, client_id; claims logged"]),
-    ("ll", "gluu", "Gluu · Ledgerline's AS", "Redeems it (RFC 7523)", ["private_key_jwt from S&V;", "a 5-minute token for its Bob"]),
+    ("plat", "solo", "agentgateway · S&V's AI gateway", "Admits it, checks assurance", ["JWT + agent's SPIFFE ID + advisors; gate:", "AAL2 (acr fido2) ✓; idtoken-exchange: ID token"]),
+    ("plat", "kc", "Keycloak · S&V's broker", "Vouches for Bob", ["token exchange as kagent: a fresh ID-JAG", "for Ledgerline only, every call, 5 s"]),
+    ("plat", "solo", "agentgateway · S&V's AI gateway", "Checks the ID-JAG", ["verified against the broker's keys: iss,", "aud, sub, exp, typ, client_id; claims logged"]),
+    ("ll", "gluu", "Gluu · Ledgerline's AS", "Redeems it (RFC 7523)", ["ledger-demo, private_key_jwt from S&V;", "a 5-second token for its Bob"]),
     ("ll", "solo", "kmcp + agentgateway · Ledgerline", "Answers as Ledgerline's Bob", ["its MCP gateway and server verify", "Gluu's token; account_info runs"]),
-    ("bob", "bob", "Bob · kagent chat", "Sees his Ledgerline account", ["“bob”, no consent screen,", "no shared secret"]),
+    ("bob", "bob", "Bob · kagent chat", "Sees Ledgerline's answer", ["as its own subject for Bob;", "no consent, no shared secret"]),
 ]
 EDGES = ["OIDC · PKCE", "Gluu ID token", "signed in", "message", "S&V access token",
          "broker ID token", "ID-JAG", "ID-JAG + private_key_jwt", "Ledgerline token", "result"]
@@ -55,8 +55,8 @@ add(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" 
     'aria-labelledby="t d">')
 add('<title id="t">Gluu: Cross App Access, end to end</title>')
 add('<desc id="d">Bob signs in with a passkey at S&amp;V\'s Gluu; S&amp;V\'s broker links him to his broker account. His agent calls '
-    'Ledgerline through S&amp;V\'s egress gateway with only his S&amp;V access token. The egress gets his ID token from the broker, '
-    'S&amp;V\'s broker issues an ID-JAG, the egress checks it, Ledgerline\'s Gluu redeems it for a Ledgerline token, and '
+    'Ledgerline through S&amp;V\'s AI gateway with only his S&amp;V access token. The gateway gets his ID token from the broker, '
+    'S&amp;V\'s broker issues a fresh ID-JAG, the gateway checks it, Ledgerline\'s Gluu redeems it for a Ledgerline token, and '
     'Ledgerline answers as its own account for Bob.</desc>')
 add('<defs><style>@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap");</style>')
 for name, col in [("a", C["edge"]), ("k", C["lime"])]:
@@ -205,13 +205,13 @@ def panel(num, x, y, w, tab, caption, lines, leaders=()):
 PX, PW = 1340, 720
 def lead(i): return [anchors[i]]
 panel("1", PX, 436, PW, "gluu-id-token.json", "Bob's Gluu ID token, at S&V's broker", [
-    "// Gluu → S&V's broker: OIDC code flow, PKCE S256",
+    "// sterling-idp → S&V's broker: OIDC code flow, PKCE S256, passkey",
     "{",
-    '  "iss": "https://sv.gluu.example",',
-    '  "sub": "7c1e0a4e-3d9b-4f61-9b2e-0b0b0b0b0b0b",',
-    '  "aud": "sterling-vance-broker",',
-    '  "email": "bob@sterling.lab", "email_verified": true,',
-    '  "acr": "fido2", "exp": 1791305100',
+    '  "iss": "https://sterling-idp.gluu.info",',
+    '  "sub": "9HX4wEtMFfR7ViNrDMHp1DwQto6qdkdnJhG6ZDn1Hjo",',
+    '  "aud": "fcffc488-b086-4a69-a6c5-47d15c4f00c4",',
+    '  "email": "bob@sterling.lab", "email_verified": true,  ✓ broker filter',
+    '  "acr": "fido2", "amr": ["70"]                          ✓ AAL2',
     "}",
     "// the broker links it to Bob's broker account; Ledgerline never sees it",
 ], lead(1))
@@ -222,40 +222,42 @@ panel("2", PX, 768, PW, "tools-call.http", "What the agent sends, and all it hol
     "// the bearer, decoded: S&V's own token, nothing cross-company",
     "{",
     '  "iss": "https://idp.sterling.lab/realms/sterling-vance",',
-    '  "aud": "ai-gateway", "azp": "kagent",',
-    '  "preferred_username": "bob", "groups": ["advisors"]',
+    '  "aud": ["kagent", "ai-gateway"], "azp": "kagent-ui",',
+    '  "sub": "5b0b0000-0000-4000-8000-000000000b0b", "groups": ["advisors"],',
+    '  "idp": "gluu", "idp_acr": "fido2", "idp_amr": "70"',
     "}",
 ], lead(4))
-panel("3", PX, 1048, PW, "id-jag.jwt", "The ID-JAG, checked at S&V's egress", [
-    "// ai-gateway → S&V's broker, as kagent (RFC 8693)",
+panel("3", PX, 1048, PW, "id-jag.jwt", "The ID-JAG, checked at S&V's gateway", [
+    "// ai-gateway → S&V's broker, as kagent (RFC 8693), fresh on every call",
     "grant_type=urn:ietf:params:oauth:grant-type:token-exchange",
     "requested_token_type=urn:ietf:params:oauth:token-type:id-jag",
     "subject_token=<Bob's ID token from the broker>",
-    "audience=https://ledgerline.gluu.example",
-    '{ "typ": "oauth-id-jag+jwt", "alg": "RS256" }               ✓ typ, signature',
+    "audience=https://ledger-demo.gluu.info",
+    '{ "typ": "oauth-id-jag+jwt", "alg": "RS256", "kid": "GBKDJCOhw4…" }  ✓ sig',
     '{',
     '  "iss": "https://idp.sterling.lab/realms/sterling-vance",  ✓ iss',
-    '  "sub": "a3f1c2d4-5e6f-4a1b-8c2d-0b0b0b0b0b0b",            ✓ sub',
-    '  "aud": "https://ledgerline.gluu.example",                 ✓ aud',
-    '  "client_id": "sterling-vance-kagent",                     ✓ client_id',
-    '  "scope": "research:read", "jti": "0b7469b3-ddb6…",',
-    '  "exp": 1791305156                                         ✓ exp, 300 s',
+    '  "sub": "5b0b0000-0000-4000-8000-000000000b0b",            ✓ sub',
+    '  "aud": "https://ledger-demo.gluu.info",                    ✓ aud',
+    '  "client_id": "fcffc488-b086-4a69-a6c5-47d15c4f00c4",       ✓ client',
+    '  "scope": "profile research:read email", "jti": "88c3e65b-c857…",',
+    '  "iat": 1791659868, "exp": 1791659873                        ✓ 5 s',
     '}',
 ], lead(6))
-panel("4", PX, 1406, PW, "ledgerline.json", "Ledgerline redeems it, then answers", [
-    "// S&V's egress → Ledgerline's Gluu (RFC 7523)",
+panel("4", PX, 1406, PW, "ledgerline.json", "ledger-demo redeems it, Ledgerline answers", [
+    "// S&V's gateway → ledger-demo (RFC 7523)",
     "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer",
-    "assertion=<the ID-JAG, jti 0b7469b3-ddb6…>",
-    "client_assertion=<JWT signed with S&V's key: private_key_jwt>",
+    "assertion=<the ID-JAG, jti 88c3e65b-c857…>",
+    "client_assertion=<JWT signed with S&V's key joHVIRJb…: private_key_jwt>",
     "{",
-    '  "iss": "https://ledgerline.gluu.example", "aud": "ledgerline-research",',
-    '  "client_id": "sterling-vance-kagent", "user_name": "bob",',
-    '  "scope": "research:read", "exp": 1791305157',
+    '  "iss": "https://ledger-demo.gluu.info",',
+    '  "sub": "004fb040-80df-4abf-8f81-eee69263cf55",',
+    '  "aud": ["fcffc488-b086…", "ledgerline-research"], "scope": ["research:read"],',
+    '  "iat": 1791659868, "exp": 1791659873',
     "}",
-    "// tools/call account_info, as Ledgerline's Bob",
+    "// tools/call account_info, as Ledgerline's subject for Bob",
     "{",
-    '  "ledgerline_account": "bob", "via_client": "sterling-vance-kagent",',
-    '  "issuer": "https://ledgerline.gluu.example", "expires_in_s": 287',
+    '  "ledgerline_subject": "004fb040-80df-4abf-8f81-eee69263cf55",',
+    '  "issuer": "https://ledger-demo.gluu.info", "expires_in_s": 5',
     "}",
 ], [anchors[7], anchors[9]])
 
