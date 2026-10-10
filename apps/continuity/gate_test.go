@@ -251,14 +251,63 @@ func TestEvaluate(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest("GET", "/v1/policy-point?rule=advisor-workspace&continuity=sterling-vance", nil))
 	var pp struct {
-		FailureMode string `json:"failureMode"`
-		GRPC        struct {
-			ContextExtensions map[string]string `json:"contextExtensions"`
-			RequestMetadata   map[string]string `json:"requestMetadata"`
-		} `json:"grpc"`
+		Field string `json:"field"`
+		Spec  struct {
+			FailureMode string `json:"failureMode"`
+			GRPC        struct {
+				ContextExtensions map[string]string `json:"contextExtensions"`
+				RequestMetadata   map[string]string `json:"requestMetadata"`
+			} `json:"grpc"`
+		} `json:"spec"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &pp)
-	if pp.FailureMode != "FailClosed" || pp.GRPC.ContextExtensions[gateProfileKey] != "advisor-workspace" || !strings.Contains(pp.GRPC.RequestMetadata[gateMetaKey], "jwt.idp_acr") {
+	if pp.Field != "extAuth" || pp.Spec.FailureMode != "FailClosed" || pp.Spec.GRPC.ContextExtensions[gateProfileKey] != "advisor-workspace" || !strings.Contains(pp.Spec.GRPC.RequestMetadata[gateMetaKey], "jwt.idp_acr") {
 		t.Fatalf("policy point: %s", rec.Body)
+	}
+}
+
+// The gate as an AuthZEN PDP: the same answers as the ext_authz check.
+func TestAuthZEN(t *testing.T) {
+	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	g := testGate(t, "keycloak", now, now)
+	srv := g.evaluateHandler()
+	post := func(path, body string) map[string]any {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, httptest.NewRequest("POST", path, strings.NewReader(body)))
+		if rec.Code != 200 {
+			t.Fatalf("%s: %d %s", path, rec.Code, rec.Body)
+		}
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return out
+	}
+	subj := func(acr string) string {
+		return `{"type": "session", "id": "bob", "properties": {"iss": "` + broker + `", "idp": "keycloak", "acr": "` + acr + `"}}`
+	}
+	res := `{"type": "assurance_rule", "id": "advisor-workspace"}`
+	if out := post("/access/v1/evaluation", `{"subject": `+subj("aal2")+`, "resource": `+res+`, "action": {"name": "tools/call"}}`); out["decision"] != true {
+		t.Fatalf("AAL2 session: %v", out)
+	}
+	out := post("/access/v1/evaluation", `{"subject": `+subj("aal1")+`, "resource": `+res+`, "action": {"name": "tools/call"}}`)
+	ctx, _ := out["context"].(map[string]any)
+	if out["decision"] != false || ctx["error"] != "insufficient_user_authentication" || ctx["acr_values"] != "aal2" {
+		t.Fatalf("AAL1 session: %v", out)
+	}
+	batch := post("/access/v1/evaluations", `{"subject": `+subj("aal1")+`, "action": {"name": "x"}, "evaluations": [
+		{"resource": `+res+`}, {"resource": {"type": "assurance_rule", "id": "research-notes"}}]}`)
+	evs, _ := batch["evaluations"].([]any)
+	if len(evs) != 2 || evs[0].(map[string]any)["decision"] != false || evs[1].(map[string]any)["decision"] != true {
+		t.Fatalf("batch (deny, then report-only would-deny): %v", batch)
+	}
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest("POST", "/access/v1/evaluation", strings.NewReader(`{"subject": `+subj("aal2")+`, "resource": {"type": "file", "id": "x"}}`)))
+	if rec.Code != 400 {
+		t.Fatalf("another resource type: %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest("GET", "/v1/policy", nil))
+	if !strings.Contains(rec.Body.String(), "package assurance") {
+		t.Fatalf("policy: %.80s", rec.Body)
 	}
 }

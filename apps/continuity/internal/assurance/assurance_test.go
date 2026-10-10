@@ -110,9 +110,10 @@ func TestEffective(t *testing.T) {
 func TestProvenTakesTheHighestMatch(t *testing.T) {
 	tier := v1.Tier{Name: "okta", Type: "oidc", Assurance: &v1.TierAssurance{Levels: []v1.AssuranceLevel{
 		{AMR: "mfa", Level: "AAL2"}, {AMR: "hwk", Level: "AAL3", PhishingResistant: true}}}}
-	p := Proven(tier, Session{IdP: "okta", AMR: []string{"pwd", "mfa", "hwk"}})
-	if p.Level != 3 || !p.PhishingResistant || p.Evidence != "amr hwk" {
-		t.Fatalf("%+v", p)
+	r := Rules{Minimum: 3, PhishingResistant: true}
+	d := Decide(r, []v1.Tier{tier}, Current{Active: "okta"}, Session{IdP: "okta", AMR: []string{"pwd", "mfa", "hwk"}}, time.Now())
+	if !d.Allow || d.Reason != "AAL3 via okta (amr hwk)" {
+		t.Fatalf("%+v", d)
 	}
 	if c := Ceiling(tier); c != 3 {
 		t.Fatalf("ceiling %s", c)

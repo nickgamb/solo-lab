@@ -203,12 +203,17 @@ func TestPutPolicyPoint(t *testing.T) {
 	gw := "wl:apps/notes-gw"
 	ix := &Index{byOwner: map[string]string{"apps/Gateway/notes-gw": gw},
 		nodes: map[string]*Node{gw: {ID: gw, Label: "notes-gw", Identity: []string{"spiffe://cluster.local/ns/apps/sa/notes-gw"}}}}
+	enterprise := false
 	contract := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if enterprise && r.URL.Path == "/v1/policy-point" && r.URL.Query().Get("continuity") == "firm" {
+			w.Write([]byte(`{"field": "entExtAuth", "spec": {"authConfigRef": {"namespace": "agw", "name": "assurance-firm-default"}}}`))
+			return
+		}
 		if r.URL.Path != "/v1/policy-point" || r.URL.Query().Get("rule") != "notes" || r.URL.Query().Get("continuity") != "firm" {
 			http.Error(w, "unexpected "+r.URL.String(), http.StatusBadRequest)
 			return
 		}
-		w.Write([]byte(`{"failureMode": "FailClosed", "grpc": {"contextExtensions": {"profile": "notes"}, "requestMetadata": {"continuity": "{}"}}}`))
+		w.Write([]byte(`{"field": "extAuth", "needsBackendRef": true, "spec": {"failureMode": "FailClosed", "grpc": {"contextExtensions": {"profile": "notes"}, "requestMetadata": {"continuity": "{}"}}}}`))
 	}))
 	defer contract.Close()
 	a := &Assurance{k: k, index: func() *Index { return ix }, http: contract.Client(), gateURL: contract.URL,
@@ -246,5 +251,60 @@ func TestPutPolicyPoint(t *testing.T) {
 	got, _ = cl.Resource(gvrAGP).Namespace("apps").Get(ctx, "notes-caller", metav1.GetOptions{})
 	if obj(got.Object, "spec", "traffic", "extAuth") != nil || obj(got.Object, "spec", "traffic", "jwtAuthentication") == nil {
 		t.Fatalf("off: %v", got.Object["spec"])
+	}
+
+	// Enterprise: the policy names the rule's AuthConfig, and reads back as
+	// asking for it
+	enterprise = true
+	if put(`{"kind": "AgentgatewayPolicy", "resourceVersion": "`+got.GetResourceVersion()+`", "rule": ""}`) != http.StatusOK {
+		t.Fatal("turning it on (Enterprise)")
+	}
+	got, _ = cl.Resource(gvrAGP).Namespace("apps").Get(ctx, "notes-caller", metav1.GetOptions{})
+	if str(got.Object, "spec", "traffic", "entExtAuth", "authConfigRef", "name") != "assurance-firm-default" || obj(got.Object, "spec", "traffic", "extAuth") != nil {
+		t.Fatalf("entExtAuth %v", got.Object["spec"])
+	}
+	if rule, _, asks, other := askedRule(got, nil); !asks || other != "" || rule != "firm-default" {
+		t.Fatalf("asked %q %v %q", rule, asks, other)
+	}
+	got.Object["spec"].(map[string]any)["traffic"].(map[string]any)["entExtAuth"] = map[string]any{"authConfigRef": map[string]any{"name": "sso"}}
+	if _, _, asks, other := askedRule(got, nil); asks || other != "AuthConfig apps/sso" {
+		t.Fatalf("another AuthConfig: %v %q", asks, other)
+	}
+}
+
+// The gate's decision logic, passed through as text; a chain with no gate
+// says so.
+func TestAssurancePolicy(t *testing.T) {
+	gate := object("v1", "Service", "id", "decisions", "spec", map[string]any{
+		"ports": []any{map[string]any{"name": "evaluate", "port": int64(9002)}}})
+	gate["metadata"].(map[string]any)["labels"] = map[string]any{gateLabel: "true"}
+	const rego = "package assurance\n\ndefault allow := false\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/policy" {
+			http.Error(w, "unexpected "+r.URL.String(), http.StatusNotFound)
+			return
+		}
+		w.Write([]byte(rego))
+	}))
+	defer srv.Close()
+	get := func(objs map[string][]map[string]any, name string) *httptest.ResponseRecorder {
+		a := &Assurance{k: storeKube(objs), http: srv.Client(), gateURL: srv.URL}
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.SetPathValue("ns", "id")
+		r.SetPathValue("name", name)
+		w := httptest.NewRecorder()
+		a.Policy(w, r)
+		return w
+	}
+	ic := object("continuity.lab.solo.io/v1alpha1", "IdentityContinuity", "id", "firm")
+	w := get(map[string][]map[string]any{"identitycontinuities": {ic}, "services": {gate}}, "firm")
+	if w.Code != http.StatusOK || w.Body.String() != rego || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/plain") {
+		t.Fatalf("%d %q %s", w.Code, w.Body, w.Header().Get("Content-Type"))
+	}
+	if w := get(map[string][]map[string]any{"identitycontinuities": {ic}, "services": {}}, "firm"); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("no gate: %d", w.Code)
+	}
+	if w := get(map[string][]map[string]any{"identitycontinuities": {ic}, "services": {gate}}, "other"); w.Code != http.StatusNotFound {
+		t.Fatalf("no chain: %d", w.Code)
 	}
 }

@@ -126,11 +126,13 @@ builder, and the directory sync window. See
 
   ![Directory sync canvas](images/observatory-directory-sync-canvas.jpg)
 
-- **Code:** the same mapping as JSON: each S&V attribute, then each IdP's
-  attribute paired with it, in chain order. Leaving the tab applies it to
+- **Code:** the same mapping as YAML: each S&V attribute, then each IdP's
+  attribute paired with it, in chain order
+  (`department: [auth0.user_metadata.department, keycloak.department]`).
+  Errors are marked at their line and column. Leaving the tab applies it to
   the canvas.
 
-  ![Directory sync as JSON](images/observatory-directory-sync-code.jpg)
+  ![Directory sync as code](images/observatory-directory-sync-code.jpg)
 
 - **Schedule:** when the sync runs (UTC cron, with presets), whether it
   removes users the primary no longer has (or has disabled) at the broker and
@@ -173,30 +175,35 @@ builder, and the directory sync window. See
   - **What if:** one sign-in (IdP, acr, amr, how long ago) against every
     rule: the decision, the status a gateway would return, the reason, and
     the `acr_values` the user would be asked for.
-  - **Code:** the same as HCL, one `default` block, an `idp` block per IdP
-    and a `rule` block per rule; errors are marked at their line. Leaving
-    the tab applies it.
+  - **Code:** the same as YAML: `default` (the default rule), `idps` (what
+    each IdP's acr and amr values are worth), `rules` (one key per rule) and
+    `policy_points` (each gateway policy that takes the broker's tokens, and
+    the rule it asks the gate for: a rule, `default` or `null`). Errors are
+    marked at their line and column. Leaving the tab applies it. **Decision
+    logic (Rego, read-only)** beside it shows the Rego the assurance gate
+    decides every request with (`/api/assurance/{ns}/{name}/policy`).
 
-    ```hcl
-    default {
-      minimum     = "AAL1"
-      idps        = []          # every IdP in the chain
-      break_glass = false
-      enforced_at = []
-    }
+    ```yaml
+    default:
+      minimum: AAL1
+      idps: []                  # every IdP in the chain
+      break_glass: false
 
-    idp "keycloak" {
-      otherwise = "AAL1"
-      acr       = { aal2 = "AAL2" }
-    }
+    idps:
+      keycloak:
+        otherwise: AAL1
+        acr:
+          aal2: AAL2
 
-    rule "advisor-workspace" {
-      criticality = "Critical"
-      mode        = "Enforce"
-      workloads   = ["sv-mcp/bob-workspace"]
-      minimum     = "AAL2"     # what a rule leaves out is the default's
-      enforced_at = ["agentgateway-system/bob-workspace-caller"]
-    }
+    rules:
+      advisor-workspace:
+        criticality: Critical
+        mode: Enforce
+        workloads: [sv-mcp/bob-workspace]
+        minimum: AAL2           # what a rule leaves out is the default's
+
+    policy_points:
+      agentgateway-system/bob-workspace-caller: advisor-workspace
     ```
   - Save writes, as you: the IdentityContinuity (default rule, IdPs), each
     rule's WorkloadProfile, and each gateway policy whose enforcement

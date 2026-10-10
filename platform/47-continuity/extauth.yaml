@@ -1,0 +1,50 @@
+# Enterprise: Solo's ext-auth service enforces the assurance rules. It runs
+# the decision logic (ConfigMap assurance-policy, from
+# apps/continuity/internal/assurance/assurance.rego, the same module the
+# lab's gate runs) beside each chain's state, which the continuity controller
+# writes (ConfigMap assurance-state-<chain>), and one AuthConfig per rule
+# (assurance-<rule>) asks it for that rule. Gateway policies name the
+# AuthConfig (entExtAuth, config/lab.env).
+#
+# What the controller may write here, and nothing else: its state modules
+# and its AuthConfigs, pinned by name below.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: continuity-assurance, namespace: ${ASSURANCE_EXTAUTH_NS}}
+rules:
+- apiGroups: [""]
+  resources: [configmaps]
+  verbs: [get, create, update, patch]
+- apiGroups: [extauth.solo.io]
+  resources: [authconfigs]
+  verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: continuity-assurance, namespace: ${ASSURANCE_EXTAUTH_NS}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: continuity-assurance}
+subjects: [{kind: ServiceAccount, name: continuity-controller, namespace: sv-identity}]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: {name: continuity-assurance-writes}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ${ASSURANCE_EXTAUTH_NS}}}
+    resourceRules:
+    - {apiGroups: [""], apiVersions: [v1], operations: [CREATE, UPDATE, DELETE], resources: [configmaps]}
+    - {apiGroups: [extauth.solo.io], apiVersions: ["*"], operations: [CREATE, UPDATE, DELETE], resources: [authconfigs]}
+  matchConditions:
+  - name: by-the-controller
+    expression: "request.userInfo.username == 'system:serviceaccount:sv-identity:continuity-controller'"
+  validations:
+  - expression: "request.resource.resource == 'configmaps' ? request.name.startsWith('assurance-state-') : request.name.startsWith('assurance-')"
+    message: "the continuity controller writes only its assurance state modules (assurance-state-*) and assurance AuthConfigs (assurance-*) here"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: {name: continuity-assurance-writes}
+spec:
+  policyName: continuity-assurance-writes
+  validationActions: [Deny]

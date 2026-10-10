@@ -188,12 +188,13 @@ sequenceDiagram
     at the broker, realm `sterling-vance`, to try it), and a tool the caller may not use is removed from
     `tools/list`, so the agent is never shown it.
   - Workload profile `advisor-workspace` (Critical, AAL2): the same policy
-    asks the assurance gate (`extAuth`, fail closed) with the verified
-    token's claims about the sign-in. A session that can't meet it is
+    asks for the rule (Solo's ext-auth service, `entExtAuth`, on Enterprise;
+    the assurance gate, `extAuth`, on OSS; both fail closed) with the
+    verified token's claims about the sign-in. A session that can't meet it is
     refused before anything is minted: 401 with an RFC 9470 challenge
     when a stronger sign-in at the IdP would pass, 403 when the profile
     doesn't take sessions from that IdP
-    ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#the-assurance-gate)).
+    ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#where-the-rules-are-decided)).
   - Backend auth: `oauthTokenExchange` with subject
     `jwt.rawToken.unredacted()`, audience `bob-workspace`
     (`mcp_exchange` in `scripts/idp.sh`). On Enterprise, agentgateway's STS

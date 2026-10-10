@@ -1,5 +1,5 @@
-import { BUILTIN_ATTRIBUTES, type AttributeMapping, type ContinuitySpec, type Directory, type Profile, type ProfileAttribute, type Sync, type Tier } from '../api'
-import { describeCron } from './cron'
+import { BUILTIN_ATTRIBUTES, type AttributeMapping, type ContinuitySpec, type Directory, type Profile, type ProfileAttribute, type Sync, type Tier } from '../api.ts'
+import { describeCron } from './cron.ts'
 
 // Pure edits on a working copy of an IdentityContinuity spec. Each touches
 // only the profile, the sync, or an IdP's attribute mapping and directory;

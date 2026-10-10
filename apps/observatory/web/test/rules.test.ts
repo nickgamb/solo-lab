@@ -1,48 +1,9 @@
-// The Code tab's language: HCL as people write it, and the assurance rules
-// it says. Run with: npm test (node --test, no dependencies).
+// The assurance rules' Code tab: the rules as YAML, read back as the same
+// draft. Run with: npm test (node --test).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parse, print, HclError } from '../src/continuity/hcl.ts'
 import { draftOf, fromCode, shortDuration, toCode, same, type Draft } from '../src/continuity/rulesCode.ts'
 import type { AssuranceView } from '../src/api.ts'
-
-test('hcl: blocks, attributes, comments, values', () => {
-  const items = parse(`# a comment
-rule "ledger" {   // another
-  minimum = "AAL2"
-  clients = ["web",
-    "cli",]
-  acr     = { "urn:gold" = "AAL2", silver = { level = "AAL1", phishing_resistant = false } }
-  max_age = null /* inline */ 
-  n = -1.5
-}
-`)
-  assert.equal(items.length, 1)
-  const b = items[0]
-  assert.equal(b.kind, 'block')
-  if (b.kind !== 'block') return
-  assert.deepEqual([b.type, b.labels], ['rule', ['ledger']])
-  const get = (k: string) => b.body.find(i => i.kind === 'attr' && i.key === k)
-  assert.deepEqual((get('clients') as { value: unknown }).value, ['web', 'cli'])
-  assert.equal((get('max_age') as { value: unknown }).value, null)
-  assert.equal((get('n') as { value: unknown }).value, -1.5)
-})
-
-test('hcl: errors say where and what', () => {
-  const at = (src: string) => { try { parse(src); return '' } catch (e) { assert.ok(e instanceof HclError); return `${e.line}:${e.col} ${e.message}` } }
-  assert.match(at('rule "x" {\n  minimum = AAL2\n}'), /^2:13 AAL2 isn't a value: put text in quotes/)
-  assert.match(at('rule "x" {\n  a = 1\n'), /never closed/)
-  assert.match(at('a = "x\n'), /string is never closed/)
-  assert.match(at('rule "x" {\n  a = 1\n  a = 2\n}'), /^3:3 a is set twice/)
-  assert.match(at('a = [1 2]'), /expected , or \]/)
-})
-
-test('hcl: prints what it reads, aligned', () => {
-  const src = print([{ kind: 'block', type: 'rule', labels: ['x'], body: [
-    { kind: 'attr', key: 'minimum', value: 'AAL2' }, { kind: 'attr', key: 'phishing_resistant', value: true }] }])
-  assert.equal(src, 'rule "x" {\n  minimum            = "AAL2"\n  phishing_resistant = true\n}')
-  assert.deepEqual(parse(src).length, 1)
-})
 
 test('durations as people write them', () => {
   assert.equal(shortDuration('12h0m0s'), '12h')
@@ -76,13 +37,16 @@ const view: AssuranceView = {
 test('rules: the document round-trips', () => {
   const d = draftOf(view)
   const code = toCode(d, view)
-  assert.match(code, /^default \{$/m)
-  assert.match(code, /^idp "north" \{ # North IdP · oidc · active$/m)
-  assert.match(code, /"urn:gold" = "AAL2"/)
-  assert.match(code, /hwk = \{ level = "AAL3", phishing_resistant = true \}/)
-  assert.match(code, /^rule "ledger" \{$/m)
-  assert.match(code, /max_age += "12h"/)
-  assert.match(code, /enforced_at = \["apps\/ledger-caller"\]/)
+  assert.match(code, /^default:$/m)
+  assert.match(code, /^ {2}# North IdP · oidc · active\n {2}north:$/m)
+  assert.match(code, /^ {6}urn:gold: AAL2$/m)
+  assert.match(code, /^ {6}hwk: \{level: AAL3, phishing_resistant: true\}$/m)
+  assert.match(code, /^ {2}ledger:$/m)
+  assert.match(code, /^ {4}max_age: 12h$/m)
+  assert.match(code, /^ {4}workloads: \[apps\/ledger\]$/m)
+  assert.match(code, /^ {2}apps\/ledger-caller: ledger$/m)
+  assert.match(code, /^ {2}apps\/notes-caller: null$/m)
+  assert.doesNotMatch(code, /apps\/other/)
   const back = fromCode(code, view, 'firm')
   assert.ok('draft' in back, JSON.stringify(back))
   assert.ok(same((back as { draft: Draft }).draft, d), `${JSON.stringify((back as { draft: Draft }).draft)}\n${JSON.stringify(d)}`)
@@ -90,8 +54,9 @@ test('rules: the document round-trips', () => {
 
 test('rules: an edit, a new rule and enforcement, read back', () => {
   const code = toCode(draftOf(view), view)
-    .replace('break_glass        = false', 'break_glass        = true')
-    + '\nrule "notes" {\n  criticality = "silver"\n  mode = "report_only"\n  minimum = "aal2"\n  enforced_at = ["apps/notes-caller"]\n}\n'
+    .replace('  break_glass: false', '  break_glass: true')
+    .replace('apps/notes-caller: null', 'apps/notes-caller: notes')
+    .replace(/^rules:$/m, 'rules:\n  notes: { criticality: silver, mode: report_only, minimum: aal2 }')
   const back = fromCode(code, view, 'firm')
   assert.ok('draft' in back, JSON.stringify(back))
   const d = (back as { draft: Draft }).draft
@@ -100,35 +65,62 @@ test('rules: an edit, a new rule and enforcement, read back', () => {
   assert.equal(d.points['AgentgatewayPolicy apps/notes-caller'], 'notes')
 })
 
-test('rules: a rule left out is removed, and so is its enforcement', () => {
-  const code = toCode(draftOf(view), view).replace(/rule "ledger" \{[\s\S]*\}\n$/, '')
+test('rules: the default rule, and a policy left out asks for none', () => {
+  const code = toCode(draftOf(view), view).replace(/^ {2}apps\/notes-caller: null\n/m, '').replace('apps/ledger-caller: ledger', 'AgentgatewayPolicy apps/ledger-caller: default')
+  const back = fromCode(code, view, 'firm')
+  assert.ok('draft' in back, JSON.stringify(back))
+  const d = (back as { draft: Draft }).draft
+  assert.equal(d.points['AgentgatewayPolicy apps/ledger-caller'], '')
+  assert.equal(d.points['AgentgatewayPolicy apps/notes-caller'], null)
+})
+
+test('rules: a rule left out is removed, with what asked for it', () => {
+  const code = toCode(draftOf(view), view).replace(/^ {2}ledger:\n( {4}.*\n|\n)*/m, '').replace('apps/ledger-caller: ledger', 'apps/ledger-caller: null')
   const back = fromCode(code, view, 'firm')
   assert.ok('draft' in back, JSON.stringify(back))
   const d = (back as { draft: Draft }).draft
   assert.equal(d.rules.ledger, null)
   assert.equal(d.points['AgentgatewayPolicy apps/ledger-caller'], null)
+  // still asked for: an error, at the policy
+  const left = fromCode(toCode(draftOf(view), view).replace(/^ {2}ledger:\n( {4}.*\n|\n)*/m, ''), view, 'firm')
+  assert.ok('errors' in left)
+  assert.match(left.errors[0].message, /^policy_points: apps\/ledger-caller asks for "ledger", which isn't one of the rules here/)
 })
 
-test('rules: errors name the line and the choices', () => {
-  const bad = `default {
-  minimum = "AAL9"
-  idps = ["west"]
-}
-idp "nowhere" {}
-rule "Bad Name" {}
-rule "x" {
-  criticality = "Gold"
-  minimun = "AAL2"
-  enforced_at = ["apps/other"]
-}
+test('rules: errors name the line, the column and the choices', () => {
+  const bad = `default:
+  minimum: AAL9
+  idps: [west]
+idps:
+  nowhere: {}
+rules:
+  Bad Name: {}
+  x:
+    criticality: Gold
+    minimun: AAL2
+policy_points:
+  apps/other: x
+  apps/notes-caller: nothing
+extra: 1
 `
   const back = fromCode(bad, view, 'firm')
   assert.ok('errors' in back)
-  const msgs = (back as { errors: { line: number; message: string }[] }).errors.map(e => `${e.line} ${e.message}`)
-  assert.ok(msgs.some(m => m.startsWith('2 minimum "AAL9" isn\'t one of "AAL1", "AAL2", "AAL3"')), msgs.join('\n'))
-  assert.ok(msgs.some(m => m.startsWith('3 idps: "west" isn\'t one of the chain\'s IdPs (north, south)')), msgs.join('\n'))
-  assert.ok(msgs.some(m => m.startsWith('5 "nowhere" isn\'t one of the chain\'s IdPs')), msgs.join('\n'))
-  assert.ok(msgs.some(m => m.startsWith('6 rule takes a name')), msgs.join('\n'))
-  assert.ok(msgs.some(m => m.startsWith('9 rule "x" has no minimun')), msgs.join('\n'))
-  assert.ok(msgs.some(m => m.startsWith('10 enforced_at: "apps/other" isn\'t a gateway policy')), msgs.join('\n'))
+  const msgs = back.errors.map(e => `${e.line}:${e.col} ${e.message}`)
+  const has = (prefix: string) => assert.ok(msgs.some(m => m.startsWith(prefix)), `${prefix}\n${msgs.join('\n')}`)
+  has('2:3 minimum "AAL9" isn\'t one of "AAL1", "AAL2", "AAL3"')
+  has('3:3 idps: "west" isn\'t one of the chain\'s IdPs (north, south)')
+  has('5:3 "nowhere" isn\'t one of the chain\'s IdPs')
+  has('7:3 rule takes a name')
+  has('10:5 rule "x" has no minimun')
+  has('12:3 policy_points: "apps/other" isn\'t a gateway policy')
+  has('13:3 policy_points: apps/notes-caller asks for "nothing"')
+  has('14:1 there\'s no extra')
+})
+
+test('rules: YAML that does not parse says where', () => {
+  const back = fromCode('default:\n  minimum: AAL1\n  minimum: AAL2\n', view, 'firm')
+  assert.ok('errors' in back)
+  assert.deepEqual([back.errors[0].line, back.errors[0].col], [3, 3])
+  const r = fromCode('rules: [x\n', view, 'firm')
+  assert.ok('errors' in r && r.errors.length)
 })

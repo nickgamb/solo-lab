@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { checkTrust, deleteProfile, evaluate, getAssurance, isConflict, putContinuity, putPolicyPoint, putProfile,
+import { checkTrust, deleteProfile, evaluate, getAssurance, getAssuranceLogic, isConflict, putContinuity, putPolicyPoint, putProfile,
   type AssuranceView, type EvalSession, type Evaluation, type IdentityContinuity } from '../api'
 import { Guard } from '../topology/DetailsPanel'
 import { clone, critClass, draftOf, DURATION, fromCode, idpLabel, phaseChip, pointKey, refOf, same, toCode, type CodeError, type Draft } from './rulesCode'
@@ -31,6 +31,9 @@ export function AssuranceRules({ ic, onClose }: { ic: IdentityContinuity; onClos
   const [code, setCode] = useState('')
   const [codeBase, setCodeBase] = useState('')
   const [codeErrs, setCodeErrs] = useState<CodeError[]>()
+  // the Code tab shows the rules, or the gate's decision logic they feed
+  const [codeView, setCodeView] = useState<'rules' | 'logic'>('rules')
+  const [logic, setLogic] = useState<{ text?: string; error?: string }>()
   const [ev, setEv] = useState<Evaluation>()
   const [evErr, setEvErr] = useState<string>()
   const [msg, setMsg] = useState<{ ok: boolean; text: string; conflict?: boolean }>()
@@ -97,6 +100,10 @@ export function AssuranceRules({ ic, onClose }: { ic: IdentityContinuity; onClos
     setTab(next)
     return true
   }
+  const loadLogic = () => {
+    getAssuranceLogic(ns, chain).then(text => setLogic({ text }), e => setLogic({ error: (e as Error).message }))
+  }
+  const showLogic = () => { setCodeView('logic'); if (!logic?.text) loadLogic() }
   const onTabKey = (e: ReactKeyboardEvent) => {
     const i = TABS.findIndex(([t]) => t === tab)
     const j = e.key === 'ArrowRight' ? (i + 1) % TABS.length : e.key === 'ArrowLeft' ? (i + TABS.length - 1) % TABS.length : -1
@@ -318,17 +325,40 @@ export function AssuranceRules({ ic, onClose }: { ic: IdentityContinuity; onClos
             {tab === 'whatif' && <WhatIf view={view} run={(s: EvalSession) => evaluate(ns, chain, evalDraft(draft), s)} />}
             {tab === 'code' && (
               <div className="cm-code">
-                <div className="monaco">
-                  <Guard>
-                    <Suspense fallback={<div className="subtle small">Loading editor…</div>}>
-                      <CodeEditor value={code} onChange={v => { setCode(v); if (codeErrs) setCodeErrs(undefined) }} language="hcl" markers={codeErrs} />
-                    </Suspense>
-                  </Guard>
+                <div className="row">
+                  <div className="seg" role="radiogroup" aria-label="Code view">
+                    <button role="radio" aria-checked={codeView === 'rules'} className={codeView === 'rules' ? 'on' : ''} onClick={() => setCodeView('rules')}>Rules (YAML)</button>
+                    <button role="radio" aria-checked={codeView === 'logic'} className={codeView === 'logic' ? 'on' : ''} onClick={showLogic}>Decision logic (Rego, read-only)</button>
+                  </div>
+                  {codeView === 'logic' && <button className="btn small ghost" onClick={loadLogic}>Refresh</button>}
                 </div>
-                {codeErrs && (
-                  <ul className="note bad ar-errs" role="alert">
-                    {codeErrs.map((e, i) => <li key={i}><span className="mono">{e.line}:{e.col}</span> {e.message}</li>)}
-                  </ul>
+                {codeView === 'rules' ? (
+                  <>
+                    <div className="monaco">
+                      <Guard>
+                        <Suspense fallback={<div className="subtle small">Loading editor…</div>}>
+                          <CodeEditor value={code} onChange={v => { setCode(v); if (codeErrs) setCodeErrs(undefined) }} language="yaml" markers={codeErrs} />
+                        </Suspense>
+                      </Guard>
+                    </div>
+                    {codeErrs && (
+                      <ul className="note bad ar-errs" role="alert">
+                        {codeErrs.map((e, i) => <li key={i}><span className="mono">{e.line}:{e.col}</span> {e.message}</li>)}
+                      </ul>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <p className="subtle small">What the assurance gate decides every request with: the rules, the chain and the session are its input. Read-only here; edit the rules.</p>
+                    {logic?.error && <div className="note bad">{logic.error}</div>}
+                    <div className="monaco">
+                      <Guard>
+                        <Suspense fallback={<div className="subtle small">Loading editor…</div>}>
+                          <CodeEditor value={logic?.text ?? ''} onChange={() => {}} language="rego" readOnly />
+                        </Suspense>
+                      </Guard>
+                    </div>
+                  </>
                 )}
               </div>
             )}

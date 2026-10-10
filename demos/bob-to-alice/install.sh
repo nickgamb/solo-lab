@@ -101,6 +101,10 @@ if [ "$(K get gateway waypoint -n alice -o jsonpath='{.spec.gatewayClassName}' 2
 fi
 K delete authorizationpolicy uma-as-grant-surface -n alice --ignore-not-found >/dev/null
 apply_tmpl "$D/alice.yaml" "$D/meridian.yaml" "$D/sv-u4a.yaml"
+# Alice's waypoint and the route its rules attach to (one listener and the
+# Service's route on Enterprise; an internal listener on OSS)
+apply_tmpl "$D/alice-waypoint-$AGW_EDITION.yaml"
+if [ "$AGW_EDITION" = enterprise ]; then K delete service uma-as-upstream -n alice --ignore-not-found >/dev/null; fi
 deny_internet alice alice-identity meridian sv-u4a   # every party reaches the others through the edge
 wait_for "Alice's database" 60 5 K wait cluster/uma-as-db -n alice --for=condition=Ready --timeout=2s
 rollout alice deploy/uma-as deploy/portal

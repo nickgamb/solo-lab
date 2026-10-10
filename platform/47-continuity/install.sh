@@ -86,6 +86,16 @@ export CONTINUITY_UPSTREAM_SECRETS CONTINUITY_DIRECTORY_SECRETS
 apply_tmpl "$D/controller.yaml"
 # the assurance gate: the same image, its gate command
 apply_tmpl "$D/assurance-gate.yaml"
+# Enterprise: Solo's ext-auth service enforces the assurance rules, with the
+# same Rego the gate runs (extauth.yaml); OSS: the gate does
+if [ -n "$ASSURANCE_EXTAUTH_NS" ]; then
+  K create configmap assurance-policy -n "$ASSURANCE_EXTAUTH_NS" --from-file=policy.rego="$APP/internal/assurance/assurance.rego" \
+    --dry-run=client -o yaml | K apply -f - >/dev/null
+  apply_tmpl "$D/extauth.yaml"
+  ok "assurance rules: Solo's ext-auth service ($ASSURANCE_EXTAUTH_NS), the gate's Rego"
+else
+  K delete validatingadmissionpolicybinding,validatingadmissionpolicy continuity-assurance-writes --ignore-not-found >/dev/null
+fi
 # the fabric's routing: sign-ins pass the firm's gateway, which the
 # controller tells where each one goes (spec.routing)
 AGW_POLICY_RESOURCE=$(echo "$AGW_POLICY_KIND" | tr '[:upper:]' '[:lower:]' | sed 's/y$/ies/') apply_tmpl "$D/routing.yaml"

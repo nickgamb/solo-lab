@@ -256,6 +256,8 @@ spec:
         env:
         - name: POD_NAMESPACE
           valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+        # Enterprise: the assurance rules go to Solo's ext-auth service (extauth.yaml)
+        - {name: EXTAUTH_NAMESPACE, value: "${ASSURANCE_EXTAUTH_NS}"}
         ports:
         - {name: metrics, containerPort: 8080}
         - {name: health, containerPort: 8081}

@@ -84,6 +84,7 @@ spec:
   targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: xaa-ledgerline}]
   traffic:
     jwtAuthentication:
+      ${ASSURANCE_JWT_KEEP}
       mode: Strict
       providers:
       - issuer: https://idp.${SV_DOMAIN}/realms/sterling-vance
@@ -102,20 +103,11 @@ spec:
           source.identity.namespace == "sv-agents" && source.identity.serviceAccount in ["bob-assistant", "advisor-desk"]
           && "advisors" in jwt.groups
     # Workload profile ledgerline-research (05-workload-profiles.yaml): the
-    # assurance gate decides whether the IdP and sign-in behind Bob's token
-    # meet it, before anything is exchanged, from the verified claims alone
-    # (never a header the caller could set). No answer from the gate, no
-    # request.
-    extAuth:
-      backendRef: {kind: Service, name: assurance-gate, namespace: sv-identity, port: 9001}
-      failureMode: FailClosed
-      grpc:
-        contextExtensions: {profile: ledgerline-research}
-        requestMetadata:
-          continuity: >-
-            {"iss": jwt.iss, "sub": jwt.sub, "idp": has(jwt.idp) ? jwt.idp : "",
-             "acr": has(jwt.idp_acr) ? jwt.idp_acr : "", "amr": has(jwt.idp_amr) ? jwt.idp_amr : "",
-             "auth_time": has(jwt.idp_auth_time) ? jwt.idp_auth_time : 0}
+    # assurance rules (Rego; Solo's ext-auth service on Enterprise, the
+    # assurance gate on OSS: config/lab.env) decide whether the IdP and
+    # sign-in behind Bob's token meet it, before anything is exchanged, from
+    # the verified token alone. No answer, no request.
+    ${ASSURANCE_POINT_OPEN}ledgerline-research${ASSURANCE_POINT_CLOSE}
     # The subject of the ID-JAG exchange: Bob's ID token from S&V's broker,
     # for the access token just verified. It replaces any x-id-token the
     # caller sent.

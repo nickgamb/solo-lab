@@ -28,6 +28,13 @@ values_for "$D" values "$ED"
 helm_up "$AGW_RELEASE" "$AGW_CHART" "$AGW_VERSION" agentgateway-system ${VALS[@]+"${VALS[@]}"}
 
 step "AI gateway (agentgateway-system/ai-gateway)"
+# Enterprise: the class's shared services (Solo's ext-auth service
+# replicated), attached to the class
+if [ "$ED" = enterprise ]; then
+  apply_tmpl "$D/shared-extensions.yaml"
+  K patch gatewayclass enterprise-agentgateway --type merge -p '{"spec":{"parametersRef":{"group":"enterpriseagentgateway.solo.io","kind":"EnterpriseAgentgatewayParameters","name":"shared-extensions","namespace":"agentgateway-system"}}}' >/dev/null
+  ok "Solo's ext-auth service: 3 replicas across zones, never fewer than 2 (shared-extensions.yaml)"
+fi
 K apply -f "$D/llm/costs.yaml" >/dev/null
 apply_tmpl "$D/ai-gateway.yaml"
 # Enterprise: the STS that mints the tokens MCP servers accept (values-enterprise.yaml)
