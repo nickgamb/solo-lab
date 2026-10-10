@@ -86,6 +86,9 @@ export CONTINUITY_UPSTREAM_SECRETS CONTINUITY_DIRECTORY_SECRETS
 apply_tmpl "$D/controller.yaml"
 # the assurance gate: the same image, its gate command
 apply_tmpl "$D/assurance-gate.yaml"
+# the fabric's routing: sign-ins pass the firm's gateway, which the
+# controller tells where each one goes (spec.routing)
+AGW_POLICY_RESOURCE=$(echo "$AGW_POLICY_KIND" | tr '[:upper:]' '[:lower:]' | sed 's/y$/ies/') apply_tmpl "$D/routing.yaml"
 # partitions are read in the egress namespace only; a lab from before that
 # still has the cluster-wide grant
 K delete clusterrolebinding,clusterrole continuity-controller-partitions --ignore-not-found >/dev/null
@@ -204,6 +207,15 @@ else
     K patch idc sterling-vance -n sv-identity --type merge -p "{\"spec\":{\"tiers\":$merged}}" >/dev/null
     ok "tiers: $(echo "$cur" | jq -r 'map(.name) | join(" -> ")') => $(echo "$merged" | jq -r 'map(.name) | join(" -> ")')"
   fi
+fi
+# the routing policy's gateway follows the edition; the rules stay the
+# identity team's (the defaults only where there are none yet)
+want=$(render "$D/identitycontinuity.yaml" | yq -o json -I0 '.spec.routing')
+routing=$(K get idc sterling-vance -n sv-identity -o json | jq -c --argjson w "$want" '(.spec.routing // {}) as $r
+  | {policy: $w.policy, rules: ($r.rules // $w.rules)} as $n | if $n == $r then empty else {spec: {routing: $n}} end')
+if [ -n "$routing" ]; then
+  K patch idc sterling-vance -n sv-identity --type merge -p "$routing" >/dev/null
+  ok "routing: $(echo "$routing" | jq -r '[.spec.routing.rules[] | "\(.name) -> \(.idps | join(", "))"] | join("; ")')"
 fi
 # a latency rule at or above the probe timeout can never fire (the probe times
 # out first): earlier versions installed one, so bring it under the timeout

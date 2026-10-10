@@ -57,6 +57,62 @@ type IdentityContinuitySpec struct {
 	// unless it sets its own.
 	// +kubebuilder:default={}
 	AssurancePolicy AssurancePolicy `json:"assurancePolicy,omitempty"`
+	// Routing: which IdP each sign-in goes to, decided at the firm's
+	// gateway before the broker sees it. Without it, every sign-in goes to
+	// the active tier.
+	// +optional
+	Routing *Routing `json:"routing,omitempty"`
+}
+
+// Routing is the identity fabric's routing policy. The controller writes it
+// into a gateway policy on the route that carries sign-ins to the broker:
+// each sign-in gets the IdP of the first rule it matches, so no client can
+// pick one, and on every failover the policy is written again.
+type Routing struct {
+	// Policy: the gateway policy to write into (an agentgateway policy on
+	// the broker's sign-in route). The controller sets only its request
+	// transformation.
+	Policy PolicyRef `json:"policy"`
+	// Rules, first match wins. A sign-in no rule matches goes to the active
+	// tier.
+	// +kubebuilder:validation:MaxItems=32
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	Rules []RoutingRule `json:"rules,omitempty"`
+}
+
+type PolicyRef struct {
+	// +kubebuilder:validation:MinLength=1
+	APIVersion string `json:"apiVersion"`
+	// +kubebuilder:validation:MinLength=1
+	Kind string `json:"kind"`
+	// +kubebuilder:validation:MinLength=1
+	Namespace string `json:"namespace"`
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+}
+
+// RoutingRule sends the sign-ins it matches to IdPs of its own.
+type RoutingRule struct {
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+	// When: a CEL expression, in the gateway's request variables
+	// (request.uri, request.headers, source.identity, ...), over the
+	// sign-in request: its client_id, the resource it is for, a login_hint.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=2048
+	When string `json:"when"`
+	// IdPs: oidc tiers, in order: the sign-in goes to the first that can
+	// sign people in now (enabled, not drained, healthy, configured).
+	// When none can, the active tier.
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=16
+	IdPs []string `json:"idps"`
+	// What the rule is for, for people reading it.
+	// +optional
+	Description string `json:"description,omitempty"`
 }
 
 // AssurancePolicy is the global assurance rules: what a sign-in must prove
@@ -383,6 +439,10 @@ type IdentityContinuityStatus struct {
 	// the local tier when it points nowhere).
 	Active      string       `json:"active,omitempty"`
 	ActiveSince *metav1.Time `json:"activeSince,omitempty"`
+	// Each routing rule's IdP now, as written into the gateway policy.
+	// +listType=map
+	// +listMapKey=name
+	Routing []RouteStatus `json:"routing,omitempty"`
 	// Where this instance's ServiceEntries are, so they are removed when
 	// spec.egress changes or goes away.
 	EgressNamespace string `json:"egressNamespace,omitempty"`
@@ -395,6 +455,14 @@ type IdentityContinuityStatus struct {
 	// +listType=map
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+type RouteStatus struct {
+	Name string `json:"name"`
+	// The IdP its sign-ins go to now; empty: the active tier's.
+	IdP string `json:"idp,omitempty"`
+	// Why: the rule's first IdP, a fallback (and why), or none of them.
+	Reason string `json:"reason,omitempty"`
 }
 
 type BrokerStatus struct {

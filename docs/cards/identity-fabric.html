@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Identity Fabric Demo Card</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="card.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="masthead">
+    <h1>Identity Fabric Demo Card</h1>
+    <p class="standfirst">Every IdP the firm owns, connected to every resource and MCP server it runs, through one gateway.</p>
+  </header>
+  <section class="screens">
+    <div class="screen left">
+      <span class="side">Left screen</span>
+      <span class="what">Observatory, Identity Continuity</span>
+      <span class="detail">https://observatory.ops.lab, and a terminal in the solo-lab checkout</span>
+    </div>
+    <div class="screen right">
+      <span class="side">Right screen</span>
+      <span class="what">kagent, signed in as Bob</span>
+      <span class="detail">https://kagent.sterling.lab</span>
+    </div>
+  </section>
+
+  <section class="setup">
+    <h2>Pre-demo setup</h2>
+    <p class="setup-note">About 30 minutes the first time; image caches outlive the cluster.</p>
+    <div class="table-scroll">
+      <table>
+        <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
+        <thead><tr><th>#</th><th>Run this</th><th>What it does</th></tr></thead>
+        <tbody>
+        <tr class="term">
+          <td class="num">1</td>
+          <td class="act">
+            <span class="where">Once per machine</span>
+            <div class="cmdwrap"><code class="cmd">make machine-setup</code></div>
+          </td>
+          <td class="say">One sudo: <strong>*.lab</strong> resolves locally and the lab CA is trusted.</td>
+        </tr>
+        <tr class="term">
+          <td class="num">2</td>
+          <td class="act">
+            <span class="where">Build the lab</span>
+            <div class="cmdwrap"><code class="cmd">make up &amp;&amp; make verify</code></div>
+          </td>
+          <td class="say">Every layer and demo. Must end with <strong>all checks passed</strong>.</td>
+        </tr>
+        <tr class="port">
+          <td class="num">3</td>
+          <td class="act">
+            <span class="where">Left screen</span>
+            <span class="click">Open <strong>https://observatory.ops.lab</strong> as <strong>ops</strong>, tab <strong>Identity Continuity</strong></span>
+          </td>
+          <td class="say">The fabric, live.</td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="afters">
+      <div class="after">
+        <span class="after-label">Running it again</span>
+        <p>Put the rule back in <strong>Routing policy</strong> (Reset, or undo the edit and Save), and <strong>Restore IdP network</strong>.</p>
+      </div>
+    </div>
+  </section>
+  <hr class="rule">
+
+  <section class="runthrough">
+    <h2>The run-through</h2>
+    <div class="table-scroll">
+      <table>
+        <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
+        <thead><tr><th>#</th><th>Do this</th><th>Say this</th></tr></thead>
+        <tbody>
+        <tr class="port">
+          <td class="num">1</td>
+          <td class="act">
+            <span class="where">Observatory</span>
+            <span class="click">Point at the map, left to right</span>
+          </td>
+          <td class="say">
+            <span class="chip tier">The fabric</span>
+            <span class="lede">Resources and MCP servers on the left, the gateway in the middle, every IdP the firm owns on the right. Nothing on the left knows which IdP signed anyone in.</span>
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">2</td>
+          <td class="act">
+            <span class="where">Observatory</span>
+            <span class="click">Click <strong>Routing policy</strong></span>
+          </td>
+          <td class="say">
+            <span class="chip through">Routing is policy</span>
+            <span class="lede">Which IdP a sign-in goes to is a rule at the gateway, in CEL. First match wins; each rule lists IdPs in order.</span>
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">3</td>
+          <td class="act">
+            <span class="where">Observatory</span>
+            <span class="click">Tab <strong>Gateway policy</strong></span>
+          </td>
+          <td class="say">
+            <span class="chip tier">agentgateway runs it</span>
+            <span class="lede">Written from the rules and every IdP's health, rewritten on every failover. No client can pick its own IdP.</span>
+          </td>
+        </tr>
+        <tr class="term">
+          <td class="num">4</td>
+          <td class="act">
+            <span class="where">Terminal</span>
+            <div class="cmdwrap"><code class="cmd">make routes</code></div>
+          </td>
+          <td class="say">
+            <span class="chip through">One door, the right IdP</span>
+            <span class="lede">A browser app goes to the primary; an AI client goes to the IdP the firm runs itself, with MFA.</span>
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">5</td>
+          <td class="act">
+            <span class="where">Observatory</span>
+            <span class="click">Tab <strong>Rules</strong>: change <code>ai-clients -&gt; keycloak</code> to <code>ai-clients -&gt; contingency, keycloak</code>, then <strong>Save</strong></span>
+          </td>
+          <td class="say">
+            <span class="chip through">Live</span>
+            <span class="lede">One edit, no app or client changes.</span>
+          </td>
+        </tr>
+        <tr class="term">
+          <td class="num">6</td>
+          <td class="act">
+            <span class="where">Terminal</span>
+            <div class="cmdwrap"><code class="cmd">make routes</code></div>
+          </td>
+          <td class="say">
+            <span class="chip through">Moved</span>
+            <span class="lede">AI clients now sign in at the contingency IdP.</span>
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">7</td>
+          <td class="act">
+            <span class="where">Observatory</span>
+            <span class="click">Pick <strong>Sterling &amp; Vance (contingency)</strong>, click <span class="btn deny">Simulate IdP outage</span>, then <code>make routes</code></span>
+          </td>
+          <td class="say">
+            <span class="chip refused">Its IdP is down</span>
+            <span class="lede">The rule falls back down its own list, to S&amp;V's Keycloak, on its own.</span>
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">8</td>
+          <td class="act">
+            <span class="where">Right screen</span>
+            <div class="cmdwrap"><code class="cmd">What is Ledgerline's view on technology, and which Ledgerline account am I using?</code></div>
+          </td>
+          <td class="say">
+            <span class="chip through">One issuer</span>
+            <span class="lede">A SaaS that trusts one issuer answers as Bob's own account, whichever IdP he used.</span>
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">9</td>
+          <td class="act">
+            <span class="where">Observatory</span>
+            <span class="click">Click <strong>Restore IdP network</strong>, and put the rule back</span>
+          </td>
+          <td class="say">
+            <span class="chip tier">Identity fabric, by Solo</span>
+            <span class="lede">Every IdP to every resource and MCP server: one door for people and agents, the policy at the gateway.</span>
+          </td>
+        </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+  <footer class="foot">
+    <a href="https://www.solo.io">Solo.io</a> · <a href="https://docs.solo.io">docs.solo.io</a> · <a href="https://www.solo.io/get-started">Get started</a>
+  </footer>
+</div>
+<script src="card.js"></script>
+</body>
+</html>

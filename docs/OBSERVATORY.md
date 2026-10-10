@@ -139,6 +139,17 @@ builder, and the directory sync window. See
 
   ![Directory sync schedule and last run](images/observatory-directory-sync-schedule.jpg)
 
+- **Routing policy** (a button in the rule builder): which of S&V's IdPs
+  each sign-in goes to, decided at the gateway
+  ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#routing)).
+  - **Rules:** the rules in a Monaco editor, the CEL as written: `rule
+    <name> -> <idp>, <idp>`, then the rule's description as comments and its
+    CEL, indented. A name, an empty rule or a missing IdP list is marked on
+    its line; an IdP outside the chain is a warning (it is skipped until it
+    is there). Below, each rule's IdP now, and the active IdP for the rest.
+    Save writes `spec.routing.rules` as the signed-in admin.
+  - **Gateway policy:** the agentgateway policy the continuity controller
+    wrote from the rules and the chain's health, read-only.
 - **Assurance rules** (a button in the rule builder): what a sign-in must
   prove to reach what relies on the broker, whichever IdP it came through
   ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#assurance-rules)). Every

@@ -63,7 +63,7 @@ func TestDecide(t *testing.T) {
 		if c.profile != nil {
 			c.profile(&p)
 		}
-		d := Decide(Effective(p, policy), chain(), c.active, c.s, now)
+		d := Decide(Effective(p, policy), chain(), Current{Active: c.active}, c.s, now)
 		if d.Allow != c.allow || !strings.Contains(d.Reason, c.reason) || d.ACRValues != c.stepUp {
 			t.Errorf("%s: %+v, want allow=%v reason~%q acr_values=%q", c.name, d, c.allow, c.reason, c.stepUp)
 		}
@@ -160,7 +160,7 @@ func TestReachOf(t *testing.T) {
 				if !ok {
 					continue
 				}
-				got := ReachOf(r, tier, tc.active)
+				got := ReachOf(r, tier, Current{Active: tc.active})
 				if got.Outcome != want || got.Reason == "" {
 					t.Errorf("%s: %s (%s), want %s", tier.Name, got.Outcome, got.Reason, want)
 				}
@@ -170,7 +170,21 @@ func TestReachOf(t *testing.T) {
 			}
 		})
 	}
-	if r := ReachOf(Effective(critical(), policy), c[2], ""); !strings.Contains(r.Reason, "at most AAL1") {
+	if r := ReachOf(Effective(critical(), policy), c[2], Current{}); !strings.Contains(r.Reason, "at most AAL1") {
 		t.Errorf("contingency's reason: %s", r.Reason)
+	}
+}
+
+// A session from an IdP the fabric's routing rules send sign-ins to is a
+// session from an IdP signing people in now.
+func TestDecideRoutedIdP(t *testing.T) {
+	now := time.Now()
+	p := v1.WorkloadProfileSpec{Sessions: "ActiveIdPOnly", Assurance: v1.ProfileAssurance{Minimum: "AAL2"}}
+	s := Session{IdP: "keycloak", ACR: "aal2"}
+	if d := Decide(Effective(p, v1.AssurancePolicy{}), chain(), Current{Active: "contingency", Routed: []string{"keycloak"}}, s, now); !d.Allow {
+		t.Fatalf("routed keycloak session refused: %s", d.Reason)
+	}
+	if d := Decide(Effective(p, v1.AssurancePolicy{}), chain(), Current{Active: "contingency"}, s, now); d.Allow {
+		t.Fatal("keycloak session allowed with keycloak neither active nor routed")
 	}
 }

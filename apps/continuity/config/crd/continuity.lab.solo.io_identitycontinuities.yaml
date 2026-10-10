@@ -262,6 +262,82 @@ spec:
                     type: array
                     x-kubernetes-list-type: set
                 type: object
+              routing:
+                description: |-
+                  Routing: which IdP each sign-in goes to, decided at the firm's
+                  gateway before the broker sees it. Without it, every sign-in goes to
+                  the active tier.
+                properties:
+                  policy:
+                    description: |-
+                      Policy: the gateway policy to write into (an agentgateway policy on
+                      the broker's sign-in route). The controller sets only its request
+                      transformation.
+                    properties:
+                      apiVersion:
+                        minLength: 1
+                        type: string
+                      kind:
+                        minLength: 1
+                        type: string
+                      name:
+                        minLength: 1
+                        type: string
+                      namespace:
+                        minLength: 1
+                        type: string
+                    required:
+                    - apiVersion
+                    - kind
+                    - name
+                    - namespace
+                    type: object
+                  rules:
+                    description: |-
+                      Rules, first match wins. A sign-in no rule matches goes to the active
+                      tier.
+                    items:
+                      description: RoutingRule sends the sign-ins it matches to IdPs
+                        of its own.
+                      properties:
+                        description:
+                          description: What the rule is for, for people reading it.
+                          type: string
+                        idps:
+                          description: |-
+                            IdPs: oidc tiers, in order: the sign-in goes to the first that can
+                            sign people in now (enabled, not drained, healthy, configured).
+                            When none can, the active tier.
+                          items:
+                            type: string
+                          maxItems: 16
+                          minItems: 1
+                          type: array
+                        name:
+                          maxLength: 63
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          type: string
+                        when:
+                          description: |-
+                            When: a CEL expression, in the gateway's request variables
+                            (request.uri, request.headers, source.identity, ...), over the
+                            sign-in request: its client_id, the resource it is for, a login_hint.
+                          maxLength: 2048
+                          minLength: 1
+                          type: string
+                      required:
+                      - idps
+                      - name
+                      - when
+                      type: object
+                    maxItems: 32
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                required:
+                - policy
+                type: object
               sync:
                 description: |-
                   The scheduled directory sync: the primary IdP's profile into the
@@ -693,6 +769,28 @@ spec:
               observedGeneration:
                 format: int64
                 type: integer
+              routing:
+                description: Each routing rule's IdP now, as written into the gateway
+                  policy.
+                items:
+                  properties:
+                    idp:
+                      description: 'The IdP its sign-ins go to now; empty: the active
+                        tier''s.'
+                      type: string
+                    name:
+                      type: string
+                    reason:
+                      description: 'Why: the rule''s first IdP, a fallback (and why),
+                        or none of them.'
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               sync:
                 description: SyncStatus records the scheduled sync's last run.
                 properties:

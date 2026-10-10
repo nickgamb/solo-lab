@@ -1,0 +1,60 @@
+# The identity fabric's routing: every sign-in to S&V's broker passes the
+# firm's gateway, which decides which of S&V's IdPs it goes to.
+#
+# The edge sends the broker's authorization endpoint (and only that) to the
+# ai-gateway; everything else at idp.${SV_DOMAIN} (tokens, keys, the login
+# pages) goes straight to the broker. On the way, policy fabric-routing sets
+# the broker's IdP hint, put first so it is the one the broker reads; a hint
+# the client sent as well makes the request invalid. The continuity
+# controller writes that policy's transformation from spec.routing in the
+# IdentityContinuity: each rule's first IdP that can sign people in now, the
+# active tier for everything else, rewritten on every failover.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: fabric-signin-edge, namespace: agentgateway-system}
+spec:
+  parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-sterling}]
+  hostnames: ["idp.${SV_DOMAIN}"]
+  rules:
+  - matches: [{path: {type: Exact, value: /realms/sterling-vance/protocol/openid-connect/auth}}]
+    backendRefs: [{name: ai-gateway, port: 80}]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: fabric-signin, namespace: agentgateway-system}
+spec:
+  parentRefs: [{name: ai-gateway, sectionName: http}]
+  hostnames: ["idp.${SV_DOMAIN}"]
+  rules:
+  - matches: [{path: {type: Exact, value: /realms/sterling-vance/protocol/openid-connect/auth}}]
+    backendRefs: [{name: keycloak, namespace: sv-identity, port: 80}]
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: fabric-routing, namespace: agentgateway-system}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: fabric-signin}]
+  traffic:
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+        # sign-ins come through the edge, nowhere else
+        - 'source.identity.namespace == "kgateway-system" && source.identity.serviceAccount == "edge"'
+    # transformation: the continuity controller's (spec.routing)
+---
+# The continuity controller writes this one policy, and nothing else here.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: continuity-routing, namespace: agentgateway-system}
+rules:
+- apiGroups: [${AGW_POLICY_GROUP}]
+  resources: [${AGW_POLICY_RESOURCE}]
+  resourceNames: [fabric-routing]
+  verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: continuity-routing, namespace: agentgateway-system}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: continuity-routing}
+subjects: [{kind: ServiceAccount, name: continuity-controller, namespace: sv-identity}]

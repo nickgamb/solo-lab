@@ -4,11 +4,12 @@ import { monacoTheme } from '../monaco'
 
 export type Marker = { line: number; col: number; message: string }
 
-// A Code tab's editor: the directory sync's JSON, the assurance rules' HCL.
+// A Code tab's editor: the directory sync's JSON, the assurance rules' HCL,
+// the routing rules' CEL.
 // Monaco is large, so each window loads this the first time its Code tab
 // opens. Markers are the document's errors, by position.
-export default function CodeEditor({ value, onChange, language = 'json', markers }: {
-  value: string; onChange: (v: string) => void; language?: string; markers?: Marker[]
+export default function CodeEditor({ value, onChange, language = 'json', markers, readOnly }: {
+  value: string; onChange: (v: string) => void; language?: string; markers?: Marker[]; readOnly?: boolean
 }) {
   const ref = useRef<Parameters<OnMount>>(undefined)
   useEffect(() => {
@@ -23,6 +24,6 @@ export default function CodeEditor({ value, onChange, language = 'json', markers
   return (
     <Editor height="100%" value={value} onChange={v => onChange(v ?? '')} language={language} theme={monacoTheme()}
       onMount={(ed, monaco) => { ref.current = [ed, monaco] }}
-      options={{ minimap: { enabled: false }, fontFamily: 'DM Mono', fontSize: 12, tabSize: 2, scrollBeyondLastLine: false, automaticLayout: true }} />
+      options={{ readOnly, minimap: { enabled: false }, fontFamily: 'DM Mono', fontSize: 12, tabSize: 2, scrollBeyondLastLine: false, automaticLayout: true }} />
   )
 }

@@ -135,6 +135,9 @@ jq -r .access_token /tmp/bob.json | jq -R 'split(".")[1] | gsub("-";"+") | gsub(
 | `kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o json \| jq -r '.status.tiers[] \| .name as $n \| .trust.checks[]? \| [$n, .name, .result] \| @tsv'` | each IdP's trust checks (callback, client authentication, PKCE, scopes, claims, assurance) |
 | `kubectl --context kind-solo-lab annotate idc sterling-vance -n sv-identity --overwrite continuity.lab.solo.io/check-trust=$(date +%s)` | run the trust checks now |
 | `make totp` | Bob's current one-time code at S&V's own Keycloak (`make totp EMPLOYEE=carol`) |
+| `make routes` | each routing rule's IdP now, and where a browser app, an AI client and an AI client for Ledgerline land |
+| `kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o json \| jq '{rules: .spec.routing.rules, now: .status.routing}'` | the routing rules and each one's IdP now |
+| `kubectl --context kind-solo-lab get enterpriseagentgatewaypolicy fabric-routing -n agentgateway-system -o jsonpath='{.spec.traffic.transformation.request.set[0].value}'` | the CEL the gateway runs on every sign-in (OSS: `agentgatewaypolicy`) |
 
 ## Assurance rules and the gate
 

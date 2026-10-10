@@ -36,3 +36,21 @@ monaco.editor.defineTheme('solo-dark', {
 })
 
 export const monacoTheme = () => (document.documentElement.dataset.theme === 'light' ? 'vs' : 'solo-dark')
+
+// The routing rules' language: a rule header (name -> IdPs), its
+// description as comments, and its CEL.
+monaco.languages.register({ id: 'fabric-routing' })
+monaco.languages.setMonarchTokensProvider('fabric-routing', {
+  tokenizer: {
+    root: [
+      [/#.*$/, 'comment'],
+      [/^(rule)(\s+)([a-z0-9-]+)(\s*)(->)/, ['keyword', '', 'type', '', 'keyword']],
+      [/"([^"\\]|\\.)*"/, 'string'],
+      [/'([^'\\]|\\.)*'/, 'string'],
+      [/\b(true|false|null|in|has|matches|contains|startsWith|endsWith|default)\b/, 'keyword'],
+      [/\b(request|source|jwt|mcp)\b/, 'variable'],
+      [/[&|!=<>?:]+/, 'operator'],
+      [/\d+/, 'number'],
+    ],
+  },
+})

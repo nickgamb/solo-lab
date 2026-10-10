@@ -151,6 +151,7 @@
 .note { font-size: 12.5px; padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; }
 .note.ok { background: color-mix(in hsl, var(--ok) 12%, transparent); }
 .note.bad { background: color-mix(in hsl, var(--bad) 14%, transparent); }
+.note.warn { background: color-mix(in hsl, var(--warn) 14%, transparent); }
 .tlist { display: flex; flex-direction: column; }
 
 /* product rail: light up every instance of one Solo product */

@@ -213,17 +213,43 @@ type Reach struct {
 	Reason  string  `json:"reason"`
 }
 
+// Current is the IdPs signing people in now: Active, for every sign-in no
+// routing rule claims, and Routed, those the fabric's routing rules send
+// sign-ins to.
+type Current struct {
+	Active string
+	Routed []string
+}
+
+// Signing: whether name signs people in now.
+func (c Current) Signing(name string) bool {
+	return name != "" && (name == c.Active || slices.Contains(c.Routed, name))
+}
+
+func (c Current) String() string {
+	names := []string{}
+	if c.Active != "" {
+		names = append(names, c.Active)
+	}
+	for _, n := range c.Routed {
+		if n != c.Active && !slices.Contains(names, n) {
+			names = append(names, n)
+		}
+	}
+	return orNone(strings.Join(names, ", "))
+}
+
 // ReachOf: what a sign-in through the tier gets against the rules, with the
-// chain serving through active. What the gate decides for a session through
+// chain serving through cur. What the gate decides for a session through
 // it, before knowing what that session asserted.
-func ReachOf(r Rules, t v1.Tier, active string) Reach {
+func ReachOf(r Rules, t v1.Tier, cur Current) Reach {
 	out := Reach{IdP: t.Name, Outcome: Refuse}
 	if ok, why := Allowed(r, t); !ok {
 		out.Reason = why
 		return out
 	}
-	if r.ActiveIdPOnly && t.Name != active {
-		out.Reason = fmt.Sprintf("these workloads take sessions only from the IdP signing people in now (%s)", orNone(active))
+	if r.ActiveIdPOnly && !cur.Signing(t.Name) {
+		out.Reason = fmt.Sprintf("these workloads take sessions only from an IdP signing people in now (%s)", cur)
 		return out
 	}
 	within := ""
@@ -275,9 +301,10 @@ type Decision struct {
 	MaxAge       time.Duration
 }
 
-// Decide whether the rules admit the session. chain and active are the
-// IdentityContinuity's tiers and active tier; now is the request's time.
-func Decide(r Rules, chain []v1.Tier, active string, s Session, now time.Time) Decision {
+// Decide whether the rules admit the session. chain and cur are the
+// IdentityContinuity's tiers and the IdPs signing people in now; now is the
+// request's time.
+func Decide(r Rules, chain []v1.Tier, cur Current, s Session, now time.Time) Decision {
 	var t *v1.Tier
 	for i := range chain {
 		if (s.IdP == "" && chain[i].Type == "local") || (s.IdP != "" && chain[i].Name == s.IdP) {
@@ -294,11 +321,16 @@ func Decide(r Rules, chain []v1.Tier, active string, s Session, now time.Time) D
 	if ok, why := Allowed(r, *t); !ok {
 		return Decision{Reason: why}
 	}
-	if r.ActiveIdPOnly && t.Name != active {
-		return Decision{Reason: fmt.Sprintf("session from %s; these workloads take sessions only from the IdP signing people in now (%s): sign in again", t.Name, orNone(active))}
+	if r.ActiveIdPOnly && !cur.Signing(t.Name) {
+		return Decision{Reason: fmt.Sprintf("session from %s; these workloads take sessions only from an IdP signing people in now (%s): sign in again", t.Name, cur)}
 	}
 	proof := Proven(*t, s)
-	need := Decision{Insufficient: true, ACRValues: stepUp(r, chain, active)}
+	// step up where the session came from, when it signs people in now
+	at := cur.Active
+	if cur.Signing(t.Name) {
+		at = t.Name
+	}
+	need := Decision{Insufficient: true, ACRValues: stepUp(r, chain, at)}
 	if proof.Level < r.Minimum {
 		need.Reason = fmt.Sprintf("assurance %s below %s: session from %s (%s)", proof.Level, r.Minimum, t.Name, proof.Evidence)
 		return need
