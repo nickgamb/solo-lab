@@ -691,11 +691,12 @@ probe_exec() {
 probe_pod() {
   local ns=$1 sa=${2:-probe} pod=probe
   [ "$sa" = probe ] || { pod=probe-$sa; on_exit "K delete pod $pod -n $ns --wait=false >/dev/null 2>&1"; }
-  # pod specs are immutable: replace a probe that predates the current spec,
-  # and never reuse one that is already going away (an earlier run's cleanup)
-  local img cur; img=$(lab_build lab/toolbox "$LAB_ROOT/tools/toolbox")
-  cur=$(K get pod "$pod" -n "$ns" -o jsonpath='{.spec.containers[0].image}|{.metadata.deletionTimestamp}' 2>/dev/null || true)
-  if [ -n "$cur" ] && [ "$cur" != "$img|" ]; then
+  # pod specs are immutable: replace a probe that predates the current spec
+  # (its image, or this spec's revision), and never reuse one that is already
+  # going away (an earlier run's cleanup)
+  local img cur rev=2; img=$(lab_build lab/toolbox "$LAB_ROOT/tools/toolbox")
+  cur=$(K get pod "$pod" -n "$ns" -o jsonpath='{.spec.containers[0].image}|{.metadata.annotations.lab\.solo\.io/probe-spec}|{.metadata.deletionTimestamp}' 2>/dev/null || true)
+  if [ -n "$cur" ] && [ "$cur" != "$img|$rev|" ]; then
     K delete pod "$pod" -n "$ns" --now --ignore-not-found >/dev/null 2>&1 || true
     K wait --for=delete "pod/$pod" -n "$ns" --timeout=60s >/dev/null 2>&1 || true
   fi
@@ -703,12 +704,14 @@ probe_pod() {
   K apply -f - >/dev/null <<YAML
 apiVersion: v1
 kind: Pod
-metadata: {name: $pod, namespace: $ns, labels: {app: probe}}
+metadata: {name: $pod, namespace: $ns, labels: {app: probe}, annotations: {lab.solo.io/probe-spec: "$rev"}}
 spec:
   serviceAccountName: $sa
+  securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
   containers:
   - name: probe
     image: $img
+    securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
     env: [{name: SSL_CERT_FILE, value: /etc/lab-ca/ca.crt}]     # trust-manager bundle, like real workloads
     volumeMounts: [{name: lab-ca, mountPath: /etc/lab-ca, readOnly: true}]
   volumes: [{name: lab-ca, configMap: {name: lab-ca-bundle}}]

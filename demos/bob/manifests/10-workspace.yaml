@@ -30,6 +30,8 @@ spec:
       WORKSPACE_JWKS_URL: ${MCP_TOKEN_JWKS}
       WORKSPACE_BOOK_OWNER: bob@${SV_DOMAIN}      # the advisor whose book the fixture is
     replicas: 2
+    podSecurityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+    securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
     resources:
       requests: {cpu: 20m, memory: 64Mi}
       limits: {memory: 256Mi}

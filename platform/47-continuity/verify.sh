@@ -90,6 +90,12 @@ spec: {action: DENY, rules: [{}], $target}
 YAML
 }
 heal() { K delete authorizationpolicy "continuity-partition-$1" -n "$2" --ignore-not-found >/dev/null; }
+# the chain at rest before anything is noted: a run right after another
+# (which drained IdPs and put them back) can find the controller still
+# moving back to the first healthy IdP
+first_healthy() { idc | jq -r '[.status.tiers[] | select(.configured and .healthy)][0].name // empty'; }
+settled() { local f; f=$(first_healthy); [ -n "$f" ] && is_active "$f"; }
+within 90 settled >/dev/null
 ORIG=$(idc | jq -c '{tiers: .spec.tiers, failback: .spec.failback, profile: .spec.profile, sync: .spec.sync, routing: .spec.routing}')
 BASE=$(active)
 KI=$(echo "$ORIG" | jq '[.tiers[].name] | index("keycloak") // empty')   # its place in the chain
@@ -113,11 +119,14 @@ expect 'continuity-controller-' "leader holds Lease continuity.lab.solo.io" \
   "$(K get lease continuity.lab.solo.io -n "$NS" -o jsonpath='{.spec.holderIdentity}' 2>&1)"
 expect '^True$' "IdentityContinuity $IC Ready" \
   "$(K get idc "$IC" -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')"
-first=$(idc | jq -r '[.status.tiers[] | select(.configured and .healthy)][0].name // empty')
+first=$(first_healthy)
 expect "^${first:-none}\$" "the first configured, healthy tier is active (${first:-none})" "$(active)"
 expect "^$LOCAL\$" "the chain ends with the broker's break-glass accounts" "$(idc | jq -r '.spec.tiers[-1] | select(.type=="local") | .name')"
 if has_up; then
   expect '^https://' "$UP discovery answers from this host (${UP_ISSUER%/})" "${UP_AUTHZ:-no answer from ${UP_ISSUER%/}/.well-known/openid-configuration}"
+  # an IdP on the internet can miss one probe: the next one decides
+  up_healthy() { echo "$(tier "$UP" reason): $(tier "$UP" message)" | grep -qE '(Healthy|NotConfigured.*probe: Healthy)'; }
+  within 30 up_healthy >/dev/null
   expect '(Healthy|NotConfigured.*probe: Healthy)' "$UP upstream answers discovery + JWKS from S&V" "$(tier "$UP" reason): $(tier "$UP" message)"
 else
   skipped "no IdP on the internet in the chain: set one's issuer and client (e.g. AUTH0_*) in .env and re-run make layer-47"
