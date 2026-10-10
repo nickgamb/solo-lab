@@ -40,11 +40,11 @@ overrides any of them. Changing them: `make layer-47`, then
 | `NAME_CLIENT_ID` | S&V's client there |
 | `NAME_CLIENT_SECRET` | unset: S&V authenticates with its keys (`private_key_jwt`); set: `client_secret_post` |
 | `NAME_DISPLAY_NAME` | its name on sign-in pages and in the Observatory |
-| `NAME_GROUPS_CLAIM` | the ID token claim with the user's groups (or roles); default `groups`; `none` when its ID tokens carry no groups and the directory sync maps them from its directory |
+| `NAME_GROUPS_CLAIM` | the ID token claim with the user's groups (or roles); default `groups` |
 | `NAME_ASSURANCE` | what its sign-ins prove: NIST 800-63B levels by the `acr` or `amr` it asserts (JSON, [assurance](IDENTITY-CONTINUITY.md#assurance)); unset: AAL1 |
 | `NAME_DIRECTORY_TYPE` | the directory sync's access to its users: `scim`, `auth0` or `keycloak`; unset: none |
 | `NAME_DIRECTORY_URL` | the directory's API |
-| `NAME_DIRECTORY_CLIENT_ID`, `NAME_DIRECTORY_CLIENT_SECRET` | a `client_credentials` client allowed to read users (and, for a failover, update them) |
+| `NAME_DIRECTORY_CLIENT_ID`, `NAME_DIRECTORY_CLIENT_SECRET` | a `client_credentials` client allowed to read users (and, for a failover, update them); a secret `lab:<NAME>_SECRET` is one the lab generates (`.lab/secrets.env`), by a name of its own ending in `_SECRET` |
 | `NAME_DIRECTORY_SCOPES`, `NAME_DIRECTORY_AUDIENCE` | what that client asks for |
 
 Ledgerline's authorization server, by its name in `RESOURCE_AS`:
@@ -55,7 +55,10 @@ Ledgerline's authorization server, by its name in `RESOURCE_AS`:
 | `LEDGERLINE_NAME_CLIENT_ID` | S&V's client there; default `sterling-vance-kagent` |
 
 The broker's ID-JAGs name S&V's client at Ledgerline's AS
-(`LEDGERLINE_NAME_CLIENT_ID`) as their `client_id`.
+(`LEDGERLINE_NAME_CLIENT_ID`) as their `client_id`. Ledgerline's AS is never
+S&V's broker or one of S&V's IdPs; one under `.lab` must be Ledgerline's own
+Keycloak, and one outside the lab must publish a token endpoint that is a
+plain `https` URL on its issuer's host.
 
 ## Registering S&V at an IdP
 
@@ -70,7 +73,7 @@ The same for every IdP:
 | Grant types | `authorization_code` with PKCE S256, `refresh_token` |
 | Scopes | `openid email profile` |
 | Users | `email` and `email_verified: true` in the ID token: the broker links a sign-in to the S&V account with that verified email |
-| Groups | the user's groups by name in `NAME_GROUPS_CLAIM`, named as in `SV_GROUPS` (`advisors`, `platform-engineers`, `compliance`); or none in the ID token (`NAME_GROUPS_CLAIM=none`) and the same groups readable through its directory |
+| Groups | the user's groups by name in `NAME_GROUPS_CLAIM`, named as in `SV_GROUPS` (`advisors`, `platform-engineers`, `compliance`) |
 
 The `.lab` hosts resolve only on your machine. That's fine: an IdP only
 redirects the browser to them, and every call S&V makes to it goes out from

@@ -145,9 +145,9 @@
 <rect x="988.0" y="1612" width="4" height="96" rx="2" fill="#bcdb2c"/>
 <circle cx="988.0" cy="1612" r="13" fill="#0a0b0d" stroke="#bcdb2c" stroke-width="1.6"/>
 <text x="988.0" y="1616.5" text-anchor="middle" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="600" fill="#bcdb2c">10</text>
-<text x="1008.0" y="1636" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10.5" font-weight="600" fill="#bcdb2c" letter-spacing="1.3">KMCP + ISTIO · LEDGERLINE</text>
+<text x="1008.0" y="1636" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10.5" font-weight="600" fill="#bcdb2c" letter-spacing="1.3">KMCP + AGENTGATEWAY · LEDGERLINE</text>
 <text x="1008.0" y="1659" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="16" font-weight="600" fill="#ffffff">Answers as Ledgerline's Bob</text>
-<text x="1008.0" y="1680" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13.5" fill="#a9aeb6">waypoint and server verify</text>
+<text x="1008.0" y="1680" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13.5" fill="#a9aeb6">its MCP gateway and server verify</text>
 <text x="1008.0" y="1698" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13.5" fill="#a9aeb6">Gluu's token; account_info runs</text>
 </g>
 <g><rect x="58.0" y="1762" width="214" height="96" rx="8" fill="#14161b" stroke="#2a2d34"/>

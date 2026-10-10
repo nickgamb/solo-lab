@@ -39,7 +39,7 @@ NODES = [  # lane, product, kicker, title, body lines
     ("plat", "kc", "Keycloak · S&V's broker", "Vouches for Bob", ["token exchange as kagent: ID token", "→ ID-JAG for Ledgerline only"]),
     ("plat", "solo", "agentgateway · S&V egress", "Checks the ID-JAG", ["verified against the broker's keys: iss,", "aud, sub, exp, typ, client_id; claims logged"]),
     ("ll", "gluu", "Gluu · Ledgerline's AS", "Redeems it (RFC 7523)", ["private_key_jwt from S&V;", "a 5-minute token for its Bob"]),
-    ("ll", "solo", "kmcp + Istio · Ledgerline", "Answers as Ledgerline's Bob", ["waypoint and server verify", "Gluu's token; account_info runs"]),
+    ("ll", "solo", "kmcp + agentgateway · Ledgerline", "Answers as Ledgerline's Bob", ["its MCP gateway and server verify", "Gluu's token; account_info runs"]),
     ("bob", "bob", "Bob · kagent chat", "Sees his Ledgerline account", ["“bob”, no consent screen,", "no shared secret"]),
 ]
 EDGES = ["OIDC · PKCE", "Gluu ID token", "signed in", "message", "S&V access token",

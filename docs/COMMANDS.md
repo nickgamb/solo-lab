@@ -41,10 +41,12 @@ the repo root: `bash -c '. scripts/lib.sh; ...'`.
 | `kubectl --context kind-solo-lab -n istio-system logs ds/ztunnel --since=5m \| grep -i -E "deny\|rbac"` | recent connections ztunnel refused |
 
 **Try a call as a real workload identity.** `make bob-verify` and `make tour`
-create probe pods. `probe` (in `sv-agents`, `observability`, and `kagent` for
-the tour) has its own ServiceAccount, so its own SPIFFE ID: some workload,
-nobody special. `probe-bob-assistant` in `sv-agents` runs as Bob's agent's
-ServiceAccount, to call as the agent.
+create probe pods. `probe` (in `sv-agents` and `observability`) has its own
+ServiceAccount, so its own SPIFFE ID: some workload, nobody special.
+`probe-<sa>` runs as a workload's ServiceAccount, to call as it:
+`probe-bob-assistant` in `sv-agents` as Bob's agent, and for `make
+bob-verify` `probe-kagent-ops` and `probe-kagent-controller` in `kagent`,
+`probe-bob-workspace` in `sv-mcp`.
 
 ```bash
 kubectl --context kind-solo-lab -n sv-agents exec probe -- curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://kps-prometheus.observability:9090/-/ready
@@ -80,7 +82,8 @@ with `--token <jwt>` and `--header name=value`.
 
 **Use the firm's model from your laptop.** `https://llm.sterling.lab/v1` takes
 OpenAI chat completions and Anthropic messages with the key in
-`.lab/secrets.env`; prompt guards, failover and pricing apply as for agents.
+`.lab/secrets.env` (`/v1` only, up to 180 s a call); prompt guards, failover
+and pricing apply as for agents.
 Claude Code, for one:
 
 ```bash

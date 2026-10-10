@@ -37,6 +37,9 @@ cross-company token.
      ([ENTERPRISE.md](ENTERPRISE.md)).
 3. The agent (`sv-agents/bob-assistant`, a SandboxAgent on Agent Substrate)
    forwards `Authorization` on every tool call (`KAGENT_PROPAGATE_TOKEN`).
+   Its model calls carry the same token as their API key (ModelConfig
+   `firm-llm`, `apiKeyPassthrough`): the model route logs whose turn a call
+   serves and removes the token, so no model provider sees it.
 
 The agent never holds Bob's ID token. The one flow that needs it, Cross App
 Access (section 2), has the egress gateway get it from S&V's broker, which
@@ -62,7 +65,10 @@ accepts.
 Each path has two lanes: the user lane (a bearer token) and the discovery
 lane (no token, only the kagent controller's SPIFFE ID, and only
 `tools/list`, so the UI can list tools and nothing on that lane can call
-one). Each path lets through only the tools its agents are given. The mesh
+one). Each path lets through only the tools its agents are given
+(`/mcp/kagent-tools`: the tools the ops agents name, computed at install).
+The gateway finds each server by its Service's `lab.solo.io/mcp` label and
+reaches it over the mesh as itself, and the mesh
 lets only the gateway's identity
 (`cluster.local/ns/agentgateway-system/sa/ai-gateway`) reach each server
 (`pods-only-from-gateway` in `sv-mcp`, `kagent-tools-callers` in `kagent`,
@@ -98,7 +104,7 @@ sequenceDiagram
   G->>S: token exchange, subject = Bob's token, audience bob-workspace
   S-->>G: token for Bob, aud bob-workspace, seconds to live
   G->>T: tools/call, Authorization: the minted token (Bob's own token removed)
-  T->>S: JWKS (cached): verify the minted token's signature, issuer, audience, expiry
+  T->>S: JWKS (cached; on Enterprise through ai-gateway's /sts/jwks.json): verify the minted token's signature, issuer, audience, expiry
   T-->>A: result, acting for bob (through mcp-guard)
 ```
 
@@ -295,7 +301,7 @@ sequenceDiagram
 
   | Client | Holds | May |
   | --- | --- | --- |
-  | `kagent` (secret: the edge and the egress, one application) | — | SSO for kagent; RFC 8693 (access token to ID token); request the ID-JAG with optional scope `xaa-ledgerline`. Keycloak issues an ID-JAG only for an ID token of the app the user signed into. No full scope |
+  | `kagent` (secret: the edge and the egress, one application) | — | SSO for kagent; RFC 8693 (access token to ID token); request the ID-JAG with optional scope `xaa-ledgerline`. Keycloak issues an ID-JAG only for an ID token of the app the user signed into. No full scope, no offline tokens |
   | broker key (PS256 realm key, client assertions only) | Keycloak | authenticate S&V's broker to upstream IdPs |
 
   Scope `xaa-ledgerline` adds `client_id=sterling-vance-kagent` and

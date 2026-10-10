@@ -271,9 +271,9 @@ Layers:
 | `45-identity` | S&V's mesh baseline, S&V's broker (Keycloak, `idp.sterling.lab`), S&V's own Keycloak (`login.sterling.lab`, realm `workforce`), its contingency IdP (`login-dr.sterling.lab`), client secrets for S&V components |
 | `47-continuity` | IdentityContinuity and WorkloadProfile CRDs and controller, the directory sync, the assurance gate, S&V egress waypoint |
 | `50-substrate` | Agent Substrate (patched), in the mesh |
-| `60-kagent` | kagent + kmcp (patched), ops agents on Substrate, their tools behind ai-gateway, edge SSO |
+| `60-kagent` | kagent + kmcp (patched), ops agents on Substrate, their tools (kagent-tools, its own release) behind ai-gateway, edge SSO (OSS) |
 | `70-agentregistry` | agentregistry behind S&V SSO |
-| `80-mesh-policy` | S&V's mesh baseline, re-applied, and its egress fences |
+| `80-mesh-policy` | S&V's mesh baseline, re-applied, STRICT mTLS mesh-wide, and S&V's egress fences |
 | `90-observatory` | Observatory, its Keycloak (realm `ops`), Grafana and Kiali on the edge behind it, gateway access logs |
 | `95-demos` | every story: `demos/bob`, then `demos/bob-to-alice` |
 
@@ -285,7 +285,7 @@ Layers:
 | [COMMANDS.md](docs/COMMANDS.md) | terminal commands for every part of the running lab: cluster, mesh, gateways, identity, agents, observability |
 | [IDENTITY-FLOWS.md](docs/IDENTITY-FLOWS.md) | acting for a user (RFC 8693 token exchange), Cross App Access (ID-JAG), UMA for agents: every hop, policy and check |
 | [OBSERVATORY.md](docs/OBSERVATORY.md) | using the Observatory, how it derives the map, access model, local development |
-| [IDENTITY-CONTINUITY.md](docs/IDENTITY-CONTINUITY.md) | the IdP chain and break-glass, the IdentityContinuity API and controller, the directory sync, assurance, trust across IdPs, assurance rules and the gate, Auth0/Okta/S&V Keycloak setup, the kill switch |
+| [IDENTITY-CONTINUITY.md](docs/IDENTITY-CONTINUITY.md) | the IdP chain and break-glass, the IdentityContinuity API and controller, the directory sync, assurance, trust across IdPs, assurance rules and the gate, the kill switch |
 | [ENTERPRISE.md](docs/ENTERPRISE.md) | switching products to Solo Enterprise |
 | [IDPS.md](docs/IDPS.md) | S&V's IdPs and Ledgerline's authorization server: settings, registration, Auth0, Gluu, Okta, Ping, any other |
 | [GLUU.md](docs/GLUU.md) | Gluu (experimental) as S&V's enterprise IdP and Ledgerline's authorization server: settings, registration, logs, roadmap |

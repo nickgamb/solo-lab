@@ -18,9 +18,10 @@ not by convention ([zero trust](https://www.solo.io/topics/security-and-complian
 Bob is an employee of Sterling & Vance. S&V's broker (Keycloak, realm
 `sterling-vance` in `sv-identity`) routes his sign-in to the firm's IdPs in
 failover order (Auth0, the Keycloak S&V runs itself in `sv-workforce`, its
-password-only contingency IdP in `sv-contingency`, Okta, Gluu) and holds no
-employee passwords, only break-glass accounts for platform
-admins. It stays the only issuer anything trusts (see Identity continuity).
+password-only contingency IdP in `sv-contingency`, Okta, Gluu) and holds only
+the profiles those IdPs provision (no employee passwords), plus break-glass
+accounts for platform admins. It is never an IdP itself, and stays the only
+issuer anything trusts (see Identity continuity).
 Alice is a user of her own IdP (realm `alice` in `alice-identity`).
 
 ## Workloads and identities
@@ -45,8 +46,9 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | `kagent` | controller, UI, tools | `kagent-*` | S&V | UI: edge (after sign-in); controller: the UI, the agents' worker pools, the Observatory, and on Enterprise agentregistry (its kagent runtime); tools: ai-gateway only. The controller's RBAC covers only `kagent`, `sv-agents` and `sv-mcp` |
 | `kagent` | ops agents (k8s, istio, helm, promql, kgateway): SandboxAgents on pool `kagent-ops` | `kagent-ops` | S&V | atenet-router only |
 | `ate-system` | Agent Substrate: ate-api, atenet-router, atelet, ate-controller, valkey, rustfs | one SA per component | platform | ate-api and router: kagent controller only; the rest: `ate-system` only |
-| `agentgateway-system` | ai-gateway (models, every MCP server, Cross App Access) | `ai-gateway` | S&V | the agents' worker pools, by ServiceAccount (models, MCP servers, Cross App Access); the kagent controller (listing MCP servers' tools, Ledgerline's public catalog); itself (the Cross App Access token requests) |
-| `agentgateway-system` | agentgateway's STS (Enterprise: the controller's port 7777, which mints the tokens MCP servers accept) | `enterprise-agentgateway` | S&V | ai-gateway only; MCP servers read its keys through the ai-gateway (`/sts/jwks.json`, GET, from `sv-mcp`) |
+| `agentgateway-system` | ai-gateway (models, every MCP server, Cross App Access) | `ai-gateway` | S&V | the agents' worker pools, by ServiceAccount (models, MCP servers, Cross App Access); the kagent controller (listing MCP servers' tools, Ledgerline's public catalog); the edge (`llm.sterling.lab`, with an API key); `sv-mcp` (the STS's keys, Enterprise); itself (the Cross App Access token requests) |
+| `agentgateway-system` | agentgateway controller (xDS; on Enterprise the STS on port 7777, which mints the tokens MCP servers accept) | `agentgateway` (`enterprise-agentgateway` on Enterprise) | S&V | xDS (9978): the agentgateway proxies; STS: ai-gateway only, and MCP servers read its keys through the ai-gateway (`/sts/jwks.json`, GET, from `sv-mcp`); metrics (9092): Prometheus |
+| `agentgateway-system` | Enterprise shared services: ext-auth, rate limiter, WAF, their cache | the chart's | S&V | `agentgateway-system`'s workloads, Alice's waypoint, Ledgerline's `mcp-gateway`, Meridian's gateway, Prometheus |
 | `agentgateway-system` | `mcp-guard` (ai-gateway's MCP guardrail: masks account numbers and SSNs in tool results) | `mcp-guard` | S&V | ai-gateway only |
 | `agentgateway-system` | `idtoken-exchange` (ai-gateway's ext-auth for Cross App Access: Bob's ID token from S&V's broker) | `idtoken-exchange` | S&V | ai-gateway only |
 | `agentregistry` | agentregistry | `agentregistry` | S&V | edge only (after S&V sign-in, kgateway OAuth2); its database: agentregistry only |
@@ -73,13 +75,18 @@ as kagent controller → atenet-router → worker, each hop mTLS.
 
 ## Enforcement layers
 
-1. **ztunnel (L4, every pod, [Istio ambient](https://docs.solo.io/istio/)).** STRICT mTLS in the party
-   namespaces; ALLOW rules name SPIFFE principals from the table above, and
-   a workload no ALLOW names takes no connections. Every namespace that
+1. **ztunnel (L4, every pod, [Istio ambient](https://docs.solo.io/istio/)).** STRICT mTLS
+   mesh-wide (`platform/80-mesh-policy/mesh.yaml`), PERMISSIVE only on the
+   ports callers outside the mesh reach: the edge's listeners (80, 443) and
+   the CNPG and Prometheus operator admission webhooks; ALLOW rules name
+   SPIFFE principals from the table above, and a workload no ALLOW names
+   takes no connections. Every namespace that
    holds an IdP, a session store or a signing key also carries an explicit
-   `default-deny` (`sv-identity`, `sv-workforce`, `sv-contingency`, `kagent`, `sv-u4a`,
+   `default-deny` (`sv-identity`, `sv-workforce`, `sv-contingency`, `kagent`,
+   `agentgateway-system`, `sv-u4a`,
    `alice`, `alice-identity`, `meridian`, `ledgerline-identity`,
-   `ops-identity`, `observatory`, `kiali`), so a workload added there later
+   `ops-identity`, `observatory`, `kiali`, and on Enterprise
+   `solo-enterprise`), so a workload added there later
    starts closed.
 2. **Waypoints (L7, where a path- or JWT-level rule needs one).**
    - `alice`: an agentgateway waypoint (`enterprise-agentgateway-waypoint`
@@ -123,16 +130,20 @@ as kagent controller → atenet-router → worker, each hop mTLS.
      (IDENTITY-CONTINUITY.md#assurance-rules).
    - ai-gateway ([agentgateway](https://docs.solo.io/agentgateway/), S&V): the front door for every MCP
      server, a path each (`/mcp/bob-workspace`, `/mcp/kagent-tools`,
-     `/mcp/alice-vault`, `/xaa/ledgerline/mcp`). JWT validation against
+     `/mcp/alice-vault`, `/xaa/ledgerline/mcp`). It finds each server by
+     its Service's `lab.solo.io/mcp` label and reaches it over the mesh as
+     itself. JWT validation against
      S&V's broker, the caller's workload and groups, per-tool MCP
-     authorization in CEL, a guardrail on tool results, and a short-lived
-     token of its own for each MCP server (agentgateway's STS on Enterprise,
-     an RFC 8693 exchange at S&V's broker on OSS) or an ID-JAG toward
+     authorization in CEL (an allowlist on every path), a guardrail on tool
+     results, and a short-lived token of its own for each MCP server, minted
+     per call (agentgateway's STS on Enterprise,
+     an RFC 8693 exchange at S&V's broker on OSS), or an ID-JAG toward
      Ledgerline; the user's token never reaches a tool. Provider credentials
      for LLMs. The model route admits only
      the agents' worker pools, by ServiceAccount; the user's token the
      agents send there names whose turn it is and stops at the gateway, so
-     no model provider sees it. Every model call meets
+     no model provider sees it. Developers reach the same models through
+     the edge at `llm.sterling.lab` (`/v1` only, with an API key). Every model call meets
      prompt guards (an attempt to override the agent's instructions is
      refused; card and social security numbers are masked before the prompt
      leaves and in the answer), and with `LLM_FALLBACK` a provider that
@@ -157,9 +168,12 @@ as kagent controller → atenet-router → worker, each hop mTLS.
    its scope mapping names (`clientScopeMappings` in the realm file).
 
 **Egress.** Every party namespace, and the platform's (`observability`,
-`kiali`, `kgateway-system`, `cnpg-system`, `observatory`, `ops-identity`), has
+`kiali`, `kgateway-system`, `cnpg-system`, `observatory`, `ops-identity`, and
+on Enterprise `solo-enterprise`), has
 NetworkPolicy `no-internet`: its pods reach the cluster and nothing else
-(Prometheus also reaches the nodes' metrics ports). The ways out are the
+(Prometheus also reaches the nodes' metrics ports). In `agentgateway-system`,
+where the ai-gateway reaches the model providers, `mcp-guard` and
+`idtoken-exchange` have their own (`no-internet-<app>`). The ways out are the
 gateways built for it: ai-gateway (models, Cross App Access),
 `sv-egress/egress-waypoint` (S&V's upstream IdPs) and
 `ledgerline-egress/egress-waypoint` (the keys of Ledgerline's AS outside the lab). Istio ambient doesn't enforce
@@ -226,7 +240,7 @@ Not built here: it needs a second cluster and the enterprise edition.
 
 Every component sends OTLP to one collector (`observability/otel-collector`):
 traces to Tempo, metrics to Prometheus, gateway access logs to the
-Observatory. Prometheus also scrapes ztunnel, waypoints and gateways, which is
+Observatory (the edge, ai-gateway, Meridian's and Ledgerline's gateways). Prometheus also scrapes ztunnel, waypoints and gateways, which is
 where the Observatory's observed edges come from. Kiali (view-only) and
 Grafana sit on the edge behind the platform admins' sign-in (realm `ops`), and
 take connections only from the edge. They read the
@@ -275,15 +289,16 @@ Known gaps, kept on purpose or pending upstream work:
 - **kagent doesn't verify ate-api's TLS certificate** (`ateApiInsecure`). The
   hop runs inside the mesh's mTLS, which authenticates both ends by SPIFFE
   ID; ate-api's own certificate is Substrate's self-issued one.
-- **STRICT mTLS is per party namespace, not mesh-wide.** A root
-  PeerAuthentication would refuse the API server, which isn't in the mesh,
-  when it calls admission webhooks in platform namespaces (the Prometheus
-  operator's, for one). Platform components are fenced by ALLOW policies
-  that name their callers instead.
-- **The agentgateway controller's xDS port (9978) takes plaintext.** Its
-  proxy (`ai-gateway`) runs outside the mesh and terminates
-  HBONE itself, so it can't reach it over mesh mTLS. The controller's
-  other ports stay STRICT.
+- **A few ports take plaintext.** STRICT mTLS is mesh-wide, but the load
+  balancer in front of the edge and the API server calling admission
+  webhooks aren't in the mesh, so the edge's listeners (80, 443) and the
+  CNPG and Prometheus operator webhook ports are PERMISSIVE.
+- **The agentgateway controller's xDS port (9978) takes plaintext, from any
+  caller.** Its proxies run outside the mesh, terminate HBONE themselves and
+  fetch their configuration before they hold a mesh identity, so they can't
+  reach it over mesh mTLS. The controller's other ports stay STRICT, each
+  open to its one caller (the STS to the ai-gateway, metrics to
+  Prometheus).
 - **Platform admins can redirect traffic.** The Observatory's admins may
   change gateway policies and backends, which can name Secrets in their own
   namespace (an LLM provider's key, an OAuth client's secret): pointing a
@@ -376,9 +391,9 @@ installs every story, so any card runs in any order on the same lab.
 45-identity     S&V's mesh baseline, S&V's broker (Keycloak, idp.sterling.lab, patched for ID-JAG, with the session-claims mapper), S&V's own Keycloak (login.sterling.lab, realm workforce), its contingency IdP (login-dr.sterling.lab), client secrets for S&V components
 47-continuity   IdentityContinuity and WorkloadProfile CRDs and controller, the directory sync, the assurance gate (admission policies fence them), S&V egress waypoint
 50-substrate    Agent Substrate (patched, ate-system in the mesh)
-60-kagent       kagent + kmcp, model via ai-gateway, ops agents on Substrate, their tools behind ai-gateway
+60-kagent       kagent + kmcp, model via ai-gateway, ops agents on Substrate, their tools (kagent-tools, its own release) behind ai-gateway
 70-agentregistry agentregistry behind S&V SSO at the edge
-80-mesh-policy  S&V mesh baseline, re-applied (other parties own theirs, in their story)
+80-mesh-policy  S&V mesh baseline, re-applied (other parties own theirs, in their story), STRICT mTLS mesh-wide
 90-observatory  Observatory, its Keycloak (realm ops), Grafana and Kiali behind it, gateway access logs
 95-demos        every story: bob, then bob-to-alice
 ```

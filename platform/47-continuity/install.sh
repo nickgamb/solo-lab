@@ -125,8 +125,8 @@ desired=$({ for n in $CHAIN; do
     oidc: ({issuer: $iss, clientID: $cid, clientAuth: $auth}
       + (if $auth == "private_key_jwt" then {clientAssertionSigningAlg: "PS256"} else {clientSecretRef: {name: "upstream-\($n)"}} end)),
     failoverWhen: {unreachable: true, serverError: true, invalidDiscovery: true, latencyAboveMs: 1500},
-    assurance: $assurance}
-    + (if $gclaim == "none" then {} else {groups: {claim: $gclaim}} end)
+    assurance: $assurance,
+    groups: {claim: $gclaim}}
     + ($dir // {})'
 done
 jq -nc '{name: "break-glass", displayName: "Platform admins (break-glass)", type: "local", assurance: {default: "AAL1"}}'

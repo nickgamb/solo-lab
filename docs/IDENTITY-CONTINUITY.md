@@ -56,13 +56,19 @@ through it is linked to the S&V account with the same verified email. The
 broker is the shape every IdP maps into, not a directory of its own: the
 directory sync gives it an account for each of the primary's users under the
 workforce's email domains (`spec.profile.domains`), without a password, and
-it never creates one at sign-in. Their groups come from the IdPs too
-([Groups](#groups)). Chain
+it never creates one at sign-in. The realm file also carries the demo
+profiles (`bob`, `carol`, `dana`) with fixed ids, so a broker restart keeps
+each one's `sub`: profiles only, no credentials or groups. Their groups come
+from the IdPs ([Groups](#groups)). Chain
 only IdPs that are authoritative for S&V's users. Accounts with role
 `local-only` (the `platform-admins` group: break-glass and platform admins)
 are never linked to an upstream; with every IdP down they are the only ones
 who can sign in. Only the active IdP is enabled at the broker; the others
 keep their users' links but can't sign anyone in, not even by `kc_idp_hint`.
+The IdPs are all S&V's own: through a failover the active one is, for its
+duration, the primary, and what its sign-ins assert (claims, groups) is what
+the broker applies. The directory sync keeps reading the chain's first IdP
+and changes nothing while it can't be read.
 
 S&V's broker authenticates to an upstream with `private_key_jwt`
 (`tiers[].oidc.clientAuth`), signing with a PS256 realm key kept for that alone; its
@@ -151,6 +157,7 @@ doesn't create flows or roles, so the realm needs them first
 | `tiers[].attributes[]` | the IdP's attributes paired with S&V's profile for the directory sync: `attribute` (built-in or `profile.attributes`) and `path` (the attribute in the IdP's user record) |
 | `tiers[].directory` | where the sync reads and writes this IdP's users: `type` (`scim`, `auth0`, `keycloak`), `url`, `credentialsRef` (`client-secret`, and `client-id` unless `clientID` is set), `scopes`, `audience` (Auth0) |
 | `tiers[].directory.clientID` | the directory client's ID; falls back to the Secret's `client-id` key |
+| `tiers[].groups.claim` | the ID token claim with the IdP's groups (or roles); unset: no groups are read from its sign-ins, and the directory sync maps them ([Groups](#groups)) |
 | `tiers[].assurance.levels[]` | what the IdP's sign-ins prove: an `acr` value, or one `amr` value, mapped to a NIST SP 800-63B `level` (`AAL1`, `AAL2`, `AAL3`), and whether that authenticator is `phishingResistant` |
 | `tiers[].assurance.default` | the level of a sign-in that asserts none of them (default `AAL1`); for a local tier, its only level |
 | `tiers[].failoverWhen` | which probe results count against the tier: `unreachable`, `serverError`, `invalidDiscovery` (each default true), `latencyAboveMs` (must be below `health.timeoutSeconds`: a slower answer times out first) |
@@ -158,6 +165,7 @@ doesn't create flows or roles, so the realm needs them first
 | `failback` | `Automatic` (move back up as soon as a higher tier is healthy) or `Manual` |
 | `profile.attributes[]` | S&V's profile beyond `username`, `email`, `firstName`, `lastName`: `name`, `displayName`, `type` (`string` default, `integer`, `number`, `boolean`, `date`, `email`, `uri`: checked by the broker), `multivalued` (a list) |
 | `sync.schedule` | cron, UTC; `sync.suspend` pauses it |
+| `sync.removeMissing` | remove the broker account (and its failover accounts) of a workforce user the primary no longer has or has disabled ([Directory sync](#directory-sync)) |
 | `sync.credentialsRef` | Secret with the sync's realm client (default `continuity-sync`) |
 
 ### status
@@ -168,9 +176,10 @@ the local tier), `activeSince`, `broker.issuer`, `egressNamespace`, per tier (`c
 successes, `redirectURI`: the callback the upstream app must allow, and
 `trust`: its [trust checks](#trust-across-idps)),
 the last 20 `transitions`, `sync` (CronJob, last run and last success,
-users, S&V profiles updated, failover accounts written and created,
-failures, and each IdP's attribute paths as its directory last showed
-them), and
+users, broker accounts provisioned and removed, S&V profiles updated,
+failover accounts written and created, failures, and each IdP's attribute
+paths as its directory last showed them), `broker.signIn` (the broker's
+browser sign-in clients and their redirect URIs), and
 conditions `Ready`, `Degraded` (not on the first IdP), `RulesEffective`
 (False while a latency rule is at or above the probe timeout),
 `ProfileApplied` and `TrustConsistent` (False while an IdP fails a trust
@@ -249,8 +258,15 @@ schedule (`spec.sync`), through S&V's profile on the broker:
 
 1. **Primary → S&V's profile.** The chain's first IdP is the primary, and
    says who exists. The sync first gives the broker an account for each of
-   its users whose verified email is under one of `spec.profile.domains`
-   (`status.sync.provisioned`). Then, for each employee, it reads their
+   its users, enabled there, whose verified email is under one of
+   `spec.profile.domains` (`status.sync.provisioned`). With
+   `spec.sync.removeMissing` (`SV_SYNC_REMOVE_MISSING`, default `true`; the
+   Observatory's Directory sync, Schedule), it then removes the broker
+   account of each workforce user the primary no longer has or has disabled,
+   with their accounts at the failovers (`status.sync.removed`); only after
+   a complete, non-empty listing of the primary, never while it can't be
+   read. Accounts with role `local-only` (break-glass) and service
+   accounts stay. Then, for each employee, it reads their
    record from the primary's directory and writes the mapped attributes, and
    their groups ([Groups](#groups)), into S&V's profile, the standard every
    IdP maps to.
@@ -268,11 +284,15 @@ is listed in the run's message until the realm has one, and can't sign in
 at that IdP before then.
 
 Reorder the chain and the roles follow. A user is found at an IdP by the
-broker's link to it, else by email (one match, never a guess). After each
+broker's link to it, else by email (one match, never a guess; at a SCIM
+directory, only the record whose primary email it is). SCIM listings
+follow a directory's own page size, and a directory's rate limit (`429`) is
+waited out a few times. After each
 write the sync reads the record back, so an attribute the directory drops
 is reported. It never reads or writes a password or other credential,
-never writes the username, and never deletes a user; accounts with role
-`local-only` are left alone. Tokens carry the standard claims only.
+never writes the username, and deletes a user only with `removeMissing`;
+accounts with role `local-only` are left alone. Tokens carry the standard
+claims only.
 
 ```yaml
 spec:
@@ -311,6 +331,10 @@ CronJob) gets a token, counts the users and reads the directory's attribute
 schema along the sync's own path and credentials; its result (never user
 records) is the container's termination message.
 
+Layer 47 runs the sync once at install, and layer 45 runs it again right
+after deploying the broker, whose accounts are in memory, so the broker has
+its users before anyone signs in.
+
 The sync runs as ServiceAccount `continuity-sync`: `get` on its instance,
 `patch` on its status, and `get` on its own Secret and the directories'
 Secrets by name (Role `continuity-sync-secrets`). It reaches the broker and
@@ -318,6 +342,12 @@ the directories under the same mesh policy as the controller; directory
 hosts get ServiceEntries on the IdP's egress path.
 
 ### Groups
+
+Every sign-in updates the broker's profile from the IdP's token, just in
+time: each upstream is configured with sync mode *Force*, so the email and
+names the token carries replace what the broker had, and its groups (below)
+replace the user's groups. The directory sync fills in the rest between
+sign-ins.
 
 The shape has groups as well as attributes (`spec.profile.groups`; the lab's
 from `SV_GROUPS` in `config/lab.env`: `advisors`, `platform-engineers`,
@@ -327,7 +357,7 @@ IdP:
 
 - **At sign-in.** Each IdP says which groups the user is in, in its ID token
   (`tiers[].groups.claim`, `<NAME>_GROUPS_CLAIM` in `.env`, `groups` unless
-  set). The controller keeps one of Keycloak's own *Advanced Claim to Group*
+  set): the token is the truth. The controller keeps one of Keycloak's own *Advanced Claim to Group*
   mappers per shape group on that IdP, in sync mode *Force*: every sign-in
   sets the user's groups from the claim, so a group the IdP takes away is
   gone at the next sign-in. A namespaced claim (Auth0's) is read whole.
@@ -611,7 +641,8 @@ whatever it says: the Observatory says so.
 ![Failover: the network to Auth0 cut at the egress, sign-in through the next IdP](images/observatory-continuity-failover.jpg)
 
 - **Map:** every app that signs people in through the broker (found from the
-  edge's SSO configuration), the broker, the egress gateway, and the IdPs in
+  edge's SSO configuration, and from the broker's own sign-in clients,
+  `status.broker.signIn`), the broker, the egress gateway, and the IdPs in
   chain order. The live path is green.
 - **Banner:**
 
@@ -645,8 +676,8 @@ whatever it says: the Observatory says so.
   sync). **Code** edits the same mapping as JSON, each S&V
   attribute and the IdPs' attributes paired with it, in chain order
   (`"department": ["auth0.user_metadata.department", "keycloak.department"]`);
-  **Schedule** sets the sync's cron, pauses it, shows the last run and runs
-  it now. Directory credentials are write-only and readable by the sync
+  **Schedule** sets the sync's cron, pauses it, switches `removeMissing`,
+  shows the last run and runs it now. Directory credentials are write-only and readable by the sync
   alone.
 
   ![Directory sync canvas: Auth0's detected attributes wired to S&V's profile, S&V's own Keycloak written from it](images/observatory-directory-sync-canvas.jpg)

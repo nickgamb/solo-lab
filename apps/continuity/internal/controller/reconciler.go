@@ -767,7 +767,10 @@ func desiredIdP(ic *v1.IdentityContinuity, t v1.Tier, c credential, d *probe.Dis
 		"defaultScope":      strings.Join(scopes, " "),
 		"pkceEnabled":       "true",
 		"pkceMethod":        "S256",
-		"syncMode":          "IMPORT",
+		// every sign-in updates the broker's profile from the IdP's token
+		// (email, names; groups through their own mappers): the token is
+		// the truth, just in time
+		"syncMode": "FORCE",
 		// Auto-linking by email is only safe for addresses the upstream verified.
 		"filteredByClaim":  "true",
 		"claimFilterName":  "email_verified",

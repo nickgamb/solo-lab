@@ -53,8 +53,9 @@ LEDGERLINE_GLUU_CLIENT_ID=<S&V's client at Ledgerline's Gluu>
 
 Gluu first makes it S&V's primary: the source of truth for who exists and
 their groups. The directory sync reads its users over SCIM and gives the
-broker an account for each whose email is verified (`emailVerified` in its
-SCIM user extension) under `sterling.lab`; Bob signs in to that account.
+broker an account for each whose primary email is verified (the email's
+`verified`, else `emailVerified` in its SCIM user extension) under
+`sterling.lab`; Bob signs in to that account.
 The broker's ID-JAGs name S&V's client at Ledgerline's Gluu
 (`LEDGERLINE_GLUU_CLIENT_ID`) as their `client_id`, and their `sub` is Bob's
 broker account.

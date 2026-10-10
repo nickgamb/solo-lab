@@ -124,7 +124,8 @@ Enterprise-level licence (`SOLO_UI_LICENSE_KEY`, else
 - Parameters and policy kinds (`EnterpriseAgentgatewayParameters`,
   `EnterpriseAgentgatewayPolicy`), templated, ReferenceGrants included.
 - The controller is `enterprise-agentgateway` (labels and ServiceAccount):
-  S&V's mesh policy names it by release (xDS port, Keycloak's JWKS caller).
+  S&V's mesh policy names it by release (xDS port, the STS, metrics,
+  Keycloak's JWKS caller).
 
 ### kagent
 
@@ -134,21 +135,23 @@ checks carry over.
 
 - **Authentication:** the controller verifies every token against S&V's
   Keycloak (`oidc.*`), where OSS trusts the forwarded token. Roles come from
-  the `groups` claim (`platform-admins` admin, `advisors` writer); the
-  Observatory's client reads Substrate status. `oidc.skipOBO` passes the
+  the `groups` claim (`platform-admins` and `platform-engineers` admin,
+  `advisors` reader); the Observatory's client reads Substrate status, and
+  agentregistry's client (its kagent runtime) is a writer. `oidc.skipOBO` passes the
   user's own token to agents, as the front door's checks on every tool call need.
 - **Go ADK:** `tools/kagent`'s build, pinned by digest
   (`GOLANG_ADK_IMAGE_DIGEST`): SandboxAgents call the controller back with
   the caller's credential.
-- **Beyond the chart** (`platform/60-kagent/enterprise.yaml`): the licence
-  Secret; a read on GatewayClasses, which the controller watches and the
-  chart's namespace-scoped roles leave out; and an edge route for `/api`,
-  which the release's UI image proxies to `127.0.0.1:8083` in its own pod.
+- **Beyond the chart** (`platform/60-kagent/enterprise.yaml`): a read on
+  GatewayClasses, which the controller watches and the chart's
+  namespace-scoped roles leave out, and the mesh policy that lets the Solo
+  UI reach the controller's API (8083); the licence Secret comes from
+  `install.sh`.
 - Agents get the caller's access token, not the ID token. Cross App Access
   doesn't need it: the egress gateway gets the ID token itself
   (IDENTITY-FLOWS.md, section 2).
-- The management UI chart isn't installed; the chart's own UI runs behind
-  the edge's SSO, as on OSS.
+- The chart's own UI is off: kagent's UI is the Solo UI (layer 90, Istio
+  above).
 
 ### agentregistry
 
@@ -160,8 +163,9 @@ checks carry over.
   password of its own.
 - Its database, ClickHouse and collector admit only the server's identity.
 - It runs as root, so its namespace has no `restricted` PSA.
-- Not wired: its kagent runtime (it deploys agents through kagent's REST API
-  with a client-credentials client, configured with `arctl`).
+- Its kagent runtime (with kagent Enterprise too): `scripts/registry.sh`
+  connects it to the kagent controller as the S&V client `agentregistry`, a
+  kagent writer.
 
 The patches under `tools/` are independent of edition. Drop each one when
 its upstream change ships.
