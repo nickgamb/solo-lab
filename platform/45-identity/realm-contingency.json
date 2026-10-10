@@ -217,6 +217,14 @@
       "fullScopeAllowed": false
     }
   ],
+  "groups": [
+    {
+      "name": "advisors"
+    },
+    {
+      "name": "platform-engineers"
+    }
+  ],
   "users": [
     {
       "username": "bob",
@@ -232,6 +240,9 @@
           "value": "bob-demo",
           "temporary": false
         }
+      ],
+      "groups": [
+        "advisors"
       ]
     },
     {
@@ -276,6 +287,9 @@
           "value": "dana-demo",
           "temporary": false
         }
+      ],
+      "groups": [
+        "platform-engineers"
       ]
     }
   ],

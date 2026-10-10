@@ -40,6 +40,14 @@ NOTES = {
 }
 
 
+def _scopes(v) -> list:
+    """The scope claim: a space-separated string (RFC 8693, RFC 9068), or the
+    list some authorization servers issue instead."""
+    if isinstance(v, list):
+        return [str(s) for s in v]
+    return str(v or "").split()
+
+
 def _claims() -> dict:
     """Verified claims of the Ledgerline access token on this call."""
     scheme, _, token = _auth.get().partition(" ")
@@ -54,7 +62,7 @@ def _claims() -> dict:
         print(json.dumps({"event": "token refused", "error": str(e)}), flush=True)
         raise ToolError(f"refused: {e}")
     claims = {k: c.get(k) for k in ("iss", "sub", "aud", "azp", "client_id", "scope", "jti", "iat", "exp")}
-    if SCOPE not in str(c.get("scope", "")).split():
+    if SCOPE not in _scopes(c.get("scope")):
         print(json.dumps({"event": "token refused", "error": f"no scope {SCOPE}", **claims}), flush=True)
         raise ToolError(f"refused: the token lacks scope {SCOPE}")
     if (c.get("azp") or c.get("client_id")) not in CLIENTS:

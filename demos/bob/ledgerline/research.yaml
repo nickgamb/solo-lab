@@ -129,7 +129,8 @@ spec:
         policy:
           matchExpressions:
           - 'mcp.methodName == "tools/list"'
-          - 'mcp.tool.name in ["sector_outlook", "research_note"] && has(jwt.scope) && "research:read" in jwt.scope.split(" ")'
+          # scope: a space-separated string, or the list some authorization servers issue
+          - 'mcp.tool.name in ["sector_outlook", "research_note"] && has(jwt.scope) && "research:read" in (type(jwt.scope) == string ? jwt.scope.split(" ") : jwt.scope)'
           - 'mcp.tool.name == "account_info" && has(jwt.sub)'
 ---
 # Ledgerline's identity team lets its gateway fetch the signing keys.
