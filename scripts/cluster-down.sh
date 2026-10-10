@@ -5,6 +5,9 @@
 
 step "Deleting kind cluster $LAB_NAME"
 kind delete cluster --name "$LAB_NAME" 2>/dev/null && ok "deleted" || ok "not present"
+# cloud-provider-kind holds the deleted cluster's credentials: the next
+# cluster gets a fresh one (make up)
+docker rm -f lab-cloud-provider-kind >/dev/null 2>&1 || true
 
 if [ "${1:-}" = --all ]; then
   step "Removing registry caches, the local registry (and every image built into it), lab DNS, cloud-provider-kind"
