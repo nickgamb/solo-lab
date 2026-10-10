@@ -125,8 +125,8 @@ desired=$({ for n in $CHAIN; do
     oidc: ({issuer: $iss, clientID: $cid, clientAuth: $auth}
       + (if $auth == "private_key_jwt" then {clientAssertionSigningAlg: "PS256"} else {clientSecretRef: {name: "upstream-\($n)"}} end)),
     failoverWhen: {unreachable: true, serverError: true, invalidDiscovery: true, latencyAboveMs: 1500},
-    assurance: $assurance,
-    groups: {claim: $gclaim}}
+    assurance: $assurance}
+    + (if $gclaim == "none" then {} else {groups: {claim: $gclaim}} end)
     + ($dir // {})'
 done
 jq -nc '{name: "break-glass", displayName: "Platform admins (break-glass)", type: "local", assurance: {default: "AAL1"}}'
@@ -220,6 +220,10 @@ ok "active IdP: $(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.
 if [ -z "$(K get idc sterling-vance -n sv-identity -o jsonpath='{.spec.sync}')" ]; then
   K patch idc sterling-vance -n sv-identity --type merge -p "{\"spec\":{\"sync\":{\"schedule\":\"$SV_SYNC_SCHEDULE\"}}}" >/dev/null
 fi
+# who leaves the primary leaves the broker (SV_SYNC_REMOVE_MISSING; the
+# Observatory's Directory sync tab switches it at runtime)
+case "$SV_SYNC_REMOVE_MISSING" in true|false) ;; *) die "SV_SYNC_REMOVE_MISSING: true or false" ;; esac
+K patch idc sterling-vance -n sv-identity --type merge -p "{\"spec\":{\"sync\":{\"removeMissing\":$SV_SYNC_REMOVE_MISSING}}}" >/dev/null
 # the controller's own image: a CronJob still on the previous one is updated on its next pass
 img=$(K get deploy continuity-controller -n sv-identity -o jsonpath='{.spec.template.spec.containers[0].image}')
 wait_for "the directory sync's CronJob, on $img" 60 2 \

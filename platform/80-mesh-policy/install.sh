@@ -7,7 +7,11 @@ D="$(cd "$(dirname "$0")" && pwd)"
 need_cluster
 step "Sterling & Vance mesh baseline"
 apply_tmpl "$D/sterling-vance.yaml"
-ok "STRICT: sv-identity sv-workforce sv-contingency sv-agents sv-egress kagent agentgateway-system; identity-scoped ALLOWs on Keycloak, kagent, agents, egress"
+ok "STRICT: sv-identity sv-workforce sv-contingency sv-agents sv-egress kagent agentgateway-system; deny by default and identity-scoped ALLOWs on Keycloak, kagent, agents, egress, agentgateway"
+
+step "Mutual TLS everywhere in the mesh"
+apply_tmpl "$D/mesh.yaml"
+ok "STRICT mesh-wide; plaintext only on the edge's listeners and the admission webhooks"
 
 step "Sterling & Vance egress: out only through the firm's gateways"
 deny_internet sv-identity sv-workforce sv-contingency kagent sv-agents sv-mcp agentregistry

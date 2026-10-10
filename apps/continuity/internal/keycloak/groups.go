@@ -140,6 +140,11 @@ func (c *Client) FindUserByEmail(ctx context.Context, email string) (string, err
 	return "", ErrNotFound
 }
 
+// DeleteUser removes the realm's user (its links and sessions go with it).
+func (c *Client) DeleteUser(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/users/"+url.PathEscape(id), nil, nil)
+}
+
 // CreateUser creates an account named by its email, with no credential: the
 // user signs in through an IdP, which links to it by that verified email.
 func (c *Client) CreateUser(ctx context.Context, email string, verified bool) (string, error) {

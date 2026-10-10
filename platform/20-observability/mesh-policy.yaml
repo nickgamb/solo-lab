@@ -40,6 +40,7 @@ spec:
         - cluster.local/ns/kgateway-system/sa/edge
         - cluster.local/ns/agentgateway-system/sa/ai-gateway
         - cluster.local/ns/meridian/sa/meridian
+        - cluster.local/ns/ledgerline/sa/mcp-gateway
     to: [{operation: {ports: ["14317", "14318"]}}]
 ---
 apiVersion: security.istio.io/v1

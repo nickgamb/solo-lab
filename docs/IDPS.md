@@ -40,7 +40,7 @@ overrides any of them. Changing them: `make layer-47`, then
 | `NAME_CLIENT_ID` | S&V's client there |
 | `NAME_CLIENT_SECRET` | unset: S&V authenticates with its keys (`private_key_jwt`); set: `client_secret_post` |
 | `NAME_DISPLAY_NAME` | its name on sign-in pages and in the Observatory |
-| `NAME_GROUPS_CLAIM` | the ID token claim with the user's groups (or roles); default `groups` |
+| `NAME_GROUPS_CLAIM` | the ID token claim with the user's groups (or roles); default `groups`; `none` when its ID tokens carry no groups and the directory sync maps them from its directory |
 | `NAME_ASSURANCE` | what its sign-ins prove: NIST 800-63B levels by the `acr` or `amr` it asserts (JSON, [assurance](IDENTITY-CONTINUITY.md#assurance)); unset: AAL1 |
 | `NAME_DIRECTORY_TYPE` | the directory sync's access to its users: `scim`, `auth0` or `keycloak`; unset: none |
 | `NAME_DIRECTORY_URL` | the directory's API |
@@ -70,7 +70,7 @@ The same for every IdP:
 | Grant types | `authorization_code` with PKCE S256, `refresh_token` |
 | Scopes | `openid email profile` |
 | Users | `email` and `email_verified: true` in the ID token: the broker links a sign-in to the S&V account with that verified email |
-| Groups | the user's groups by name in `NAME_GROUPS_CLAIM`, named as in `SV_GROUPS` (`advisors`, `platform-engineers`, `compliance`) |
+| Groups | the user's groups by name in `NAME_GROUPS_CLAIM`, named as in `SV_GROUPS` (`advisors`, `platform-engineers`, `compliance`); or none in the ID token (`NAME_GROUPS_CLAIM=none`) and the same groups readable through its directory |
 
 The `.lab` hosts resolve only on your machine. That's fine: an IdP only
 redirects the browser to them, and every call S&V makes to it goes out from

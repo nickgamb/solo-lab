@@ -60,6 +60,102 @@ spec:
         - cluster.local/ns/agentgateway-system/sa/ai-gateway
     to: [{operation: {ports: ["7777"]}}]
 ---
+# agentgateway-system: nothing takes a connection unless a policy here names
+# the caller. (The ai-gateway terminates the mesh itself: its routes' policies
+# decide who may call it.)
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: default-deny, namespace: agentgateway-system}
+spec: {}
+---
+# The controller: the agentgateway proxies fetch their configuration (xDS,
+# before they hold a mesh identity: any caller, on that port only), the
+# ai-gateway mints MCP servers' tokens at the STS (Enterprise), Prometheus
+# reads its metrics.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: controller-callers, namespace: agentgateway-system}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: ${AGW_RELEASE}}}
+  action: ALLOW
+  rules:
+  - to: [{operation: {ports: ["9978"]}}]
+  - from: [{source: {principals: [cluster.local/ns/agentgateway-system/sa/ai-gateway]}}]
+    to: [{operation: {ports: ["7777"]}}]
+  - from: [{source: {principals: [cluster.local/ns/observability/sa/kps-prometheus]}}]
+    to: [{operation: {ports: ["9092"]}}]
+---
+# The gateways' shared services (Enterprise: ext-auth, rate limits, WAF and
+# their cache): the agentgateway proxies that use them, each other, and
+# Prometheus.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: ext-auth-callers, namespace: agentgateway-system}
+spec:
+  selector: {matchLabels: {app: ext-auth-service}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: [agentgateway-system]
+    - source:
+        principals:
+        - cluster.local/ns/alice/sa/waypoint
+        - cluster.local/ns/ledgerline/sa/mcp-gateway
+        - cluster.local/ns/meridian/sa/meridian
+        - cluster.local/ns/observability/sa/kps-prometheus
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: rate-limiter-callers, namespace: agentgateway-system}
+spec:
+  selector: {matchLabels: {app: rate-limiter}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: [agentgateway-system]
+    - source:
+        principals:
+        - cluster.local/ns/alice/sa/waypoint
+        - cluster.local/ns/ledgerline/sa/mcp-gateway
+        - cluster.local/ns/meridian/sa/meridian
+        - cluster.local/ns/observability/sa/kps-prometheus
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: waf-callers, namespace: agentgateway-system}
+spec:
+  selector: {matchLabels: {app: waf-server}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: [agentgateway-system]
+    - source:
+        principals:
+        - cluster.local/ns/alice/sa/waypoint
+        - cluster.local/ns/ledgerline/sa/mcp-gateway
+        - cluster.local/ns/meridian/sa/meridian
+        - cluster.local/ns/observability/sa/kps-prometheus
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: ext-cache-callers, namespace: agentgateway-system}
+spec:
+  selector: {matchLabels: {app: ext-cache}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: [agentgateway-system]
+    - source:
+        principals:
+        - cluster.local/ns/alice/sa/waypoint
+        - cluster.local/ns/ledgerline/sa/mcp-gateway
+        - cluster.local/ns/meridian/sa/meridian
+        - cluster.local/ns/observability/sa/kps-prometheus
+---
 apiVersion: security.istio.io/v1
 kind: PeerAuthentication
 metadata: {name: strict, namespace: sv-agents}

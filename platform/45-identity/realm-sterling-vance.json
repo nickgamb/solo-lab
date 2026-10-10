@@ -20,6 +20,33 @@
   ],
   "users": [
     {
+      "id": "5b0b0000-0000-4000-8000-000000000b0b",
+      "username": "bob@${SV_DOMAIN}",
+      "email": "bob@${SV_DOMAIN}",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Bob",
+      "lastName": "Reyes"
+    },
+    {
+      "id": "5b0b0000-0000-4000-8000-000000000ca1",
+      "username": "carol@${SV_DOMAIN}",
+      "email": "carol@${SV_DOMAIN}",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Carol",
+      "lastName": "Diaz"
+    },
+    {
+      "id": "5b0b0000-0000-4000-8000-000000000da0",
+      "username": "dana@${SV_DOMAIN}",
+      "email": "dana@${SV_DOMAIN}",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Dana",
+      "lastName": "Okafor"
+    },
+    {
       "username": "ops",
       "email": "ops@${SV_DOMAIN}",
       "firstName": "Platform",

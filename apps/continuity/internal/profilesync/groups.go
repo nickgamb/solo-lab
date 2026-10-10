@@ -14,12 +14,21 @@ import (
 type Entry struct {
 	ID, Email string
 	Verified  *bool
+	// Disabled: the directory has the user but won't let them sign in
+	// (blocked, disabled, inactive).
+	Disabled bool
 }
 
 // Lister lists a directory's users, a page at a time: the directory sync
 // gives the broker an account for each of the primary's workforce users.
 type Lister interface {
 	List(ctx context.Context, first, max int) ([]Entry, error)
+}
+
+// Remover deletes a user from a directory: a failover's account of someone the
+// primary no longer has (spec.sync.removeMissing).
+type Remover interface {
+	Remove(ctx context.Context, id string) error
 }
 
 // GroupReader reads the groups (or roles) a directory has a user in, by name.
@@ -41,16 +50,21 @@ func (d *auth0) List(ctx context.Context, first, max int) ([]Entry, error) {
 		ID       string `json:"user_id"`
 		Email    string `json:"email"`
 		Verified *bool  `json:"email_verified"`
+		Blocked  bool   `json:"blocked"`
 	}
-	q := fmt.Sprintf("/users?per_page=%d&page=%d&fields=user_id,email,email_verified&include_fields=true", max, first/max)
+	q := fmt.Sprintf("/users?per_page=%d&page=%d&fields=user_id,email,email_verified,blocked&include_fields=true", max, first/max)
 	if err := d.call(ctx, http.MethodGet, q, nil, &us); err != nil {
 		return nil, err
 	}
 	out := make([]Entry, 0, len(us))
 	for _, u := range us {
-		out = append(out, Entry{ID: u.ID, Email: u.Email, Verified: u.Verified})
+		out = append(out, Entry{ID: u.ID, Email: u.Email, Verified: u.Verified, Disabled: u.Blocked})
 	}
 	return out, nil
+}
+
+func (d *auth0) Remove(ctx context.Context, id string) error {
+	return d.call(ctx, http.MethodDelete, "/users/"+url.PathEscape(id), nil, nil)
 }
 
 type auth0Role struct {
@@ -125,15 +139,20 @@ func (d *keycloakDir) List(ctx context.Context, first, max int) ([]Entry, error)
 		ID       string `json:"id"`
 		Email    string `json:"email"`
 		Verified *bool  `json:"emailVerified"`
+		Enabled  *bool  `json:"enabled"`
 	}
 	if err := d.call(ctx, http.MethodGet, fmt.Sprintf("/users?briefRepresentation=true&first=%d&max=%d", first, max), nil, &us); err != nil {
 		return nil, err
 	}
 	out := make([]Entry, 0, len(us))
 	for _, u := range us {
-		out = append(out, Entry{ID: u.ID, Email: u.Email, Verified: u.Verified})
+		out = append(out, Entry{ID: u.ID, Email: u.Email, Verified: u.Verified, Disabled: u.Enabled != nil && !*u.Enabled})
 	}
 	return out, nil
+}
+
+func (d *keycloakDir) Remove(ctx context.Context, id string) error {
+	return d.call(ctx, http.MethodDelete, "/users/"+url.PathEscape(id), nil, nil)
 }
 
 func (d *keycloakDir) Groups(ctx context.Context, id string) ([]string, error) {
@@ -212,7 +231,8 @@ func (d *scim) List(ctx context.Context, first, max int) ([]Entry, error) {
 		for _, u := range r.Resources {
 			id, _ := u["id"].(string)
 			email, verified := scimEmail(u)
-			out = append(out, Entry{ID: id, Email: email, Verified: verified})
+			active, ok := u["active"].(bool)
+			out = append(out, Entry{ID: id, Email: email, Verified: verified, Disabled: ok && !active})
 		}
 		// a server may answer with fewer than asked for (its own page size):
 		// ask again from where it stopped, while it says there are more
@@ -268,6 +288,10 @@ func scimEmail(u map[string]any) (string, *bool) {
 		}
 	}
 	return email, verified
+}
+
+func (d *scim) Remove(ctx context.Context, id string) error {
+	return d.call(ctx, http.MethodDelete, "/Users/"+url.PathEscape(id), nil, nil)
 }
 
 func (d *scim) Groups(ctx context.Context, id string) ([]string, error) {

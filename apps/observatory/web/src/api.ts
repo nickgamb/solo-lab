@@ -46,9 +46,9 @@ export const ATTRIBUTE_TYPES = ['string', 'integer', 'number', 'boolean', 'date'
 export type AttributeType = typeof ATTRIBUTE_TYPES[number]
 export type ProfileAttribute = { name: string; displayName?: string; type?: AttributeType; multivalued?: boolean }
 export type Profile = { attributes?: ProfileAttribute[] }
-export type Sync = { schedule: string; suspend?: boolean; credentialsRef?: { name: string } }
+export type Sync = { schedule: string; suspend?: boolean; removeMissing?: boolean; credentialsRef?: { name: string } }
 export type SyncStatus = {
-  cronJob?: string; lastRun?: string; lastSuccess?: string; users?: number; updated?: number; written?: number; created?: number; failed?: number; message?: string
+  cronJob?: string; lastRun?: string; lastSuccess?: string; users?: number; updated?: number; written?: number; created?: number; removed?: number; failed?: number; message?: string
   schemas?: Record<string, string[]> // each IdP's attribute paths, as its directory last showed them
 }
 // the broker's built-in profile attributes: always in its profile

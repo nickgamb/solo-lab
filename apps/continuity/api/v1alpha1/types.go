@@ -125,8 +125,8 @@ type ProfileAttribute struct {
 // primary IdP's record (the chain's first tier) is read into the broker's
 // profile, then the broker's profile is written to each failover IdP,
 // creating the user there (with an enrollment email) if the primary has them.
-// Passwords and credentials are never read or written, the username is never
-// written, and no user is deleted.
+// Passwords and credentials are never read or written, and the username is
+// never written. Users are deleted only with removeMissing.
 // +kubebuilder:validation:XValidation:rule="(has(self.suspend) && self.suspend) || (has(self.schedule) && size(self.schedule) > 0)",message="a schedule, unless suspended"
 type Sync struct {
 	// Standard cron, in UTC (e.g. "0 2 * * *" daily at 02:00). Empty only
@@ -134,6 +134,13 @@ type Sync struct {
 	// +optional
 	Schedule string `json:"schedule,omitempty"`
 	Suspend  bool   `json:"suspend,omitempty"`
+	// Remove the broker account of a workforce user the primary no longer
+	// has, or has disabled, with their accounts at the failover IdPs: who
+	// exists is the primary's to say. Only after a complete listing of the
+	// primary, never while it can't be read or lists no one. Off: accounts
+	// stay (profiles preloaded at the broker, for instance).
+	// +optional
+	RemoveMissing bool `json:"removeMissing,omitempty"`
 	// A Secret with client-id and client-secret of the broker's realm client
 	// the sync writes users as (view-users and manage-users; nothing else).
 	// +kubebuilder:default={name: "continuity-sync"}
@@ -475,13 +482,16 @@ type SyncStatus struct {
 	// In the last run: users read, users whose broker profile changed,
 	// failover accounts written and created, broker accounts provisioned
 	// from the primary, and failures.
-	Users       int32  `json:"users,omitempty"`
-	Provisioned int32  `json:"provisioned,omitempty"`
-	Updated     int32  `json:"updated,omitempty"`
-	Written     int32  `json:"written,omitempty"`
-	Created     int32  `json:"created,omitempty"`
-	Failed      int32  `json:"failed,omitempty"`
-	Message     string `json:"message,omitempty"`
+	Users       int32 `json:"users,omitempty"`
+	Provisioned int32 `json:"provisioned,omitempty"`
+	// Removed: accounts removed because the primary no longer has the user
+	// (removeMissing).
+	Removed int32  `json:"removed,omitempty"`
+	Updated int32  `json:"updated,omitempty"`
+	Written int32  `json:"written,omitempty"`
+	Created int32  `json:"created,omitempty"`
+	Failed  int32  `json:"failed,omitempty"`
+	Message string `json:"message,omitempty"`
 	// The attribute paths each IdP's directory has, as last read (names
 	// only, never values).
 	Schemas map[string][]string `json:"schemas,omitempty"`

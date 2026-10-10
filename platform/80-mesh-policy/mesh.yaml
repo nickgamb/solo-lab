@@ -1,0 +1,32 @@
+# Mutual TLS everywhere in the mesh: a workload takes a connection only over
+# the mesh, from a caller with an identity. Plaintext stays open only where a
+# caller can't be in the mesh, on that port alone: the edge's listeners (the
+# load balancer) and admission webhooks (the API server).
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: default, namespace: istio-system}
+spec: {mtls: {mode: STRICT}}
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: edge-listeners, namespace: kgateway-system}
+spec:
+  selector: {matchLabels: {gateway.networking.k8s.io/gateway-name: edge}}
+  mtls: {mode: STRICT}
+  portLevelMtls: {"80": {mode: PERMISSIVE}, "443": {mode: PERMISSIVE}}
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: webhook, namespace: cnpg-system}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: cloudnative-pg}}
+  mtls: {mode: STRICT}
+  portLevelMtls: {"9443": {mode: PERMISSIVE}}
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: webhook, namespace: observability}
+spec:
+  selector: {matchLabels: {app: kube-prometheus-stack-operator}}
+  mtls: {mode: STRICT}
+  portLevelMtls: {"10250": {mode: PERMISSIVE}}

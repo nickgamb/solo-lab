@@ -22,6 +22,7 @@ type fakeBroker struct {
 	users   []keycloak.User
 	links   map[string]map[string]string // user id -> idp -> id there
 	local   map[string]bool
+	deleted []string
 	updated []keycloak.User
 	store   func(keycloak.User) // what the broker does to a user it stores
 	groups  map[string][]string // user id -> group names
@@ -87,6 +88,12 @@ func (f *fakeBroker) CreateUser(_ context.Context, email string, verified bool) 
 	return id, nil
 }
 
+func (f *fakeBroker) DeleteUser(_ context.Context, id string) error {
+	f.users = slices.DeleteFunc(f.users, func(u keycloak.User) bool { return u["id"] == id })
+	f.deleted = append(f.deleted, id)
+	return nil
+}
+
 func (f *fakeBroker) EnsureGroup(_ context.Context, name string) (string, error) {
 	return "g-" + name, nil
 }
@@ -116,11 +123,15 @@ func (f *fakeBroker) SetUserGroups(_ context.Context, id string, want []string, 
 type groupDir struct {
 	fakeDir
 	entries []Entry
+	listErr error
 	groups  map[string][]string
 	set     map[string][]string // id -> the want of the last SetGroups
 }
 
 func (d *groupDir) List(_ context.Context, first, max int) ([]Entry, error) {
+	if d.listErr != nil {
+		return nil, d.listErr
+	}
 	if first >= len(d.entries) {
 		return nil, nil
 	}
@@ -690,5 +701,61 @@ func TestSCIMEmailVerifiedIsThePrimarys(t *testing.T) {
 	if v := emailVerified(map[string]any{"emails": []any{map[string]any{"value": "bob@sterling.lab"}},
 		"urn:ietf:params:scim:schemas:extension:gluu:2.0:User": map[string]any{"emailVerified": false}}); v == nil || *v {
 		t.Fatalf("emailVerified = %v, want false from the extension", v)
+	}
+}
+
+// removable is a failover directory that can delete its users
+type removable struct {
+	fakeDir
+	removed []string
+}
+
+func (d *removable) Remove(_ context.Context, id string) error {
+	delete(d.recs, id)
+	d.removed = append(d.removed, id)
+	return nil
+}
+
+func TestRemovesWhoThePrimaryNoLongerHas(t *testing.T) {
+	carol := keycloak.User{"id": "carol", "email": "carol@sterling.lab"}
+	ops := keycloak.User{"id": "ops", "email": "ops@sterling.lab"}
+	svc := keycloak.User{"id": "svc", "email": "svc@sterling.lab", "serviceAccountClientId": "x"}
+	partner := keycloak.User{"id": "pat", "email": "pat@partner.example"}
+	dana := keycloak.User{"id": "dana", "email": "dana@sterling.lab"}
+	users := func() []keycloak.User { return []keycloak.User{bob(), carol, ops, svc, partner, dana} }
+	primary := func(entries ...Entry) *IdP {
+		return &IdP{Name: "auth0", Attributes: mappings, Dir: &groupDir{fakeDir: fakeDir{recs: map[string]map[string]any{}}, entries: entries}}
+	}
+	has := []Entry{
+		{ID: "a-bob", Email: "bob@sterling.lab", Verified: yes()},
+		{ID: "a-dana", Email: "dana@sterling.lab", Verified: yes(), Disabled: true}, // disabled: as good as gone
+	}
+	shape := Shape{Domains: []string{"sterling.lab"}, RemoveMissing: true}
+
+	b := &fakeBroker{users: users(), local: map[string]bool{"ops": true}}
+	fo := &removable{fakeDir: fakeDir{recs: map[string]map[string]any{"k-carol": {"email": "carol@sterling.lab"}, "k-bob": {"email": "bob@sterling.lab"}}}}
+	res := Run(context.Background(), b, primary(has...), []IdP{{Name: "contingency", Attributes: mappings, Dir: fo}}, writable, nil, shape, nop)
+	slices.Sort(b.deleted)
+	// carol (gone) and dana (disabled) go, with carol's failover account; bob
+	// stays; break-glass, service accounts and other domains are never touched
+	if res.Removed != 2 || !slices.Equal(b.deleted, []string{"carol", "dana"}) || !slices.Equal(fo.removed, []string{"k-carol"}) {
+		t.Fatalf("removed %d: broker %v, failover %v (errors %v)", res.Removed, b.deleted, fo.removed, res.Errors)
+	}
+
+	// off: nobody goes
+	b = &fakeBroker{users: users()}
+	if res := Run(context.Background(), b, primary(has...), nil, writable, nil, Shape{Domains: shape.Domains}, nop); res.Removed != 0 || len(b.deleted) != 0 {
+		t.Fatalf("removed %v with removeMissing off", b.deleted)
+	}
+	// a primary that lists no one, or can't be read: nobody goes
+	b = &fakeBroker{users: users()}
+	if res := Run(context.Background(), b, primary(), nil, writable, nil, shape, nop); len(b.deleted) != 0 {
+		t.Fatalf("removed %v on an empty listing (result %+v)", b.deleted, res)
+	}
+	b = &fakeBroker{users: users()}
+	broken := primary(has...)
+	broken.Dir.(*groupDir).listErr = errors.New("down")
+	if res := Run(context.Background(), b, broken, nil, writable, nil, shape, nop); len(b.deleted) != 0 {
+		t.Fatalf("removed %v while the primary can't be listed (result %+v)", b.deleted, res)
 	}
 }
