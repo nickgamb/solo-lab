@@ -20,7 +20,7 @@ func TestBrokerSignInsAreApps(t *testing.T) {
 		k:     storeKube(map[string][]map[string]any{"identitycontinuities": {ic}}),
 		svcWL: map[string][]string{"id/keycloak": {broker}},
 		nodes: map[string]*Node{broker: {ID: broker, Kind: "idp", Summary: map[string]any{}},
-			app:     {ID: app, Kind: "ui", Summary: map[string]any{}},
+			app:      {ID: app, Kind: "ui", Summary: map[string]any{}},
 			upstream: {ID: upstream, Kind: "idp", Summary: map[string]any{}}},
 		hosts: map[string][]string{"console.firm.lab": {app}, "idp.upstream.lab": {upstream}},
 	}
