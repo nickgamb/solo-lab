@@ -26,6 +26,12 @@ fi
 helm_up "$AGW_RELEASE-crds" "$AGW_CRDS_CHART" "$AGW_VERSION" agentgateway-system ${CRD_VALUES[@]+"${CRD_VALUES[@]}"}
 values_for "$D" values "$ED"
 helm_up "$AGW_RELEASE" "$AGW_CHART" "$AGW_VERSION" agentgateway-system ${VALS[@]+"${VALS[@]}"}
+# Enterprise: a controller that loses its leader lease can stay up without
+# serving; restart it when it stops answering (the chart sets no liveness probe)
+if [ "$ED" = enterprise ]; then
+  K patch deploy "$AGW_RELEASE" -n agentgateway-system --type strategic -p '{"spec":{"template":{"spec":{"containers":[{"name":"controller",
+    "livenessProbe":{"httpGet":{"path":"/readyz","port":9093},"periodSeconds":10,"timeoutSeconds":5,"failureThreshold":6}}]}}}}' >/dev/null
+fi
 
 step "AI gateway (agentgateway-system/ai-gateway)"
 # Enterprise: the class's shared services (Solo's ext-auth service
