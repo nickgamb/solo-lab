@@ -22,10 +22,18 @@ import (
 //	                       optionally one session's decision (what if)
 //	GET  /v1/policy-point  the extAuth a gateway policy needs to ask the gate
 //	                       for a rule
+//	GET  /v1/policy        the decision logic (Rego), as both runtimes run it
+//	AuthZEN                access evaluation (gate_authzen.go)
 func (g *gate) evaluateHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/evaluate", g.serveEvaluate)
-	mux.HandleFunc("GET /v1/policy-point", servePolicyPoint)
+	mux.HandleFunc("GET /v1/policy-point", g.servePolicyPoint)
+	// the decision logic itself, the Rego module both runtimes evaluate
+	mux.HandleFunc("GET /v1/policy", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = io.WriteString(w, assurance.Policy)
+	})
+	g.authzenRoutes(mux)
 	return mux
 }
 
@@ -146,7 +154,7 @@ func evaluate(ic v1.IdentityContinuity, profiles []v1.WorkloadProfile, req EvalR
 			}
 		}
 	}
-	chain, active, cur := activeChain(spec.Tiers), ic.Status.Active, current(ic)
+	chain, active, cur := assurance.EnabledTiers(spec.Tiers), ic.Status.Active, assurance.CurrentOf(&ic)
 	out := EvalResponse{Continuity: ic.Name, Active: active, IdPs: []EvalIdP{}, Rules: []EvalRule{}}
 	for _, t := range spec.Tiers {
 		out.IdPs = append(out.IdPs, EvalIdP{Name: t.Name, Ceiling: assurance.Ceiling(t).String(), Active: t.Name == active,
@@ -225,20 +233,36 @@ const gateClaims = `{"iss": jwt.iss, "sub": jwt.sub, "idp": has(jwt.idp) ? jwt.i
 	`"acr": has(jwt.idp_acr) ? jwt.idp_acr : "", "amr": has(jwt.idp_amr) ? jwt.idp_amr : "", ` +
 	`"auth_time": has(jwt.idp_auth_time) ? jwt.idp_auth_time : 0}`
 
-// servePolicyPoint: the extAuth a gateway policy needs to ask the gate for a
-// rule (?rule=; none for the default rule) of a chain (?continuity=), less
-// the backendRef, which is wherever this gate's Service is.
-func servePolicyPoint(w http.ResponseWriter, r *http.Request) {
+// servePolicyPoint: what a gateway policy needs to ask for a rule (?rule=;
+// none for the default rule) of a chain (?continuity=). field names the
+// policy's traffic field and spec its value: on Enterprise, entExtAuth naming
+// the rule's AuthConfig in Solo's ext-auth service; else extAuth to this gate,
+// less the backendRef, which is wherever this gate's Service is
+// (needsBackendRef).
+func (g *gate) servePolicyPoint(w http.ResponseWriter, r *http.Request) {
+	rule, chain := r.URL.Query().Get("rule"), r.URL.Query().Get("continuity")
+	if g.extAuthNS != "" {
+		name := rule
+		if name == "" {
+			if chain == "" {
+				http.Error(w, "the default rule needs its chain (?continuity=)", http.StatusBadRequest)
+				return
+			}
+			name = chain + "-default"
+		}
+		writeJSON(w, map[string]any{"field": "entExtAuth",
+			"spec": map[string]any{"authConfigRef": map[string]string{"namespace": g.extAuthNS, "name": "assurance-" + name}}})
+		return
+	}
 	ext := map[string]string{}
-	if v := r.URL.Query().Get("rule"); v != "" {
-		ext[gateProfileKey] = v
+	if rule != "" {
+		ext[gateProfileKey] = rule
 	}
-	if v := r.URL.Query().Get("continuity"); v != "" {
-		ext[gateContinuityKey] = v
+	if chain != "" {
+		ext[gateContinuityKey] = chain
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, map[string]any{"field": "extAuth", "needsBackendRef": true, "spec": map[string]any{
 		"failureMode": "FailClosed",
 		"grpc":        map[string]any{"contextExtensions": ext, "requestMetadata": map[string]string{gateMetaKey: gateClaims}},
-	})
+	}})
 }

@@ -63,6 +63,7 @@ func runGate(args []string) int {
 	healthAddr := fs.String("health", ":8081", "HTTP /healthz")
 	evalAddr := fs.String("evaluate", ":9002", "HTTP evaluate API (the Observatory's)")
 	stale := fs.Duration("stale", 30*time.Second, "after this long without a word from the chain, profiles with sessions ActiveIdPOnly answer 503")
+	extAuthNS := fs.String("extauth-namespace", os.Getenv("EXTAUTH_NAMESPACE"), "namespace of Solo's ext-auth service, when it enforces the rules (Enterprise): policy points then name an AuthConfig")
 	_ = fs.Parse(args)
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	ctrl.SetLogger(logr.FromSlogHandler(slog.Default().Handler())) // the watch cache's logs, as JSON too
@@ -76,7 +77,7 @@ func runGate(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	g := &gate{r: c, ns: *ns, stale: *stale, now: time.Now}
+	g := &gate{r: c, ns: *ns, stale: *stale, now: time.Now, extAuthNS: *extAuthNS}
 	// every word from the chain (the controller's status writes) is a heartbeat
 	inf, err := c.GetInformer(ctx, &v1.IdentityContinuity{})
 	if err != nil {
@@ -156,61 +157,89 @@ type gate struct {
 	now    func() time.Time
 	synced atomic.Bool
 	heard  atomic.Int64 // unix nanos of the chain's last status write seen
+	// Solo's ext-auth service's namespace, when it enforces the rules
+	extAuthNS string
 }
 
 func (g *gate) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.CheckResponse, error) {
 	attrs := req.GetAttributes()
 	ext := attrs.GetContextExtensions()
-	name := ext[gateProfileKey]
-	label := ruleLabel(name)
-	reqID := attrs.GetRequest().GetHttp().GetId()
-	if !g.synced.Load() {
-		return unavailable(label, "the gate hasn't read the assurance rules yet"), nil
+	label := ruleLabel(ext[gateProfileKey])
+	var s *assurance.Session
+	f := attrs.GetMetadataContext().GetFilterMetadata()[gateMetaKey].GetFields()
+	if f != nil {
+		s = &assurance.Session{IdP: f["idp"].GetStringValue(), ACR: f["acr"].GetStringValue(), AMR: strings.Fields(f["amr"].GetStringValue())}
+		if t := f["auth_time"].GetNumberValue(); t > 0 {
+			s.AuthTime = time.Unix(int64(t), 0)
+		}
 	}
-	rule, why := g.rule(ctx, name, ext[gateContinuityKey])
+	verdict, d := g.judge(ctx, ext[gateProfileKey], ext[gateContinuityKey], f["iss"].GetStringValue(), s)
+	slog.Info("decision", "profile", label, "decision", verdict, "reason", d.Reason, "idp", sessionIdP(s), "acr", sessionACR(s),
+		"sub", f["sub"].GetStringValue(), "request_id", attrs.GetRequest().GetHttp().GetId())
+	switch verdict {
+	case "unavailable":
+		return unavailable(label, d.Reason), nil
+	case "deny":
+		return denied(label, d), nil
+	}
+	return allowed(label, verdict, d.Reason), nil
+}
+
+// judge: the gate's answer for a session (nil: no verified claims, iss the
+// token's issuer) against a rule (none: the chain's default rule). The
+// verdict is allow, deny, would-deny (a ReportOnly rule), off, or
+// unavailable; the decision says why. The ext_authz check and the AuthZEN
+// evaluation both answer from here.
+func (g *gate) judge(ctx context.Context, name, continuity, iss string, s *assurance.Session) (string, assurance.Decision) {
+	if !g.synced.Load() {
+		return "unavailable", assurance.Decision{Reason: "the gate hasn't read the assurance rules yet"}
+	}
+	rule, why := g.rule(ctx, name, continuity)
 	if rule == nil {
-		slog.Warn("refused", "profile", label, "reason", why, "request_id", reqID)
-		return denied(label, assurance.Decision{Reason: why}), nil
+		slog.Warn("refused", "profile", ruleLabel(name), "reason", why)
+		return "deny", assurance.Decision{Reason: why}
 	}
 	if rule.mode == modeOff {
-		return allowed(label, "off", "the rule is off"), nil
+		return "off", assurance.Decision{Allow: true, Reason: "the rule is off"}
 	}
 	report := rule.mode == modeReportOnly
 	if rule.rules.ActiveIdPOnly && g.now().Sub(time.Unix(0, g.heard.Load())) > g.stale {
-		why := "the gate can't tell which IdP is signing people in now"
+		d := assurance.Decision{Reason: "the gate can't tell which IdP is signing people in now"}
 		if report {
-			return allowed(label, "would-deny", why), nil
+			return "would-deny", d
 		}
-		return unavailable(label, why), nil
+		return "unavailable", d
 	}
 	var d assurance.Decision
-	var s assurance.Session
-	f := attrs.GetMetadataContext().GetFilterMetadata()[gateMetaKey].GetFields()
-	switch iss := f["iss"].GetStringValue(); {
-	case f == nil:
+	switch {
+	case s == nil:
 		d.Reason = "no verified token: the policy point sent no claims"
 	case rule.ic.Status.Broker != nil && rule.ic.Status.Broker.Issuer != "" && iss != rule.ic.Status.Broker.Issuer:
 		d.Reason = fmt.Sprintf("the token is from %s, not the broker (%s)", iss, rule.ic.Status.Broker.Issuer)
 	default:
-		s = assurance.Session{IdP: f["idp"].GetStringValue(), ACR: f["acr"].GetStringValue(), AMR: strings.Fields(f["amr"].GetStringValue())}
-		if t := f["auth_time"].GetNumberValue(); t > 0 {
-			s.AuthTime = time.Unix(int64(t), 0)
-		}
-		d = assurance.Decide(rule.rules, activeChain(rule.ic.Spec.Tiers), current(rule.ic), s, g.now())
+		d = assurance.Decide(rule.rules, assurance.EnabledTiers(rule.ic.Spec.Tiers), assurance.CurrentOf(&rule.ic), *s, g.now())
 	}
-	verdict := "deny"
 	switch {
 	case d.Allow:
-		verdict = "allow"
+		return "allow", d
 	case report:
-		verdict = "would-deny"
+		return "would-deny", d
 	}
-	slog.Info("decision", "profile", label, "decision", verdict, "reason", d.Reason, "idp", s.IdP, "acr", s.ACR,
-		"sub", f["sub"].GetStringValue(), "request_id", reqID)
-	if verdict == "deny" {
-		return denied(label, d), nil
+	return "deny", d
+}
+
+func sessionIdP(s *assurance.Session) string {
+	if s == nil {
+		return ""
 	}
-	return allowed(label, verdict, d.Reason), nil
+	return s.IdP
+}
+
+func sessionACR(s *assurance.Session) string {
+	if s == nil {
+		return ""
+	}
+	return s.ACR
 }
 
 // The rule modes (WorkloadProfile spec.mode); the default rule is always
@@ -301,29 +330,6 @@ const decisionHeader = "x-continuity-decision"
 
 func decision(verdict, profile, reason string) string {
 	return quote(verdict + " " + profile + ": " + reason)
-}
-
-// current: the IdPs the chain signs people in through now: the active tier,
-// and those its routing rules send sign-ins to.
-func current(ic v1.IdentityContinuity) assurance.Current {
-	c := assurance.Current{Active: ic.Status.Active}
-	for _, r := range ic.Status.Routing {
-		if r.IdP != "" {
-			c.Routed = append(c.Routed, r.IdP)
-		}
-	}
-	return c
-}
-
-// activeChain: the tiers that can ever be active (disabled ones never are).
-func activeChain(ts []v1.Tier) []v1.Tier {
-	var out []v1.Tier
-	for _, t := range ts {
-		if t.Enabled == nil || *t.Enabled {
-			out = append(out, t)
-		}
-	}
-	return out
 }
 
 // denied: 401 with an RFC 9470 challenge when the user could pass by

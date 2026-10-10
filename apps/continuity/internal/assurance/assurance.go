@@ -44,42 +44,6 @@ type Session struct {
 	AuthTime time.Time // zero: not asserted
 }
 
-// Proof is what a session through a tier proves.
-type Proof struct {
-	Level             Level
-	PhishingResistant bool
-	Evidence          string // what it rests on, for the decision's reason
-}
-
-// Proven: the highest level any of the session's acr or amr values maps to
-// on the tier, else the tier's default.
-func Proven(t v1.Tier, s Session) Proof {
-	p := Proof{Level: def(t), Evidence: "no acr or amr it maps"}
-	if t.Assurance == nil {
-		return p
-	}
-	matchedAny := false
-	for _, l := range t.Assurance.Levels {
-		matched := ""
-		switch {
-		case l.ACR != "" && l.ACR == s.ACR:
-			matched = "acr " + l.ACR
-		case l.AMR != "" && slices.Contains(s.AMR, l.AMR):
-			matched = "amr " + l.AMR
-		}
-		if matched == "" {
-			continue
-		}
-		lv := Parse(l.Level)
-		if lv > p.Level || (lv == p.Level && (!matchedAny || (l.PhishingResistant && !p.PhishingResistant))) {
-			p.Level, p.Evidence = lv, matched
-		}
-		matchedAny = true
-		p.PhishingResistant = p.PhishingResistant || (l.PhishingResistant && lv >= p.Level)
-	}
-	return p
-}
-
 // Rules are a workload's assurance rules as they apply: its profile's,
 // where it sets them, else its chain's assurance policy.
 type Rules struct {
@@ -299,84 +263,6 @@ type Decision struct {
 	Insufficient bool
 	ACRValues    string
 	MaxAge       time.Duration
-}
-
-// Decide whether the rules admit the session. chain and cur are the
-// IdentityContinuity's tiers and the IdPs signing people in now; now is the
-// request's time.
-func Decide(r Rules, chain []v1.Tier, cur Current, s Session, now time.Time) Decision {
-	var t *v1.Tier
-	for i := range chain {
-		if (s.IdP == "" && chain[i].Type == "local") || (s.IdP != "" && chain[i].Name == s.IdP) {
-			t = &chain[i]
-			break
-		}
-	}
-	switch {
-	case t == nil && s.IdP == "":
-		return Decision{Reason: "the session names no IdP and the chain has no break-glass tier"}
-	case t == nil:
-		return Decision{Reason: fmt.Sprintf("session from %s, which isn't in the chain", s.IdP)}
-	}
-	if ok, why := Allowed(r, *t); !ok {
-		return Decision{Reason: why}
-	}
-	if r.ActiveIdPOnly && !cur.Signing(t.Name) {
-		return Decision{Reason: fmt.Sprintf("session from %s; these workloads take sessions only from an IdP signing people in now (%s): sign in again", t.Name, cur)}
-	}
-	proof := Proven(*t, s)
-	// step up where the session came from, when it signs people in now
-	at := cur.Active
-	if cur.Signing(t.Name) {
-		at = t.Name
-	}
-	need := Decision{Insufficient: true, ACRValues: stepUp(r, chain, at)}
-	if proof.Level < r.Minimum {
-		need.Reason = fmt.Sprintf("assurance %s below %s: session from %s (%s)", proof.Level, r.Minimum, t.Name, proof.Evidence)
-		return need
-	}
-	if r.PhishingResistant && !proof.PhishingResistant {
-		need.Reason = fmt.Sprintf("these workloads need a phishing-resistant authenticator: session from %s (%s)", t.Name, proof.Evidence)
-		return need
-	}
-	if r.MaxAge > 0 {
-		age := r.MaxAge
-		switch {
-		case s.AuthTime.IsZero():
-			need.Reason, need.MaxAge = fmt.Sprintf("these workloads need a sign-in within %s; %s didn't say when the user authenticated", age, t.Name), age
-			return need
-		case now.Sub(s.AuthTime) > age:
-			need.Reason, need.MaxAge = fmt.Sprintf("signed in %s ago at %s; these workloads need within %s", now.Sub(s.AuthTime).Round(time.Minute), t.Name, age), age
-			return need
-		}
-	}
-	return Decision{Allow: true, Reason: fmt.Sprintf("%s via %s (%s)", proof.Level, t.Name, proof.Evidence)}
-}
-
-// stepUp: the acr to ask the active IdP for, when one of its mapped acr
-// values meets the rules; empty when none can (re-authenticating there
-// won't help).
-func stepUp(r Rules, chain []v1.Tier, active string) string {
-	for _, t := range chain {
-		if t.Name != active || t.Assurance == nil {
-			continue
-		}
-		if ok, _ := Allowed(r, t); !ok {
-			return ""
-		}
-		best, bestLevel := "", Level(0)
-		for _, l := range t.Assurance.Levels {
-			lv := Parse(l.Level)
-			if l.ACR == "" || lv < r.Minimum || (r.PhishingResistant && !l.PhishingResistant) {
-				continue
-			}
-			if best == "" || lv < bestLevel { // the least that meets it
-				best, bestLevel = l.ACR, lv
-			}
-		}
-		return best
-	}
-	return ""
 }
 
 func orNone(s string) string {
