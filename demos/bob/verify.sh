@@ -375,6 +375,9 @@ gate_says() {  # gate_says <token> <url> [tool]: "<status> <x-continuity-decisio
 if ! K get ns sv-contingency >/dev/null 2>&1 || ! K get idc sterling-vance -n sv-identity -o json | jq -e '.spec.tiers | any(.name == "contingency")' >/dev/null; then
   skipped "failover to a weaker IdP: S&V's contingency IdP isn't in ENTERPRISE_IDP"
 else
+  # a fresh sign-in at S&V's own Keycloak: the session from before the outage
+  # below (Bob's first token may have expired by now; they live 5 minutes)
+  BOB=$(sso_token bob bob-demo | jq -r '.access_token // empty') || BOB=""
   expect_res '^aal2 pwd otp$' "Bob's sign-in at S&V's own Keycloak took a second factor: idp_acr aal2, idp_amr pwd otp" "$(claim "$BOB" idp_acr) $(claim "$BOB" idp_amr)"
   expect_res '^200 allow advisor-workspace: AAL2 via keycloak' "advisor-workspace (Critical, AAL2): Bob's agent allowed" "$(gate_says "$BOB" "$GW")"
   expect_res '^200 allow ledgerline-research: AAL2 via keycloak' "ledgerline-research (High, AAL2): allowed before anything is exchanged" "$(gate_says "$BOB" "$XAA")"
