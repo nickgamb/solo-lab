@@ -50,7 +50,7 @@ spec:
         resources:
           requests: {cpu: 20m, memory: 96Mi}
           limits: {memory: 256Mi}
-        securityContext: {runAsNonRoot: true, runAsUser: 65532, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+        securityContext: {runAsNonRoot: true, runAsUser: 65532, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, seccompProfile: {type: RuntimeDefault}}
       volumes:
       - {name: ca, configMap: {name: lab-ca-bundle}}
       - {name: keys, emptyDir: {medium: Memory}}
