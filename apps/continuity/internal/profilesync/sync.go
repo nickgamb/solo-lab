@@ -287,8 +287,12 @@ func syncUser(ctx context.Context, b Broker, u keycloak.User, primary *IdP, fail
 		}
 	}
 
-	// the primary's groups (or roles), into the broker's shape groups
+	// the primary's groups (or roles), into the broker's shape groups. Only
+	// what the primary said this run goes out to the failovers: a primary
+	// with no directory, or none that lists groups, says nothing about
+	// them, and the failovers keep their own.
 	shapeNames := slices.Sorted(maps.Keys(groups))
+	known := false
 	if primary != nil && inPrimary && len(groups) > 0 {
 		if gr, ok := primary.Dir.(GroupReader); ok {
 			if pid, err := locate(ctx, b, id, email(u), *primary); err == nil {
@@ -297,15 +301,18 @@ func syncUser(ctx context.Context, b Broker, u keycloak.User, primary *IdP, fail
 					fail("%s: groups: %v", primary.Name, err)
 				} else if changed, err := b.SetUserGroups(ctx, id, intersect(have, shapeNames), groups); err != nil {
 					fail("broker groups: %v", err)
-				} else if changed {
-					res.Updated++
-					logf("broker groups updated", "user", id)
+				} else {
+					known = true
+					if changed {
+						res.Updated++
+						logf("broker groups updated", "user", id)
+					}
 				}
 			}
 		}
 	}
 	var brokerGroups []string
-	if len(groups) > 0 {
+	if known {
 		have, err := b.UserGroups(ctx, id)
 		if err != nil {
 			fail("broker groups: %v", err)
@@ -340,7 +347,9 @@ func syncUser(ctx context.Context, b Broker, u keycloak.User, primary *IdP, fail
 			res.Created++
 			logf("created at failover", "user", id, "idp", f.Name)
 			verify(ctx, f, fid, want, fail)
-			writeGroups(ctx, f, fid, brokerGroups, shapeNames, fail)
+			if known {
+				writeGroups(ctx, f, fid, brokerGroups, shapeNames, fail)
+			}
 			if err := f.Dir.Enroll(ctx, fid); err != nil {
 				res.Notes = append(res.Notes, fmt.Sprintf("user %s: created at %s, no credential enrollment sent: %v", id, f.Name, err))
 			}
@@ -351,7 +360,9 @@ func syncUser(ctx context.Context, b Broker, u keycloak.User, primary *IdP, fail
 			fail("%s: %v", f.Name, err)
 			continue
 		}
-		writeGroups(ctx, f, fid, brokerGroups, shapeNames, fail)
+		if known {
+			writeGroups(ctx, f, fid, brokerGroups, shapeNames, fail)
+		}
 		rec, err := f.Dir.User(ctx, fid)
 		if err != nil {
 			fail("%s: %v", f.Name, err)

@@ -369,7 +369,9 @@ IdP:
   gone at the next sign-in. A namespaced claim (Auth0's) is read whole.
 - **In the directory sync.** The primary's groups (or roles) are read into
   the broker, by name, and written out to each failover, so that the next
-  IdP in the chain asserts the same groups after a failover.
+  IdP in the chain asserts the same groups after a failover. A primary with
+  no directory, or none that lists groups, says nothing about them: the
+  failovers keep their own.
 
 The broker's own groups beyond the shape are left alone: `platform-admins`,
 its break-glass accounts, never comes from an IdP. The sync creates the
