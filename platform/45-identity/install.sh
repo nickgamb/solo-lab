@@ -21,66 +21,72 @@ ok "STRICT mTLS, identity-scoped ALLOWs and no-internet for S&V's namespaces"
 
 step "Sterling & Vance Keycloak $KEYCLOAK_VERSION (sv-identity)"
 # S&V's broker authenticates to upstream IdPs with its own key
-# (private_key_jwt): a PS256 realm key used for nothing else. Client
-# xaa-egress (S&V's egress) authenticates with the egress's key; the realm
-# holds only its certificate. Both stable, .lab/keys.
+# (private_key_jwt): a PS256 realm key used for nothing else, stable
+# (.lab/keys).
 . "$LAB_ROOT/scripts/idp.sh"
 realm_signing_key sv-broker-client
-realm_signing_key sv-egress-client
 secret_apply sv-identity kc-secrets \
   SV_BROKER_CLIENT_KEY="$(pem_body "$LAB_STATE/keys/sv-broker-client.key")" \
   SV_BROKER_CLIENT_CERT="$(pem_body "$LAB_STATE/keys/sv-broker-client.crt")" \
-  SV_EGRESS_CLIENT_CERT="$(pem_body "$LAB_STATE/keys/sv-egress-client.crt")" \
-  SV_EGRESS_CLIENT_KID="$(jwks_of "$LAB_STATE/keys/sv-egress-client.crt" | jq -r '.keys[0].kid')" \
   KC_BOOTSTRAP_ADMIN_USERNAME=admin \
   KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret SV_KC_ADMIN_PASSWORD)" \
   SV_KAGENT_CLIENT_SECRET="$(lab_secret SV_KAGENT_CLIENT_SECRET)" \
-  SV_MCP_WAYPOINT_CLIENT_SECRET="$(lab_secret SV_MCP_WAYPOINT_CLIENT_SECRET)" \
+  SV_AI_GATEWAY_CLIENT_SECRET="$(lab_secret SV_AI_GATEWAY_CLIENT_SECRET)" \
+  MCP_TOKEN_LIFETIME_S="$MCP_TOKEN_LIFETIME_S" \
   SV_AGENTREGISTRY_CLIENT_SECRET="$(lab_secret SV_AGENTREGISTRY_CLIENT_SECRET)" \
   SV_AGENTREGISTRY_CATALOG_SECRET="$(lab_secret SV_AGENTREGISTRY_CATALOG_SECRET)" \
   SV_CLIENT_AT_LEDGERLINE="$SV_CLIENT_AT_LEDGERLINE" \
   SV_CONTINUITY_CLIENT_SECRET="$(lab_secret SV_CONTINUITY_CLIENT_SECRET)" \
   SV_CONTINUITY_SYNC_CLIENT_SECRET="$(lab_secret SV_CONTINUITY_SYNC_CLIENT_SECRET)" \
   SV_OBSERVATORY_CLIENT_SECRET="$(lab_secret SV_OBSERVATORY_CLIENT_SECRET)"
-# S&V's IdP is the enterprise IdP for Cross App Access, so it must ISSUE
-# ID-JAGs: Keycloak 26.7.5 + keycloak/keycloak PR #49998 (tools/keycloak-idjag),
-# tagged by a hash of its sources. Back to stock KC_IMAGE once that PR ships
+# S&V's broker is the enterprise IdP for Cross App Access: it vouches for
+# every S&V user to the apps they reach that way (Ledgerline), so it must
+# ISSUE ID-JAGs: Keycloak 26.7.5 +
+# keycloak/keycloak PR #49998 (tools/keycloak-idjag), tagged by a hash of its
+# sources. Back to stock KC_IMAGE once that PR ships
 # upstream.
 KC_IDJAG=$(kc_idjag_image)
 lab_image "$KC_IDJAG" tools/keycloak-idjag/build.sh
 # Its realm names Ledgerline's authorization server as the ID-JAG audience
-# (RESOURCE_AS) and lets client xaa-egress read users' stored tokens only for
-# upstreams that issue ID-JAGs (ENTERPRISE_IDP), through the Identity
-# Brokering API v2.
-XAA_UPSTREAMS=$(xaa_upstreams_attr); export XAA_UPSTREAMS
+# (RESOURCE_AS).
 KC_IMAGE="localhost:${LAB_REGISTRY_PORT}/$KC_IDJAG" \
   deploy_keycloak sv-identity "$SV_DOMAIN" https-sterling "$D/realm-sterling-vance.json" \
-  token-exchange-standard,identity-assertion-jwt,identity-brokering-api:v2
+  token-exchange-standard,identity-assertion-jwt
 wait_for "https://idp.$SV_DOMAIN discovery" 30 3 \
   sh -c "curl -sf --cacert '$LAB_CA_DIR/ca.crt' https://idp.$SV_DOMAIN/realms/sterling-vance/.well-known/openid-configuration >/dev/null"
 ok "issuer https://idp.$SV_DOMAIN/realms/sterling-vance  (admin: see .lab/secrets.env)"
+apply_tmpl "$D/gateway-grants.yaml"   # the firm's gateway may use the broker
+# The broker keeps its accounts in memory (a restart, as on a realm change,
+# starts it empty): the directory sync (layer 47) makes them again from the
+# primary IdP now, not at its next scheduled run.
+if K get cronjob sterling-vance-profile-sync -n sv-identity >/dev/null 2>&1; then
+  job="sterling-vance-profile-sync-identity-$(date -u +%Y%m%d%H%M%S)"
+  K create job "$job" -n sv-identity --from=cronjob/sterling-vance-profile-sync >/dev/null
+  if K wait job "$job" -n sv-identity --for=condition=Complete --timeout=180s >/dev/null 2>&1; then
+    ok "directory sync: $(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.sync.message}')"
+  else
+    warn "directory sync didn't finish (kubectl logs -n sv-identity job/$job)"
+  fi
+fi
 
 step "Sterling & Vance workforce IdP, Keycloak $KEYCLOAK_VERSION (sv-workforce)"
 # The Keycloak S&V runs itself (keycloak in ENTERPRISE_IDP), apart from the
-# broker: its own accounts, sessions and keys. It issues ID-JAGs for the
-# broker's sign-ins like any upstream that vouches. S&V's client there
-# (sterling-vance-broker) takes the broker's and the egress's keys;
-# continuity-directory lets the profile sync read users.
+# broker: its own accounts, sessions and keys. S&V's client there
+# (sterling-vance-broker) takes the broker's key; continuity-directory lets
+# the profile sync read users.
 # The broker's sign-ins there take a second factor (acr aal2): employees'
 # authenticator-app (TOTP) seeds, .lab/secrets.env (make totp prints a code).
 secret_apply sv-workforce kc-secrets \
   KC_BOOTSTRAP_ADMIN_USERNAME=admin \
   KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret SV_WORKFORCE_KC_ADMIN_PASSWORD)" \
   SV_WORKFORCE_DIRECTORY_SECRET="$(lab_secret SV_WORKFORCE_DIRECTORY_SECRET)" \
-  SV_CLIENT_AT_LEDGERLINE="$SV_CLIENT_AT_LEDGERLINE" \
   SV_WORKFORCE_TOTP_BOB="$(lab_secret SV_WORKFORCE_TOTP_BOB)" \
   SV_WORKFORCE_TOTP_CAROL="$(lab_secret SV_WORKFORCE_TOTP_CAROL)" \
   SV_WORKFORCE_TOTP_DANA="$(lab_secret SV_WORKFORCE_TOTP_DANA)"
 mkdir -p "$LAB_STATE/realm"
 workforce_realm "$D/realm-workforce.json" >"$LAB_STATE/realm/realm-workforce.json"
-KC_HOST=login KC_IMAGE="localhost:${LAB_REGISTRY_PORT}/$KC_IDJAG" \
-  deploy_keycloak sv-workforce "$SV_DOMAIN" https-sterling "$LAB_STATE/realm/realm-workforce.json" \
-  token-exchange-standard,identity-assertion-jwt
+KC_HOST=login \
+  deploy_keycloak sv-workforce "$SV_DOMAIN" https-sterling "$LAB_STATE/realm/realm-workforce.json"
 wait_for "https://login.$SV_DOMAIN discovery" 30 3 \
   sh -c "curl -sf --cacert '$LAB_CA_DIR/ca.crt' https://login.$SV_DOMAIN/realms/workforce/.well-known/openid-configuration >/dev/null"
 ok "issuer https://login.$SV_DOMAIN/realms/workforce  (bob / bob-demo + make totp; admin: see .lab/secrets.env)"
@@ -107,9 +113,10 @@ step "Client secrets, in the namespace that uses each"
 secret_apply kagent kagent-oidc client-secret="$(lab_secret SV_KAGENT_CLIENT_SECRET)"
 # kagent's back channel for Cross App Access (the ID token, the ID-JAG):
 # Keycloak issues an ID-JAG only for the app the user signed into, so the
-# egress acts as kagent, the same application as the edge. Reading users'
-# stored upstream tokens takes client xaa-egress and the egress's own key.
+# egress acts as kagent, the same application as the edge.
 secret_apply agentgateway-system kagent-client clientSecret="$(lab_secret SV_KAGENT_CLIENT_SECRET)"
-# the sv-mcp waypoint's own token-exchange client identity
-secret_apply sv-mcp mcp-waypoint-oidc clientSecret="$(lab_secret SV_MCP_WAYPOINT_CLIENT_SECRET)"
-ok "kagent/kagent-oidc  agentgateway-system/kagent-client  sv-mcp/mcp-waypoint-oidc"
+# the ai-gateway's own client, for its exchange at the broker on OSS (on
+# Enterprise agentgateway's STS mints MCP servers' tokens instead)
+secret_apply agentgateway-system ai-gateway-oidc clientSecret="$(lab_secret SV_AI_GATEWAY_CLIENT_SECRET)"
+K delete secret mcp-waypoint-oidc -n sv-mcp --ignore-not-found >/dev/null   # earlier labs: the sv-mcp waypoint's client
+ok "kagent/kagent-oidc  agentgateway-system/kagent-client  agentgateway-system/ai-gateway-oidc"

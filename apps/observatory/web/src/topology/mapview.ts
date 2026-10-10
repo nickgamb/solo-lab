@@ -87,7 +87,7 @@ function lensed(lens: Lens, nodes: LabNode[], edges: LabEdge[]): { nodes: LabNod
       for (const id of level) for (const e of edges) {
         if (e.source !== id || !['http', 'mesh', 'mcp'].includes(e.kind)) continue
         const t = byId.get(e.target)
-        if (!t || t.kind === 'ui' || t.kind === 'idp' || t.kind === 'db') continue
+        if (!t || t.kind === 'ui' || t.kind === 'idp' || t.kind === 'fabric' || t.kind === 'db') continue
         // through the entry gateway, only on to the gateways and tools it fronts
         const src = byId.get(id)
         if (src?.kind === 'gateway' && src.products?.includes('kgateway') && !['gateway', 'waypoint', 'mcp'].includes(t.kind)) continue
@@ -211,7 +211,7 @@ function throughEdge(nodes: LabNode[], edges: LabEdge[]): LabEdge[] {
     }
   }
   // routes to services that other services call through the edge: shown by the badge on those calls
-  return out.filter(e => !(e.source === gw.id && reached.has(e.target) && !['ui', 'idp'].includes(byId.get(e.target)?.kind ?? '')))
+  return out.filter(e => !(e.source === gw.id && reached.has(e.target) && !['ui', 'idp', 'fabric'].includes(byId.get(e.target)?.kind ?? '')))
 }
 
 // throughPools: Substrate routes each call to the worker running the agent,

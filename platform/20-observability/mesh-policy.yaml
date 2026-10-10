@@ -19,7 +19,6 @@ spec:
         # gateways and waypoints (access logs, traces)
         - cluster.local/ns/kgateway-system/sa/edge
         - cluster.local/ns/agentgateway-system/sa/ai-gateway
-        - cluster.local/ns/sv-mcp/sa/mcp-waypoint
         - cluster.local/ns/sv-egress/sa/egress-waypoint
         - cluster.local/ns/meridian/sa/meridian
         - cluster.local/ns/meridian/sa/waypoint
@@ -40,8 +39,8 @@ spec:
         principals:
         - cluster.local/ns/kgateway-system/sa/edge
         - cluster.local/ns/agentgateway-system/sa/ai-gateway
-        - cluster.local/ns/sv-mcp/sa/mcp-waypoint
         - cluster.local/ns/meridian/sa/meridian
+        - cluster.local/ns/ledgerline/sa/mcp-gateway
     to: [{operation: {ports: ["14317", "14318"]}}]
 ---
 apiVersion: security.istio.io/v1

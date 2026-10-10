@@ -89,8 +89,8 @@ spec:
     backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: research}]
 ---
 # Who may reach it: the internet, through the edge, and nothing else in the
-# cluster. A token is checked when there is one (and kept: the server checks
-# it again); the catalog itself is public.
+# cluster. Every request needs a token from Ledgerline's AS (kept: the server
+# checks it again); without one, a 401 and nothing more.
 apiVersion: ${AGW_POLICY_API}
 kind: ${AGW_POLICY_KIND}
 metadata: {name: research-callers, namespace: ledgerline}
@@ -98,7 +98,7 @@ spec:
   targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: research}]
   traffic:
     jwtAuthentication:
-      mode: Optional
+      mode: Strict
       preserveToken: true
       providers:
       - issuer: https://idp.${LEDGERLINE_DOMAIN}/realms/ledgerline
@@ -114,8 +114,9 @@ spec:
         matchExpressions:
         - 'source.identity.namespace == "kgateway-system" && source.identity.serviceAccount == "edge"'
 ---
-# What a token may do, per tool: anyone may list the catalog; research needs
-# scope research:read; account_info needs a signed-in Ledgerline subject.
+# What a token may do, per tool: any Ledgerline token may list the tools;
+# research needs scope research:read; account_info a signed-in Ledgerline
+# subject.
 apiVersion: ${AGW_POLICY_API}
 kind: ${AGW_POLICY_KIND}
 metadata: {name: research-tools, namespace: ledgerline}

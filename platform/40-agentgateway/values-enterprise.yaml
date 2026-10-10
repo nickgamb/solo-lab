@@ -1,3 +1,20 @@
 licensing:
   createSecret: true
   licenseKey: ${SOLO_AGW_LICENSE_KEY}
+# The STS: the token an MCP server accepts is minted here, at the gateway's
+# request, per call, for that server alone (MCP_TOKEN_ISSUER, config/lab.env).
+# It trusts S&V's broker's tokens as the subject and copies the user's claims
+# the gateways and servers decide on; only gateways may reach it (mesh
+# policy, platform/80-mesh-policy).
+tokenExchange:
+  enabled: true
+  issuer: ${MCP_TOKEN_ISSUER}
+  tokenExpiration: ${MCP_TOKEN_LIFETIME}
+  allowedSubjectClaims: [groups, email, preferred_username, idp, idp_acr, idp_amr, idp_auth_time]
+  subjectValidators:
+  - validatorType: remote
+    remoteConfig: {url: "http://keycloak.sv-identity.svc/realms/sterling-vance/protocol/openid-connect/certs"}
+  actorValidators:
+  - validatorType: k8s
+  apiValidators:
+  - validatorType: k8s

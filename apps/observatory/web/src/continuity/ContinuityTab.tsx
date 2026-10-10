@@ -63,9 +63,9 @@ function Continuity({ lab, ic, items, setPick }: {
   const nodes = useMemo(() => new Map(lab.graph?.nodes.map(n => [n.id, n]) ?? []), [lab.graph])
   const key = instanceKey(ic)
   const paths = useMemo(() => (lab.continuity?.paths ?? []).filter(p => p.instance === key), [lab.continuity?.paths, key])
-  const brokerNode = paths[0] ? nodes.get(paths[0].broker) : undefined
-  const egress = ic.spec.egress
-    ? lab.graph?.nodes.find(n => n.namespace === ic.spec.egress!.namespace && n.label === ic.spec.egress!.waypoint) : undefined
+  const resources = useMemo(() => (lab.continuity?.resources ?? []).filter(p => p.instance === key), [lab.continuity?.resources, key])
+  const groups = useMemo(() => new Map(lab.graph?.groups.map(g => [g.id, g]) ?? []), [lab.graph])
+  const brokerID = paths[0]?.broker ?? resources[0]?.broker
   const targetName = target?.displayName ?? target?.name ?? ''
   const host = (u?: string) => { try { return u ? new URL(u).host : '' } catch { return u ?? '' } }
 
@@ -76,10 +76,11 @@ function Continuity({ lab, ic, items, setPick }: {
     catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
   }
 
-  // Left to right: every app that signs people in through this broker, the
-  // broker (the issuer everything trusts), the firm's egress (where an
-  // external IdP's back-channel leaves the lab, and where an outage is cut),
-  // and the upstream tiers in failover order.
+  // Left to right: the resources S&V's gateways admit the fabric's tokens to
+  // (another party's, such as a SaaS, as one tile) and the apps people sign
+  // in to; the gateways every path comes in through; the broker attached to
+  // them; and the IdPs in failover order. An outage is cut at the firm's
+  // egress, on the wire to that IdP.
   const { rfNodes, rfEdges } = useMemo(() => {
     const rfNodes: Node[] = []
     const rfEdges: Edge[] = []
@@ -99,26 +100,63 @@ function Continuity({ lab, ic, items, setPick }: {
     const wire = (s: string, t: string, data: Partial<FlowData>) => rfEdges.push({ id: `${s}>${t}`, source: s, target: t, type: 'flow',
       sourceHandle: 'o0', targetHandle: 'i0', data: { kind: 'oidc', ...data } as FlowData,
       markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: data.state === 'down' ? 'var(--bad)' : data.state === 'active' ? 'var(--ok)' : 'var(--text-subtle)' } })
-    const broker = paths[0]?.broker
+    const broker = brokerID
     const apps = [...new Set(paths.map(p => p.app))]
+    // the firm's own resources one by one; another party's as one tile
+    const home = broker ? nodes.get(broker)?.group : undefined
+    const res = new Map<string, { n: LabNode; gateways: string[] }>()
+    for (const p of resources) {
+      const n = nodes.get(p.resource)
+      if (!n || !nodes.get(p.gateway)) continue
+      const own = !n.group || n.group === home
+      const id = own ? n.id : `party:${n.group}`
+      let r = res.get(id)
+      if (!r) {
+        const g = groups.get(n.group)
+        r = { n: own ? n : { id, kind: 'external', label: g?.label ?? n.group, group: n.group, status: 'ok', sub: g?.domain, summary: {}, products: [] }, gateways: [] }
+        res.set(id, r)
+      }
+      if (!r.gateways.includes(p.gateway)) r.gateways.push(p.gateway)
+    }
+    const gateways = [...new Set([...res.values()].flatMap(r => r.gateways))]
     // the IdPs only: the broker's break-glass accounts aren't a hop on the map
     const idps = tiers.filter(t => t.type === 'oidc')
-    const rows = Math.max(apps.length, idps.length, 1)
+    const left = res.size + apps.length
+    const rows = Math.max(left, idps.length, gateways.length, 1)
     const mid = (rows - 1) / 2
-    apps.forEach((id, i) => {
-      tile(id, nodes.get(id), 0, mid - (apps.length - 1) / 2 + i, { fog: !signInOK })
-      if (broker) wire(id, broker, { state: signInOK ? 'active' : 'down' })
-    })
-    if (broker) tile(broker, nodes.get(broker), 1, mid, { highlight: signInOK ? 'ok' : 'bad' })
-    const tierRow = (i: number) => mid - (idps.length - 1) / 2 + i
-    const external = idps.map((t, i) => ({ t, i }))
-    const egressRow = external.length ? external.reduce((a, x) => a + tierRow(x.i), 0) / external.length : mid
-    const egressCut = external.some(x => cuts.has(x.t.name))
-    const egressLive = external.some(x => x.t.name === active)
-    if (egress && broker && external.length) {
-      tile(egress.id, egress, 2, egressRow, { highlight: egressCut ? 'bad' : egressLive ? 'ok' : undefined })
-      wire(broker, egress.id, { state: egressLive ? 'active' : 'standby', rps: egressLive ? 1 : 0 })
+    const entryCol = paths.some(p => p.entry && nodes.get(p.entry))
+    const col = gateways.length || entryCol ? { broker: 2, idp: 3 } : { broker: 1, idp: 2 }
+    const rowOf = new Map<string, number>()
+    let row = mid - (left - 1) / 2
+    for (const [id, r] of res) {
+      rowOf.set(id, row)
+      tile(id, r.n, 0, row++, { fog: !signInOK, caption: id.startsWith('party:') ? r.n.sub : undefined })
+      for (const gw of r.gateways) wire(id, gw, { kind: 'mcp', state: signInOK ? 'active' : 'down' })
     }
+    // apps people sign in to come in through the edge, where it signs them in
+    const entry = paths.find(p => p.entry && nodes.get(p.entry))?.entry
+    for (const id of apps) {
+      rowOf.set(id, row)
+      tile(id, nodes.get(id), 0, row++, { fog: !signInOK })
+      const via = entry ?? broker
+      if (via) wire(id, via, { state: signInOK ? 'active' : 'down' })
+    }
+    // each gateway level with what comes in through it
+    const taken = new Set<number>()
+    const place = (gw: string, from: string[]) => {
+      const rs = from.map(id => rowOf.get(id) ?? mid)
+      let r = rs.reduce((a, x) => a + x, 0) / Math.max(rs.length, 1)
+      while (taken.has(r)) r += 1
+      taken.add(r)
+      tile(gw, nodes.get(gw), 1, r, { highlight: signInOK ? 'ok' : 'bad' })
+      if (broker) wire(gw, broker, { state: signInOK ? 'active' : 'down' })
+    }
+    for (const gw of gateways) place(gw, [...res].filter(([, r]) => r.gateways.includes(gw)).map(([id]) => id))
+    if (entry && apps.length && !gateways.includes(entry)) place(entry, apps)
+    // the broker, drawn as the identity fabric (the graph marks it)
+    const fabric = broker ? nodes.get(broker) : undefined
+    if (broker && fabric) tile(broker, fabric, col.broker, mid, { highlight: signInOK ? 'ok' : 'bad', caption: fabric.sub })
+    const tierRow = (i: number) => mid - (idps.length - 1) / 2 + i
     idps.forEach((t, i) => {
       const st = status.get(t.name)
       const isActive = t.name === active
@@ -127,13 +165,12 @@ function Continuity({ lab, ic, items, setPick }: {
       const n: LabNode = { id: `tier:${t.name}`, kind: 'idp', label: `${i + 1}. ${t.displayName ?? t.name}`, group: '',
         status: isActive ? 'ok' : down ? 'down' : 'idle', sub: host(t.oidc?.issuer), summary: {}, products: [] }
       const off = st?.configured === false || t.enabled === false || !!t.drain
-      tile(n.id, n, 3, tierRow(i), { fog: !isActive && !down && off, highlight: isActive ? 'ok' : down ? 'bad' : undefined, outage: isCut, caption: n.sub })
-      const from = egress ? egress.id : broker
-      if (from) wire(from, n.id, { state: isActive ? 'active' : down ? 'down' : 'standby', rps: isActive ? 1 : 0,
+      tile(n.id, n, col.idp, tierRow(i), { fog: !isActive && !down && off, highlight: isActive ? 'ok' : down ? 'bad' : undefined, outage: isCut, caption: n.sub })
+      if (broker) wire(broker, n.id, { state: isActive ? 'active' : down ? 'down' : 'standby', rps: isActive ? 1 : 0,
         cut: isCut, label: isCut ? 'network cut' : undefined })
     })
     return { rfNodes, rfEdges }
-  }, [tiers, status, active, cuts, nodes, paths, egress])
+  }, [tiers, status, active, cuts, nodes, paths, resources, groups, brokerID])
 
   const names = useMemo(() => new Map(lab.graph?.nodes.map(n => [n.id, n.label]) ?? []), [lab.graph])
   // this instance's identity traffic: its failovers and outages, and the
@@ -189,7 +226,7 @@ function Continuity({ lab, ic, items, setPick }: {
           </ReactFlow>
           <TierHealth tiers={tiers} status={status} />
         </div>
-        <RuleBuilder key={key} ic={ic} broker={brokerNode?.label ?? 'the broker'} profiles={profiles} />
+        <RuleBuilder key={key} ic={ic} broker="the identity fabric" profiles={profiles} />
       </div>
       <div className="cont-foot">
         <div className="cont-col">

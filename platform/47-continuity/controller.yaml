@@ -101,8 +101,8 @@ spec:
   validationActions: [Deny]
 ---
 # The sync records its runs in status.sync. Everything else in status (which
-# IdP is active, above all) is the controller's alone, and the egress reads
-# it to decide who vouches.
+# IdP is active, above all) is the controller's alone, and the assurance gate
+# reads it to refuse sessions from an IdP that is no longer active.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata: {name: continuity-sync-status}

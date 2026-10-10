@@ -4,62 +4,78 @@
 # agentgateway makes and checks every token request itself (crossAppAccess).
 #
 #   requesting app   kagent (the app Bob signed into); the egress is its back
-#                    channel. Users' stored upstream tokens: client xaa-egress
-#   subject          Bob's ID token from the enterprise IdP that vouches for
-#                    him (idtoken-exchange, below)
-#   enterprise IdP   the IdP of Bob's session when it issues ID-JAGs, else
-#                    S&V's broker: ID token -> ID-JAG for the approved
-#                    connection (scope xaa-ledgerline), S&V authenticating as
-#                    its client there (one backend per IdP: xaa/idp.yaml)
+#                    channel
+#   subject          Bob's ID token from S&V's broker, for the access token
+#                    the gateway verified (idtoken-exchange, below)
+#   enterprise IdP   S&V's broker, for every S&V user whichever IdP signed
+#                    them in: ID token -> ID-JAG for the approved connection
+#                    (scope xaa-ledgerline). Ledgerline trusts this one issuer;
+#                    S&V's IdP chain and its failover stay S&V's own business
 #   resource AS      Ledgerline's (RESOURCE_AS): ID-JAG -> Ledgerline access
 #                    token (RFC 7523), S&V authenticating with private_key_jwt
 #
 # Both token requests go out through ai-gateway's own routes (/xaa-legs/...),
 # so the gateway's policies apply to them: the subject token and the ID-JAG
-# are verified against the IdP that issued them, each request is held to this
-# connection, and the access log keeps their claims, never the tokens. Only
-# ai-gateway may call those routes.
+# are verified against the broker, each request is held to this connection,
+# and the access log keeps their claims, never the tokens. Only ai-gateway may
+# call those routes.
 #
-# Discovery lane: the kagent controller (no user) may list Ledgerline's public
-# tool catalog; it can never obtain a Ledgerline token.
-#
-# Before routing: the IdP that vouches for the caller, from the verified token
-# alone. x-vouching-idp is set on every request, replacing any value the
-# caller sent; the XAA route picks that IdP's backend by it. Permissive: a
-# request without an S&V token is left to its route's own policy.
-apiVersion: ${AGW_POLICY_API}
-kind: ${AGW_POLICY_KIND}
-metadata: {name: xaa-vouching-idp, namespace: agentgateway-system}
+# There is no lane without a user: Ledgerline lists nothing without its own
+# token, and only a user's call gets one.
+apiVersion: ${AGW_BACKEND_API}
+kind: ${AGW_BACKEND_KIND}
+metadata: {name: xaa-ledgerline, namespace: agentgateway-system}
 spec:
-  targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: ai-gateway}]
-  traffic:
-    phase: PreRouting
-    jwtAuthentication:
-      mode: Permissive
-      preserveToken: true
-      providers:
-      - issuer: https://idp.${SV_DOMAIN}/realms/sterling-vance
-        audiences: [ai-gateway]
-        jwks:
-          remote:
-            backendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}
-            jwksPath: /realms/sterling-vance/protocol/openid-connect/certs
-            cacheDuration: 5m
-    transformation:
-      request:
-        set:
-        # the session's IdP when it issues ID-JAGs (ENTERPRISE_IDP), else
-        # S&V's broker: the same rule idtoken-exchange follows for the ID token
-        - name: x-vouching-idp
-          value: 'has(jwt.idp) && jwt.idp in ${XAA_UPSTREAM_NAMES} ? jwt.idp : "${XAA_BROKER}"'
+  mcp:
+    targets:
+    - name: ledgerline-research
+      static:
+        host: mcp.${LEDGERLINE_DOMAIN}
+        port: 443
+        path: /mcp
+        protocol: StreamableHTTP
+        policies:
+          tls:
+            sni: mcp.${LEDGERLINE_DOMAIN}
+            caCertificateRefs: [{name: lab-ca-bundle}]
+          auth:
+            crossAppAccess:
+              subjectToken:
+                source: {header: {name: x-id-token}}
+                tokenType: IdToken
+              audience: ${LEDGERLINE_AS_ISSUER}                # Ledgerline's AS: the ID-JAG is for it alone
+              scopes: [xaa-ledgerline, research:read]     # the approved connection, requested from S&V's broker
+              accessTokenScopes: [research:read]          # what Ledgerline's token may do
+              cache: {inMemory: {maxEntries: 0}}          # a fresh ID-JAG and Ledgerline token per call
+              identityProvider:
+                backendRef: {kind: Service, name: ai-gateway, port: 80}
+                path: /xaa-legs/ledgerline/idp/token
+                clientAuth:                               # the requesting app, kagent
+                  clientId: kagent
+                  method: ClientSecretBasic
+                  secretRef: {name: kagent-client, key: clientSecret}
+              resourceAuthorizationServer:
+                backendRef: {kind: Service, name: ai-gateway, port: 80}
+                path: /xaa-legs/ledgerline/as/token
+                clientAuth:
+                  clientId: ${SV_CLIENT_AT_LEDGERLINE}     # S&V's registration at Ledgerline
+                  method: PrivateKeyJwt
+                  privateKeyJwt:
+                    alg: RS256
+                    kid: ${SV_XAA_CLIENT_KID}
+                    assertionAudience: ${LEDGERLINE_AS_ISSUER}            # the AS by its identifier (RFC 7523bis)
+                    signingKeyRef: {name: xaa-client-key, key: signingKey}
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata: {name: xaa-ledgerline, namespace: agentgateway-system}
 spec:
   parentRefs: [{name: ai-gateway, sectionName: http}]
-  # one rule per IdP that may vouch, matched by x-vouching-idp
-  rules: ${XAA_ROUTE_RULES}
+  rules:
+  - matches:
+    - path: {type: PathPrefix, value: /xaa/ledgerline}
+      headers: [{name: authorization, type: RegularExpression, value: "(?i)^bearer\\s+.+"}]
+    backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: xaa-ledgerline}]
 ---
 apiVersion: ${AGW_POLICY_API}
 kind: ${AGW_POLICY_KIND}
@@ -100,9 +116,9 @@ spec:
             {"iss": jwt.iss, "sub": jwt.sub, "idp": has(jwt.idp) ? jwt.idp : "",
              "acr": has(jwt.idp_acr) ? jwt.idp_acr : "", "amr": has(jwt.idp_amr) ? jwt.idp_amr : "",
              "auth_time": has(jwt.idp_auth_time) ? jwt.idp_auth_time : 0}
-    # The subject of the ID-JAG exchange: Bob's ID token, from the enterprise
-    # IdP that vouches for him, for the access token just verified. It
-    # replaces any x-id-token the caller sent.
+    # The subject of the ID-JAG exchange: Bob's ID token from S&V's broker,
+    # for the access token just verified. It replaces any x-id-token the
+    # caller sent.
     #
     # Why not from the agent: kagent passes an agent the caller's access token,
     # not the ID token, and neither edition has a setting to pass it. Why not
@@ -125,9 +141,56 @@ spec:
         responseBodyMode: None
         responseTrailerMode: Skip
 ---
+# ---- the IdP leg: ID token -> ID-JAG at S&V's broker ------------------------
+# Only a token exchange for an ID-JAG for Ledgerline's AS, within the
+# connection's scopes, goes out, and only for an ID token the broker issued to
+# kagent (verified).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: xaa-idp, namespace: agentgateway-system}
+spec:
+  parentRefs: [{name: ai-gateway, sectionName: http}]
+  rules:
+  - matches: [{path: {type: Exact, value: /xaa-legs/ledgerline/idp/token}, method: POST}]
+    filters:
+    - type: URLRewrite
+      urlRewrite: {hostname: keycloak.sv-identity, path: {type: ReplaceFullPath, replaceFullPath: /realms/sterling-vance/protocol/openid-connect/token}}
+    backendRefs: [{kind: Service, name: keycloak, namespace: sv-identity, port: 80}]
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: xaa-idp, namespace: agentgateway-system}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: xaa-idp}]
+  traffic:
+    buffer: {request: {maxBytes: 65536, failureMode: FailClosed}}
+    jwtAuthentication:
+      mode: Strict
+      location: {expression: 'form.decode(request.body).subject_token'}
+      providers:
+      - issuer: https://idp.${SV_DOMAIN}/realms/sterling-vance
+        audiences: [kagent]
+        jwks:
+          remote:
+            backendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}
+            jwksPath: /realms/sterling-vance/protocol/openid-connect/certs
+            cacheDuration: 5m
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+        - >-
+          source.identity.namespace == "agentgateway-system" && source.identity.serviceAccount == "ai-gateway"
+          && form.decode(request.body).with(f,
+               f.grant_type == "urn:ietf:params:oauth:grant-type:token-exchange"
+               && f.requested_token_type == "urn:ietf:params:oauth:token-type:id-jag"
+               && f.subject_token_type == "urn:ietf:params:oauth:token-type:id_token"
+               && f.audience == "${LEDGERLINE_AS_ISSUER}"
+               && f.scope.split(" ").all(s, s in ["xaa-ledgerline", "research:read"]))
+---
 # ---- the Ledgerline leg: ID-JAG -> Ledgerline access token -----------------
-# Every IdP backend redeems its ID-JAG here. The ID-JAG is verified against
-# the IdP that issued it (signature, iss, aud Ledgerline's AS, exp, sub), then
+# The ID-JAG is verified against S&V's broker (signature, iss, aud
+# Ledgerline's AS, exp, sub), then
 # held to this connection: typ oauth-id-jag+jwt, client_id S&V's client at
 # Ledgerline, at most 300 s, scopes within the connection's and the OIDC
 # identity scopes an IdP adds (openid, profile, email). The client assertion
@@ -154,7 +217,15 @@ spec:
     jwtAuthentication:
       mode: Strict
       location: {expression: 'form.decode(request.body).assertion'}
-      providers: ${XAA_IDJAG_PROVIDERS}
+      providers:
+      - issuer: https://idp.${SV_DOMAIN}/realms/sterling-vance
+        audiences: [${LEDGERLINE_AS_ISSUER}]
+        validation: {requiredClaims: [aud, exp, sub]}
+        jwks:
+          remote:
+            backendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}
+            jwksPath: /realms/sterling-vance/protocol/openid-connect/certs
+            cacheDuration: 5m
     authorization:
       action: Allow
       policy:
@@ -166,79 +237,15 @@ spec:
                json(string(base64.decode(h.replace("-", "+").replace("_", "/") + ["", "===", "==", "="][size(h) % 4]))).typ)
              == "oauth-id-jag+jwt"
           && jwt.client_id == "${SV_CLIENT_AT_LEDGERLINE}"
-          && int(jwt.exp) - int(jwt.iat) <= 300
+          && int(jwt.exp) - int(jwt.iat) <= ${MCP_TOKEN_LIFETIME_S}
           && jwt.scope.split(" ").all(s, s in ["xaa-ledgerline", "research:read", "openid", "profile", "email"])
 ---
-# ---- discovery lane: kagent controller lists Ledgerline's public catalog ---------
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata: {name: xaa-ledgerline-discovery, namespace: agentgateway-system}
-spec:
-  parentRefs: [{name: ai-gateway, sectionName: http}]
-  rules:
-  - matches: [{path: {type: PathPrefix, value: /xaa/ledgerline}}]
-    # no user on this lane: nothing that looks like a credential goes on
-    filters:
-    - type: RequestHeaderModifier
-      requestHeaderModifier: {remove: [authorization, x-id-token]}
-    backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: xaa-ledgerline-catalog}]
----
-apiVersion: ${AGW_BACKEND_API}
-kind: ${AGW_BACKEND_KIND}
-metadata: {name: xaa-ledgerline-catalog, namespace: agentgateway-system}
-spec:
-  mcp:
-    targets:
-    - name: ledgerline-research
-      static:
-        host: mcp.${LEDGERLINE_DOMAIN}
-        port: 443
-        path: /mcp
-        protocol: StreamableHTTP
-        policies:
-          tls:
-            sni: mcp.${LEDGERLINE_DOMAIN}
-            caCertificateRefs: [{name: lab-ca-bundle}]
----
-apiVersion: ${AGW_POLICY_API}
-kind: ${AGW_POLICY_KIND}
-metadata: {name: xaa-ledgerline-discovery, namespace: agentgateway-system}
-spec:
-  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: xaa-ledgerline-discovery}]
-  traffic:
-    authorization:
-      action: Allow
-      policy:
-        matchExpressions:
-        - 'source.identity.namespace == "kagent" && source.identity.serviceAccount == "kagent-controller"'
----
 # ---- idtoken-exchange: ai-gateway's external processor (apps/idtoken-exchange)
-# The enterprise IdPs that may vouch for Bob (OPS, scripts/idp.sh xaa_env) and
-# S&V's client at each (the egress's key). The IdP of Bob's session vouches
-# while S&V's identity continuity has it active; S&V's broker vouches for a
-# sign-in through an IdP that doesn't issue ID-JAGs, and for its break-glass
-# accounts. It reads Bob's stored upstream tokens from the broker as
-# xaa-egress, which the broker allows for those IdPs only (Identity Brokering
-# API v2).
+# Bob's ID token from S&V's broker, as kagent (the requesting app).
 apiVersion: v1
 kind: ServiceAccount
 metadata: {name: idtoken-exchange, namespace: agentgateway-system}
----
-# read the continuity decision, nothing else
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata: {name: idtoken-exchange-continuity, namespace: sv-identity}
-rules:
-- apiGroups: [continuity.lab.solo.io]
-  resources: [identitycontinuities]
-  resourceNames: [sterling-vance]
-  verbs: [get]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata: {name: idtoken-exchange-continuity, namespace: sv-identity}
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: idtoken-exchange-continuity}
-subjects: [{kind: ServiceAccount, name: idtoken-exchange, namespace: agentgateway-system}]
+automountServiceAccountToken: false
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -251,7 +258,7 @@ spec:
       labels: {app: idtoken-exchange}
     spec:
       serviceAccountName: idtoken-exchange
-      automountServiceAccountToken: true     # the continuity read above
+      automountServiceAccountToken: false
       securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
       topologySpreadConstraints:
       - maxSkew: 1
@@ -262,10 +269,8 @@ spec:
       - name: idtoken-exchange
         image: ${IDTOKEN_EXCHANGE_IMAGE}
         env:
-        - {name: OPS, value: '${XAA_OPS}'}
-        - {name: CONTINUITY, value: sv-identity/sterling-vance}
-        - {name: BROKER_CLIENT_ID, value: xaa-egress}         # reads stored upstream tokens, with the egress's key
-        - {name: CA_FILE, value: /etc/lab-ca/ca.crt}            # S&V's own IdP, through the edge
+        - {name: TOKEN_URL, value: http://keycloak.sv-identity/realms/sterling-vance/protocol/openid-connect/token}
+        - {name: CLIENT_ID, value: kagent}
         ports:
         - {name: grpc, containerPort: 8080}
         - {name: health, containerPort: 8081}
@@ -276,18 +281,9 @@ spec:
         securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
         volumeMounts:
         - {name: op, mountPath: /var/run/secrets/op, readOnly: true}
-        - {name: lab-ca, mountPath: /etc/lab-ca, readOnly: true}
       volumes:
-      - name: lab-ca
-        configMap: {name: lab-ca-bundle}
       - name: op
-        projected:
-          sources:
-          - secret: {name: kagent-client, items: [{key: clientSecret, path: sterling-vance}]}
-          - secret: {name: egress-client-key, items: [{key: signingKey, path: broker.key}, {key: signingKey, path: gluu.key},
-              {key: signingKey, path: keycloak.key}]}
-          - secret: {name: op-gluu, optional: true, items: [{key: clientSecret, path: gluu}]}
-          - secret: {name: op-keycloak, optional: true, items: [{key: clientSecret, path: keycloak}]}
+        secret: {secretName: kagent-client, items: [{key: clientSecret, path: sterling-vance}]}
 ---
 apiVersion: v1
 kind: Service

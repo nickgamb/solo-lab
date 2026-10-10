@@ -29,6 +29,12 @@ export function ScheduleTab({ ic, spec, setSpec, dirty }: {
   const st = ic.status?.sync
 
   const setSchedule = (s: string) => setSpec(sp => withSync(sp, { ...(sp.sync ?? {}), schedule: s }))
+  const setRemove = (v: boolean) => setSpec(sp => {
+    const next = { ...(sp.sync ?? { schedule: DEFAULT }) }
+    if (v) next.removeMissing = true
+    else delete next.removeMissing
+    return withSync(sp, next)
+  })
   const toggle = (v: boolean) => setSpec(sp => {
     if (!v) return sp.sync ? withSync(sp, { ...sp.sync, suspend: true }) : sp
     if (!sp.sync) return withSync(sp, { schedule: DEFAULT })
@@ -67,6 +73,10 @@ export function ScheduleTab({ ic, spec, setSpec, dirty }: {
           </label>
         </div>
         <p className="subtle small">Reads each employee's profile from the primary IdP into the broker's profile, then writes it to each failover IdP, creating the user there if the primary has them (they're emailed to set their own password). Never passwords, never the username.</p>
+        <label className="tog small" title="Only after a complete listing of the primary: never while it can't be read or lists no one. Break-glass accounts stay.">
+          <input type="checkbox" checked={!!sync?.removeMissing} onChange={e => setRemove(e.target.checked)} />
+          Remove users the primary no longer has (or has disabled), at the broker and the failover IdPs
+        </label>
         {!sync ? <p className="subtle small">No scheduled sync yet. Turn it on to run daily at 02:00 UTC.</p> : (
           <div className={on ? 'cm-presets' : 'cm-presets off'}>
             <div className="seg" role="radiogroup" aria-label="Schedule">
@@ -123,7 +133,7 @@ export function ScheduleTab({ ic, spec, setSpec, dirty }: {
             <dt>CronJob</dt><dd className="mono">{st.cronJob ?? 'not created yet'}</dd>
             <dt>Last run</dt><dd>{when(st.lastRun)}</dd>
             <dt>Last success</dt><dd>{when(st.lastSuccess)}</dd>
-            <dt>Users</dt><dd>{st.users ?? 0} · {st.updated ?? 0} broker profiles updated · {st.written ?? 0} failover accounts written · {st.created ?? 0} created · <span className={st.failed ? 'danger-text' : ''}>{st.failed ?? 0} failed</span></dd>
+            <dt>Users</dt><dd>{st.users ?? 0} · {st.updated ?? 0} broker profiles updated · {st.written ?? 0} failover accounts written · {st.created ?? 0} created{st.removed ? ` · ${st.removed} removed` : ''} · <span className={st.failed ? 'danger-text' : ''}>{st.failed ?? 0} failed</span></dd>
             {st.message && <><dt>Message</dt><dd>{st.message}</dd></>}
           </dl>
         ) : <p className="subtle small">The sync hasn't run yet.</p>}

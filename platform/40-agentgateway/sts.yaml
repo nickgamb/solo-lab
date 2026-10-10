@@ -1,0 +1,27 @@
+# The STS's signing keys, for MCP servers to verify the tokens it mints. Only
+# the ai-gateway may reach the STS itself (mesh policy sts-callers, layer 80),
+# so MCP servers read the keys here: one path, GET only, from the namespaces
+# MCP servers run in.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: sts-keys, namespace: agentgateway-system}
+spec:
+  parentRefs: [{name: ai-gateway, sectionName: http}]
+  rules:
+  - matches: [{path: {type: Exact, value: /sts/jwks.json}, method: GET}]
+    filters:
+    - type: URLRewrite
+      urlRewrite: {path: {type: ReplaceFullPath, replaceFullPath: /.well-known/jwks.json}}
+    backendRefs: [{name: ${AGW_RELEASE}, port: 7777}]
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: sts-keys, namespace: agentgateway-system}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: sts-keys}]
+  traffic:
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+        - 'source.identity.namespace == "sv-mcp"'

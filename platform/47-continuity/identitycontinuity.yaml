@@ -15,9 +15,8 @@ spec:
       url: http://keycloak.sv-identity.svc
       realm: sterling-vance
       credentialsRef: {name: continuity-controller}
-  # S&V's egress gateway has upstreams vouch for users (Cross App Access):
-  # its calls to them leave through the same waypoint
-  egress: {namespace: sv-egress, waypoint: egress-waypoint, exportTo: [agentgateway-system]}
+  # every S&V call to an upstream IdP leaves through this waypoint
+  egress: {namespace: sv-egress, waypoint: egress-waypoint}
   tiers: []   # from ENTERPRISE_IDP (install.sh)
   health: {intervalSeconds: 5, timeoutSeconds: 2, unhealthyThreshold: 2, healthyThreshold: 3}
   failback: Automatic

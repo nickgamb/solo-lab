@@ -6,7 +6,7 @@ export type Pod = { name: string; phase: string; ready: boolean; node?: string; 
 export type Group = { id: string; label: string; domain?: string; order: number }
 export type NodeKind =
   | 'gateway' | 'waypoint' | 'agent' | 'mcp' | 'idp' | 'db' | 'llm' | 'ui' | 'controller'
-  | 'substrate' | 'workload' | 'external' | 'cluster' | 'tool'
+  | 'substrate' | 'workload' | 'external' | 'cluster' | 'tool' | 'fabric'
 export type LabNode = {
   id: string; kind: NodeKind; label: string; sub?: string; group: string; namespace?: string
   ref?: Ref; related?: Ref[]; pods?: Pod[]; badges?: string[]; products?: string[]; status: 'ok' | 'warn' | 'down' | 'idle'
@@ -46,9 +46,9 @@ export const ATTRIBUTE_TYPES = ['string', 'integer', 'number', 'boolean', 'date'
 export type AttributeType = typeof ATTRIBUTE_TYPES[number]
 export type ProfileAttribute = { name: string; displayName?: string; type?: AttributeType; multivalued?: boolean }
 export type Profile = { attributes?: ProfileAttribute[] }
-export type Sync = { schedule: string; suspend?: boolean; credentialsRef?: { name: string } }
+export type Sync = { schedule: string; suspend?: boolean; removeMissing?: boolean; credentialsRef?: { name: string } }
 export type SyncStatus = {
-  cronJob?: string; lastRun?: string; lastSuccess?: string; users?: number; updated?: number; written?: number; created?: number; failed?: number; message?: string
+  cronJob?: string; lastRun?: string; lastSuccess?: string; users?: number; updated?: number; written?: number; created?: number; removed?: number; failed?: number; message?: string
   schemas?: Record<string, string[]> // each IdP's attribute paths, as its directory last showed them
 }
 // the broker's built-in profile attributes: always in its profile
@@ -84,8 +84,11 @@ export type IdentityContinuity = {
   status?: { active?: string; activeSince?: string; broker?: { issuer?: string }; tiers?: TierStatus[]; transitions?: { time: string; from: string; to: string; reason: string }[]; sync?: SyncStatus }
 }
 export type SignInPath = { instance: string; name: string; hosts: string[]; entry?: string; broker: string; app: string; after: string[][] }
+// a gateway that verifies the broker's tokens, and a resource behind it
+export type ResourcePath = { instance: string; broker: string; gateway: string; resource: string }
 export type ContinuityView = {
   items: IdentityContinuity[]; partitions: { tier: string; namespace: string; name: string; since?: string; by?: string; path?: string }[]; paths: SignInPath[]
+  resources?: ResourcePath[]
   // each resource's assurance rules on its chain: met, or failed closed
   profiles?: { namespace: string; name: string; continuity: string; phase?: string; mode?: string }[]
 }

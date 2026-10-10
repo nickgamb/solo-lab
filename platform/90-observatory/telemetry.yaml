@@ -5,41 +5,13 @@
 # model), and where it went. Raw tokens are never logged. The agentgateway
 # proxies send their traces too (4317), for Tempo and the Solo UI.
 #
-# agentgateway: S&V's ai-gateway and MCP waypoint, and Meridian's gateway.
+# agentgateway: S&V's ai-gateway (models, tools, Cross App Access), and
+# Meridian's and Ledgerline's gateways.
 apiVersion: ${AGW_POLICY_API}
 kind: ${AGW_POLICY_KIND}
 metadata: {name: access-log, namespace: agentgateway-system}
 spec:
   targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: ai-gateway}]
-  frontend:
-    accessLog:
-      attributes:
-        add:
-        # the claims of the token the JWT policy verified (agentgateway redacts
-        # the raw token); the observatory shows them on the request
-        - {name: jwt, expression: 'jwt'}
-        - {name: mcp.tool.name, expression: 'mcp.tool.name'}
-        # a user's ID token riding along for cross-app access: noted, not logged
-        - {name: token.x-id-token, expression: '"x-id-token" in request.headers'}
-        # the assurance gate's decision on a workload profile, when it was asked
-        - {name: continuity.decision, expression: 'response.headers["x-continuity-decision"]'}
-      otlp:
-        # a Service backend, not a URL: the export then leaves over the mesh
-        # with the gateway's own identity, which the collector's policy names
-        backendRef: {kind: Service, name: otel-collector, namespace: observability, port: 14318}
-        protocol: HTTP
-    # traces (GenAI spans: model, tokens, MCP tool) to the platform collector,
-    # which hands them to Tempo and, on Enterprise, the Solo UI
-    tracing:
-      backendRef: {kind: Service, name: otel-collector, namespace: observability, port: 4317}
-      protocol: GRPC
-      randomSampling: 'true'
----
-apiVersion: ${AGW_POLICY_API}
-kind: ${AGW_POLICY_KIND}
-metadata: {name: access-log, namespace: sv-mcp}
-spec:
-  targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: mcp-waypoint}]
   frontend:
     accessLog:
       attributes:
@@ -152,7 +124,6 @@ spec:
   from:
   - {group: gateway.kgateway.dev, kind: ListenerPolicy, namespace: kgateway-system}
   - {group: ${AGW_POLICY_GROUP}, kind: ${AGW_POLICY_KIND}, namespace: agentgateway-system}
-  - {group: ${AGW_POLICY_GROUP}, kind: ${AGW_POLICY_KIND}, namespace: sv-mcp}
   - {group: ${AGW_POLICY_GROUP}, kind: ${AGW_POLICY_KIND}, namespace: meridian}
   - {group: ${AGW_POLICY_GROUP}, kind: ${AGW_POLICY_KIND}, namespace: ledgerline}
   to: [{group: "", kind: Service, name: otel-collector}]

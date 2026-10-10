@@ -105,6 +105,8 @@ type ContinuityView struct {
 	Items      []map[string]any `json:"items"`
 	Partitions []Partition      `json:"partitions"`
 	Paths      []SignInPath     `json:"paths"`
+	// resources a gateway admits the broker's tokens to
+	Resources []ResourcePath `json:"resources"`
 	// each WorkloadProfile's phase on its chain (its assurance rules met,
 	// or failed closed)
 	Profiles []ProfilePhase `json:"profiles"`
@@ -130,6 +132,16 @@ type SignInPath struct {
 	After    [][]string `json:"after"` // node ids by hop from the app
 }
 
+// ResourcePath is derived from the gateways' policies: a gateway that
+// verifies the broker's tokens, and a resource behind it. A model provider,
+// called with the gateway's own key, is not one.
+type ResourcePath struct {
+	Instance string `json:"instance"`
+	Broker   string `json:"broker"`
+	Gateway  string `json:"gateway"`
+	Resource string `json:"resource"`
+}
+
 type Partition struct {
 	Tier      string `json:"tier"`
 	Namespace string `json:"namespace"`
@@ -140,7 +152,7 @@ type Partition struct {
 }
 
 func (c *Continuity) View(ix *Index) ContinuityView {
-	v := ContinuityView{Items: []map[string]any{}, Partitions: []Partition{}, Paths: []SignInPath{}, Profiles: []ProfilePhase{}}
+	v := ContinuityView{Items: []map[string]any{}, Partitions: []Partition{}, Paths: []SignInPath{}, Resources: []ResourcePath{}, Profiles: []ProfilePhase{}}
 	for _, p := range c.k.List("workloadprofiles") {
 		v.Profiles = append(v.Profiles, ProfilePhase{Namespace: p.GetNamespace(), Name: p.GetName(),
 			Continuity: str(p.Object, "spec", "continuity"), Phase: str(p.Object, "status", "phase"), Mode: str(p.Object, "spec", "mode")})
@@ -159,6 +171,23 @@ func (c *Continuity) View(ix *Index) ContinuityView {
 			for _, app := range s.Apps {
 				v.Paths = append(v.Paths, SignInPath{Instance: o.GetNamespace() + "/" + o.GetName(), Name: s.Name, Hosts: s.Hosts,
 					Entry: ix.edgeGW, Broker: broker, App: app, After: ix.downstream(app, 5, broker)})
+			}
+		}
+		seen := map[ResourcePath]bool{}
+		for _, t := range ix.trusts {
+			if issuer == "" || broker == "" || strings.TrimSuffix(t.Issuer, "/") != strings.TrimSuffix(issuer, "/") {
+				continue
+			}
+			for _, gw := range t.Gateways {
+				for _, r := range t.Targets {
+					n := ix.nodes[r]
+					rp := ResourcePath{Instance: o.GetNamespace() + "/" + o.GetName(), Broker: broker, Gateway: gw, Resource: r}
+					if n == nil || n.Kind == "llm" || r == broker || r == gw || seen[rp] {
+						continue
+					}
+					seen[rp] = true
+					v.Resources = append(v.Resources, rp)
+				}
 			}
 		}
 	}

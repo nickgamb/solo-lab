@@ -31,7 +31,7 @@ kind: PeerAuthentication
 metadata: {name: strict, namespace: agentgateway-system}
 spec: {mtls: {mode: STRICT}}
 ---
-# The agentgateway proxies (ai-gateway, mcp-waypoint) run outside the mesh and
+# The agentgateway proxies (ai-gateway) run outside the mesh and
 # terminate HBONE themselves, so they dial the controller's xDS port without
 # mesh mTLS. That one port stays PERMISSIVE; the rest of the controller is STRICT.
 apiVersion: security.istio.io/v1
@@ -41,6 +41,120 @@ spec:
   selector: {matchLabels: {app.kubernetes.io/name: ${AGW_RELEASE}}}   # the controller
   mtls: {mode: STRICT}
   portLevelMtls: {"9978": {mode: PERMISSIVE}}
+---
+# The STS (Enterprise, port 7777): only the gateway that mints the tokens MCP
+# servers accept. MCP servers read its keys through that gateway
+# (platform/40-agentgateway/sts.yaml), never from the STS, whose keys share a
+# port with minting. An agent, or an MCP server, holding a user's token can't
+# trade it there for one an MCP server would take.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: sts-callers, namespace: agentgateway-system}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: ${AGW_RELEASE}}}
+  action: DENY
+  rules:
+  - from:
+    - source:
+        notPrincipals:
+        - cluster.local/ns/agentgateway-system/sa/ai-gateway
+    to: [{operation: {ports: ["7777"]}}]
+---
+# agentgateway-system: nothing takes a connection unless a policy here names
+# the caller. (The ai-gateway terminates the mesh itself: its routes' policies
+# decide who may call it.)
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: default-deny, namespace: agentgateway-system}
+spec: {}
+---
+# The controller: the agentgateway proxies fetch their configuration (xDS,
+# before they hold a mesh identity: any caller, on that port only), the
+# ai-gateway mints MCP servers' tokens at the STS (Enterprise), Prometheus
+# reads its metrics.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: controller-callers, namespace: agentgateway-system}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: ${AGW_RELEASE}}}
+  action: ALLOW
+  rules:
+  - to: [{operation: {ports: ["9978"]}}]
+  - from: [{source: {principals: [cluster.local/ns/agentgateway-system/sa/ai-gateway]}}]
+    to: [{operation: {ports: ["7777"]}}]
+  - from: [{source: {principals: [cluster.local/ns/observability/sa/kps-prometheus]}}]
+    to: [{operation: {ports: ["9092"]}}]
+---
+# The gateways' shared services (Enterprise: ext-auth, rate limits, WAF and
+# their cache): the agentgateway proxies that use them, each other, and
+# Prometheus.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: ext-auth-callers, namespace: agentgateway-system}
+spec:
+  selector: {matchLabels: {app: ext-auth-service}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: [agentgateway-system]
+    - source:
+        principals:
+        - cluster.local/ns/alice/sa/waypoint
+        - cluster.local/ns/ledgerline/sa/mcp-gateway
+        - cluster.local/ns/meridian/sa/meridian
+        - cluster.local/ns/observability/sa/kps-prometheus
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: rate-limiter-callers, namespace: agentgateway-system}
+spec:
+  selector: {matchLabels: {app: rate-limiter}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: [agentgateway-system]
+    - source:
+        principals:
+        - cluster.local/ns/alice/sa/waypoint
+        - cluster.local/ns/ledgerline/sa/mcp-gateway
+        - cluster.local/ns/meridian/sa/meridian
+        - cluster.local/ns/observability/sa/kps-prometheus
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: waf-callers, namespace: agentgateway-system}
+spec:
+  selector: {matchLabels: {app: waf-server}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: [agentgateway-system]
+    - source:
+        principals:
+        - cluster.local/ns/alice/sa/waypoint
+        - cluster.local/ns/ledgerline/sa/mcp-gateway
+        - cluster.local/ns/meridian/sa/meridian
+        - cluster.local/ns/observability/sa/kps-prometheus
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: ext-cache-callers, namespace: agentgateway-system}
+spec:
+  selector: {matchLabels: {app: ext-cache}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: [agentgateway-system]
+    - source:
+        principals:
+        - cluster.local/ns/alice/sa/waypoint
+        - cluster.local/ns/ledgerline/sa/mcp-gateway
+        - cluster.local/ns/meridian/sa/meridian
+        - cluster.local/ns/observability/sa/kps-prometheus
 ---
 apiVersion: security.istio.io/v1
 kind: PeerAuthentication
@@ -87,8 +201,7 @@ spec:
         - cluster.local/ns/agentgateway-system/sa/ai-gateway
         - cluster.local/ns/agentgateway-system/sa/idtoken-exchange   # Cross App Access: access token -> ID token
         - cluster.local/ns/agentgateway-system/sa/${AGW_RELEASE}   # controller: JWKS fetch
-        - cluster.local/ns/sv-mcp/sa/mcp-waypoint
-        - cluster.local/ns/sv-mcp/sa/bob-workspace      # verifies its delegated tokens (JWKS)
+        - cluster.local/ns/sv-mcp/sa/bob-workspace      # OSS: verifies the broker's tokens (JWKS)
         - cluster.local/ns/agentregistry/sa/agentregistry
         - cluster.local/ns/sv-identity/sa/continuity-controller
         - cluster.local/ns/sv-identity/sa/continuity-sync
@@ -144,9 +257,8 @@ spec:
   action: ALLOW
 ---
 # The firm's way out: only its broker (brokered logins' back-channel), the
-# continuity controller (health probes), its profile sync (upstream
-# directories), idtoken-exchange and ai-gateway (Cross App Access at the
-# vouching upstream) may reach upstream IdPs on the internet.
+# continuity controller (health probes) and its profile sync (upstream
+# directories) may reach upstream IdPs on the internet.
 # A tier's partition is a DENY on its ServiceEntry, evaluated before this.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
@@ -161,8 +273,6 @@ spec:
         - cluster.local/ns/sv-identity/sa/keycloak
         - cluster.local/ns/sv-identity/sa/continuity-controller
         - cluster.local/ns/sv-identity/sa/continuity-sync
-        - cluster.local/ns/agentgateway-system/sa/idtoken-exchange   # Cross App Access: renews at the vouching upstream
-        - cluster.local/ns/agentgateway-system/sa/ai-gateway         # Cross App Access: ID-JAG from the vouching upstream
 ---
 # kagent: nothing in the namespace takes a connection unless a policy below
 # names the caller. kagent-tools can act on the cluster, the controller trusts
@@ -198,8 +308,9 @@ spec:
         - cluster.local/ns/observatory/sa/observatory   # Agent Substrate status, as its own service account
         - cluster.local/ns/agentregistry/sa/agentregistry-enterprise   # agentregistry's kagent runtime (Enterprise)
 ---
-# kagent-tools can act on the cluster: only the agents that use it (the ops
-# agents) and the controller (tool discovery).
+# kagent-tools can read the cluster: only through the firm's gateway, which
+# decides who may use it (platform/60-kagent/front-door.yaml), like every MCP
+# server.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata: {name: kagent-tools-callers, namespace: kagent}
@@ -210,8 +321,8 @@ spec:
   - from:
     - source:
         principals:
-        - cluster.local/ns/kagent/sa/kagent-ops
-        - cluster.local/ns/kagent/sa/kagent-controller
+        - cluster.local/ns/agentgateway-system/sa/ai-gateway
+    to: [{operation: {ports: ["8084"]}}]
 ---
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy

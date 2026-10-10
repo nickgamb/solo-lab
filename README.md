@@ -27,7 +27,7 @@ identities, IdP and hostnames. They meet only at the edge. See
 | Product | In this lab | Product page | Docs |
 | --- | --- | --- | --- |
 | kgateway | the edge: TLS, one listener per party, SSO for every UI | [solo.io](https://www.solo.io/products/kgateway) | [docs.solo.io/kgateway](https://docs.solo.io/kgateway/) |
-| agentgateway | the firm's AI gateway (models, Cross App Access), its MCP waypoint, Meridian's gateway | [solo.io](https://www.solo.io/products/agentgateway) | [docs.solo.io/agentgateway](https://docs.solo.io/agentgateway/) |
+| agentgateway | the firm's AI gateway: models, the front door for every MCP server (a short-lived token minted for each), Cross App Access; Meridian's gateway | [solo.io](https://www.solo.io/products/agentgateway) | [docs.solo.io/agentgateway](https://docs.solo.io/agentgateway/) |
 | kagent + kmcp | agents, their controller and UI; MCP servers as Kubernetes resources | [solo.io](https://www.solo.io/products/kagent) | [docs.solo.io/kagent](https://docs.solo.io/kagent/) |
 | Agent Substrate | every agent runs in a snapshot-backed sandbox on a worker pool | [solo.io](https://www.solo.io/products/kagent) | [docs.solo.io/kagent](https://docs.solo.io/kagent/) |
 | agentregistry | the firm's catalog of agents, MCP servers and skills | [solo.io](https://www.solo.io/products/agentregistry) | [docs.solo.io/agentregistry](https://docs.solo.io/agentregistry/) |
@@ -102,12 +102,13 @@ workers in zones a, b and c). The full lab uses about 17 GB of memory.
 | https://idp.sterling.lab/realms/sterling-vance/account | S&V broker account: sign-in through S&V's active IdP | S&V sign-in, as for kagent |
 | https://login.sterling.lab/realms/workforce/account | S&V's own Keycloak (an IdP in `ENTERPRISE_IDP`): a user's own account | `bob` / `bob-demo`, then the code from `make totp` |
 | https://login-dr.sterling.lab/realms/contingency/account | S&V's contingency IdP (password only, after S&V's own Keycloak in `ENTERPRISE_IDP`) | `bob` / `bob-demo` |
+| https://mcp.sterling.lab/mcp/bob-workspace, https://mcp.sterling.lab/mcp/ledgerline | the firm's MCP front door for AI clients (Claude Code, an IDE): add the URL as a remote MCP server and sign in when asked | Bob at S&V's active IdP, as for kagent |
 | https://llm.sterling.lab/v1 | the firm's model route for developers: OpenAI chat completions or Anthropic messages | API key `LLM_API_KEY` in `.lab/secrets.env` (docs/COMMANDS.md) |
 
 APIs on the edge, for agents and the checks rather than browsers:
 `https://as.alice.lab` (Alice's authorization server), `https://gateway.meridian.lab/mcp`
 (Meridian's MCP gateway; UMA-protected), `https://mcp.ledgerline.lab/mcp`
-(Ledgerline Research; needs a Ledgerline token), and each party's issuer,
+(Ledgerline Research; needs a Ledgerline token, which S&V's users get only through S&V's gateway), and each party's issuer,
 `https://idp.<party>.lab/realms/<realm>` (`sterling-vance`, `alice`,
 `ledgerline`, `ops`).
 
@@ -136,13 +137,13 @@ Open it in a browser (`open docs/cards/<card>.html` on macOS, `xdg-open` on Linu
 
 | Card | Shows | Checks |
 | --- | --- | --- |
-| [Bob](docs/cards/bob.html) | Bob's agent acts for Bob: RFC 8693 token exchange at the MCP waypoint, per-tool policy, human approval for writes, Cross App Access (ID-JAG) to a SaaS | `make bob-verify` |
+| [Bob](docs/cards/bob.html) | Bob's agent acts for Bob: the firm's gateway mints each tool a token of its own, per-tool policy, human approval for writes, Cross App Access (ID-JAG) to a SaaS | `make bob-verify` |
 | [Bob to Alice](docs/cards/bob-to-alice.html) | the same agent asks Alice for her data on her terms (UMA for agents) | `make alice-verify` |
 | [Observatory tour](docs/cards/observatory.html) | every story end to end from one command, watched live: the agent waking, verified tokens per hop, refusals, Alice's terms, an IdP outage | `make tour` |
 | [Identity continuity](docs/cards/identity-continuity.html) | a real network outage of the active IdP, automatic failover to the next one, and failback, live in the Observatory | `make continuity-verify` |
 | [Assurance rules](docs/cards/assurance.html) | what each workload needs a sign-in to prove, through failover to an IdP that proves less: the rules, what-if, report-only, and failing closed | `make bob-verify` |
 | [Commands](docs/cards/commands.html) | kubectl, istioctl and curl commands for the running lab, grouped by Observatory screen | `make status` |
-| [Gluu](docs/cards/gluu.html) (experimental) | Bob signs in with a passkey at Gluu, his agent reaches Ledgerline as him: Gluu vouches (ID-JAG), Ledgerline's Gluu redeems it, every hop checked and logged | `make bob-verify` |
+| [Gluu](docs/cards/gluu.html) (experimental) | Bob signs in with a passkey at Gluu, his agent reaches Ledgerline as him: S&V's broker vouches (ID-JAG), Ledgerline's Gluu redeems it, every hop checked and logged | `make bob-verify` |
 
 `make reset` rewinds every demo without a rebuild. The identity continuity
 demo runs on S&V's own two IdPs; to add Auth0, Gluu, Okta, Ping or another
@@ -201,7 +202,7 @@ See [docs/OBSERVATORY.md](docs/OBSERVATORY.md).
 | `LLM_FALLBACK`, `LLM_FALLBACK_MODEL` | a second provider (and model) the gateway fails over to; apply with `make llm` |
 | `OLLAMA_MODEL`, `OLLAMA_URL` | the local model and where the cluster reaches it |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL` | hosted models (held by agentgateway only) |
-| `ENTERPRISE_IDP` | S&V's IdPs in failover order, by name (default `auth0,keycloak,contingency`; an IdP without an issuer is left out): who signs Bob in and, for an IdP that issues ID-JAGs, who vouches for him to Ledgerline; the broker vouches otherwise |
+| `ENTERPRISE_IDP` | S&V's IdPs in failover order, by name (default `auth0,keycloak,contingency`; an IdP without an issuer is left out): who signs Bob in. S&V's broker vouches for him to Ledgerline, whichever IdP signed him in |
 | `<NAME>_ISSUER`, `<NAME>_CLIENT_ID`, `<NAME>_CLIENT_SECRET` | each IdP in the chain (`auth0`, `gluu`, `okta`, `ping`, any other); without a secret S&V authenticates with its keys (`make xaa-keys`). `keycloak` and `contingency` default to S&V's own at `login.sterling.lab` and `login-dr.sterling.lab` |
 | `<NAME>_DIRECTORY_*`, `<NAME>_GROUPS_CLAIM`, `<NAME>_ASSURANCE`, ... | the rest of an IdP's settings ([IDPS.md](docs/IDPS.md#settings)) |
 | `RESOURCE_AS`, `LEDGERLINE_<NAME>_ISSUER`, `LEDGERLINE_<NAME>_CLIENT_ID` | Ledgerline's authorization server, by name: `keycloak` (default, its own) or any other ([IDPS.md](docs/IDPS.md#ledgerlines-authorization-server)) |
@@ -234,7 +235,7 @@ count, host ports, party domains, registry port; `config/oss.env` and
 | `reset` | rewind the demos (grants, terms, agent key, follow-ups) |
 | `llm` | switch the model: `make llm LLM_PROVIDER=anthropic` |
 | `xaa-logs` | the Cross App Access trail (both token requests, claims, checks), tokens redacted: `make xaa-logs SINCE=2h` |
-| `xaa-keys` | the public keys other parties register, in `.lab/xaa/keys/`: S&V's clients at upstream IdPs and at Ledgerline, S&V's broker (`sv-idp.jwks.json`) and own Keycloak (`sv-workforce.jwks.json`), Ledgerline's SSO client |
+| `xaa-keys` | the public keys other parties register, in `.lab/xaa/keys/`: S&V's clients at upstream IdPs and at Ledgerline, S&V's broker (`sv-idp.jwks.json`, for an AS outside the lab), Ledgerline's SSO client at S&V's broker |
 | `status` | pods, the active IdP, URLs |
 | `preflight` | tools, Docker resources, free ports, `*.lab` DNS, Ollama and its model |
 | `help` | every target, with its one-line description |
@@ -253,7 +254,7 @@ demos/           each story: install.sh, verify.sh, manifests, agents, tools
 apps/observatory Observatory: Go server (server/) and React UI (web/)
 apps/continuity  IdentityContinuity and WorkloadProfile CRDs, controller, directory sync, assurance gate
 apps/idtoken-exchange
-                 Cross App Access at S&V's egress: the user's ID token from the IdP that vouches
+                 Cross App Access at S&V's egress: the user's ID token from S&V's broker
 tools/           patched upstream builds (kagent, Substrate, Keycloak), the probe
                  toolbox image and mcp-probe.py (MCP calls from a pod, for the checks)
 docs/            architecture, per-app docs, commands, demo cards, images and videos
@@ -267,13 +268,13 @@ Layers:
 | `10-istio` | Istio ambient: base, istiod, istio-cni, ztunnel |
 | `20-observability` | kube-prometheus-stack, Tempo, OTel collector, Kiali |
 | `30-kgateway` | the edge: per-party TLS listeners on NodePorts 30080/30443 |
-| `40-agentgateway` | ai-gateway: LLM backend, MCP |
+| `40-agentgateway` | ai-gateway: LLM backend, MCP; on Enterprise the STS for MCP servers' tokens |
 | `45-identity` | S&V's mesh baseline, S&V's broker (Keycloak, `idp.sterling.lab`), S&V's own Keycloak (`login.sterling.lab`, realm `workforce`), its contingency IdP (`login-dr.sterling.lab`), client secrets for S&V components |
 | `47-continuity` | IdentityContinuity and WorkloadProfile CRDs and controller, the directory sync, the assurance gate, S&V egress waypoint |
 | `50-substrate` | Agent Substrate (patched), in the mesh |
-| `60-kagent` | kagent + kmcp (patched), ops agents on Substrate, edge SSO |
+| `60-kagent` | kagent + kmcp (patched), ops agents on Substrate, their tools (kagent-tools, its own release) behind ai-gateway, edge SSO (OSS) |
 | `70-agentregistry` | agentregistry behind S&V SSO |
-| `80-mesh-policy` | S&V's mesh baseline, re-applied, and its egress fences |
+| `80-mesh-policy` | S&V's mesh baseline, re-applied, STRICT mTLS mesh-wide, and S&V's egress fences |
 | `90-observatory` | Observatory, its Keycloak (realm `ops`), Grafana and Kiali on the edge behind it, gateway access logs |
 | `95-demos` | every story: `demos/bob`, then `demos/bob-to-alice` |
 
@@ -285,7 +286,7 @@ Layers:
 | [COMMANDS.md](docs/COMMANDS.md) | terminal commands for every part of the running lab: cluster, mesh, gateways, identity, agents, observability |
 | [IDENTITY-FLOWS.md](docs/IDENTITY-FLOWS.md) | acting for a user (RFC 8693 token exchange), Cross App Access (ID-JAG), UMA for agents: every hop, policy and check |
 | [OBSERVATORY.md](docs/OBSERVATORY.md) | using the Observatory, how it derives the map, access model, local development |
-| [IDENTITY-CONTINUITY.md](docs/IDENTITY-CONTINUITY.md) | the IdP chain and break-glass, the IdentityContinuity API and controller, the directory sync, assurance, trust across IdPs, assurance rules and the gate, Auth0/Okta/S&V Keycloak setup, the kill switch |
+| [IDENTITY-CONTINUITY.md](docs/IDENTITY-CONTINUITY.md) | the IdP chain and break-glass, the IdentityContinuity API and controller, the directory sync, assurance, trust across IdPs, assurance rules and the gate, the kill switch |
 | [ENTERPRISE.md](docs/ENTERPRISE.md) | switching products to Solo Enterprise |
 | [IDPS.md](docs/IDPS.md) | S&V's IdPs and Ledgerline's authorization server: settings, registration, Auth0, Gluu, Okta, Ping, any other |
 | [GLUU.md](docs/GLUU.md) | Gluu (experimental) as S&V's enterprise IdP and Ledgerline's authorization server: settings, registration, logs, roadmap |

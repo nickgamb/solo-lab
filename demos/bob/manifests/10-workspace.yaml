@@ -1,14 +1,15 @@
 # Bob's workspace: Sterling & Vance's MCP server for Bob's book of business.
-# Owned by S&V, lives in sv-mcp. Nothing reaches it except through the
-# namespace's waypoint, which is an agentgateway (20-waypoint.yaml).
+# Owned by S&V, lives in sv-mcp. Nothing reaches it except through the firm's
+# front door, the ai-gateway (20-front-door.yaml).
 #
 # Checks, none of which trusts the one before it:
 #   0. STRICT mTLS       plaintext to these pods is refused
-#   1. ztunnel (L4)      only the mcp-waypoint identity may open a connection
-#   2. mcp-waypoint (L7) caller must be an S&V agent workload (SPIFFE) acting
-#                        for an advisor (JWT); per-tool CEL; then RFC 8693:
-#                        the tool gets a token delegated to it, not Bob's
-#   3. the server        verifies the delegated token (S&V's keys, issuer,
+#   1. ztunnel (L4)      only the ai-gateway identity may open a connection
+#   2. ai-gateway (L7)   caller must be an S&V agent workload (SPIFFE) acting
+#                        for an advisor (JWT); assurance; per-tool CEL; then
+#                        the gateway mints the workspace a token of its own,
+#                        not Bob's
+#   3. the server        verifies that token (the gateway's keys and issuer,
 #                        aud=bob-workspace, expiry), acts as the token's user
 apiVersion: kagent.dev/v1alpha1
 kind: MCPServer
@@ -25,17 +26,18 @@ spec:
     image: ${BOB_WORKSPACE_IMAGE}
     port: 3000
     env:
-      WORKSPACE_ISSUER: https://idp.${SV_DOMAIN}/realms/sterling-vance
-      WORKSPACE_JWKS_URL: http://keycloak.sv-identity.svc/realms/sterling-vance/protocol/openid-connect/certs
+      WORKSPACE_ISSUER: ${MCP_TOKEN_ISSUER}       # the gateway's tokens only (config/lab.env)
+      WORKSPACE_JWKS_URL: ${MCP_TOKEN_JWKS}
       WORKSPACE_BOOK_OWNER: bob@${SV_DOMAIN}      # the advisor whose book the fixture is
     replicas: 2
     resources:
       requests: {cpu: 20m, memory: 64Mi}
       limits: {memory: 256Mi}
 ---
-# The MCP surface agents call: http://bob-workspace-mcp.sv-mcp:3000/mcp
-# (kmcp's own Service carries no appProtocol). Waypoint-captured like every
-# Service in sv-mcp.
+# The workspace behind the front door: http://bob-workspace-mcp.sv-mcp:3000/mcp
+# (kmcp's own Service carries no appProtocol). Agents call the ai-gateway
+# (/mcp/bob-workspace), which finds this Service by its lab.solo.io/mcp label
+# and forwards here.
 apiVersion: v1
 kind: Service
 metadata:
@@ -56,14 +58,14 @@ metadata:
 spec:
   mtls: {mode: STRICT}
 ---
-# L4, enforced by ztunnel on every pod in the namespace: the waypoint is the
-# only way in, for bob-workspace and for any MCP server added beside it.
+# L4, enforced by ztunnel on every pod in the namespace: the firm's gateway is
+# the only way in, for bob-workspace and for any MCP server added beside it.
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata:
-  name: pods-only-from-waypoint
+  name: pods-only-from-gateway
   namespace: sv-mcp
 spec:
   action: ALLOW
   rules:
-  - from: [{source: {principals: ["cluster.local/ns/sv-mcp/sa/mcp-waypoint"]}}]
+  - from: [{source: {principals: ["cluster.local/ns/agentgateway-system/sa/ai-gateway"]}}]

@@ -115,7 +115,7 @@ The sign-in chain for each `IdentityContinuity`, the outage button, the rule
 builder, and the directory sync window. See
 [IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#in-the-observatory).
 
-![Identity Continuity: the chain from the apps through the broker and the egress to each IdP, with the rule builder](images/observatory-continuity-connected.jpg)
+![Identity Continuity: resources and apps, through the gateways and the broker, to each IdP, with the rule builder](images/observatory-continuity-connected.jpg)
 
 - **Directory sync, Canvas:** the IdPs in chain order on the left (the
   primary is read, the failovers are written), S&V's profile on the right.
@@ -132,8 +132,10 @@ builder, and the directory sync window. See
 
   ![Directory sync as JSON](images/observatory-directory-sync-code.jpg)
 
-- **Schedule:** when the sync runs (UTC cron, with presets), the last run's
-  outcome, and **Run now**.
+- **Schedule:** when the sync runs (UTC cron, with presets), whether it
+  removes users the primary no longer has (or has disabled) at the broker and
+  the failover IdPs (`spec.sync.removeMissing`), the last run's outcome, and
+  **Run now**.
 
   ![Directory sync schedule and last run](images/observatory-directory-sync-schedule.jpg)
 
@@ -182,7 +184,7 @@ builder, and the directory sync window. See
       mode        = "Enforce"
       workloads   = ["sv-mcp/bob-workspace"]
       minimum     = "AAL2"     # what a rule leaves out is the default's
-      enforced_at = ["sv-mcp/bob-workspace-caller"]
+      enforced_at = ["agentgateway-system/bob-workspace-caller"]
     }
     ```
   - Save writes, as you: the IdentityContinuity (default rule, IdPs), each
@@ -312,14 +314,14 @@ signed-in admin, and the assurance rules, which their window reads from
 ## Telemetry wiring
 
 - `platform/90-observatory/telemetry.yaml`: access-log policies on ai-gateway,
-  the S&V MCP waypoint and Meridian's gateway (agentgateway), and on the edge
-  (kgateway ListenerPolicy), all to the OTel collector. S&V's two gateways
-  also log the assurance gate's decision (`continuity.decision`). agentgateway sends to
+  Meridian's gateway and Ledgerline's `mcp-gateway` (agentgateway), and on the
+  edge (kgateway ListenerPolicy), all to the OTel collector. ai-gateway also logs the
+  assurance gate's decision (`continuity.decision`). agentgateway sends to
   the collector's Service as a backend, so the export carries the gateway's
   mesh identity, which the collector's policy requires.
 - `platform/20-observability/otel-collector.yaml`: access logs arrive on
   their own ports (14317 gRPC, 14318 HTTP), which the mesh policy opens only
-  to the four gateways, and only that pipeline exports to
+  to those four gateways, and only that pipeline exports to
   `observatory.observatory.svc:4318`. So a claim shown as verified by a
   gateway came from one. Other components' OTLP (4317/4318) goes to Tempo and
   Prometheus; their logs are dropped.

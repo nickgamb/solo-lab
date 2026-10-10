@@ -190,7 +190,7 @@
     {
       "clientId": "sterling-vance-broker",
       "name": "Sterling & Vance broker",
-      "description": "S&V's broker (Keycloak at idp.sterling.lab) signs workforce users in here. It authenticates with its key, and its egress with the egress's key (private_key_jwt; JWKS set by layer 45). The egress gets ID-JAGs for the broker's sign-ins.",
+      "description": "S&V's broker (Keycloak at idp.sterling.lab) signs workforce users in here. It authenticates with its key (private_key_jwt; JWKS set by layer 45).",
       "enabled": true,
       "publicClient": false,
       "clientAuthenticatorType": "client-jwt",
@@ -203,7 +203,6 @@
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "standard.token.exchange.enabled": "true",
         "use.jwks.string": "true",
         "jwks.string": "",
         "use.refresh.tokens": "true",
@@ -217,10 +216,7 @@
         "acr",
         "web-origins"
       ],
-      "optionalClientScopes": [
-        "xaa-ledgerline",
-        "research:read"
-      ],
+      "optionalClientScopes": [],
       "fullScopeAllowed": false,
       "protocolMappers": [
         {
@@ -257,46 +253,6 @@
           }
         }
       ]
-    },
-    {
-      "clientId": "${LEDGERLINE_AS_ISSUER}",
-      "name": "Ledgerline Research (resource authorization server)",
-      "description": "Target of Cross App Access. Its clientId is the resource AS issuer, which becomes the ID-JAG audience.",
-      "enabled": true,
-      "publicClient": false,
-      "bearerOnly": true,
-      "standardFlowEnabled": false,
-      "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": false,
-      "fullScopeAllowed": false
-    },
-    {
-      "clientId": "ledgerline",
-      "name": "Ledgerline Research (SSO)",
-      "description": "Ledgerline signs S&V users in with this IdP. Ledgerline authenticates with its own key (private_key_jwt).",
-      "enabled": true,
-      "publicClient": false,
-      "clientAuthenticatorType": "client-jwt",
-      "standardFlowEnabled": true,
-      "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": false,
-      "implicitFlowEnabled": false,
-      "redirectUris": [
-        "https://idp.${LEDGERLINE_DOMAIN}/realms/ledgerline/broker/sterling-vance-keycloak/endpoint"
-      ],
-      "attributes": {
-        "pkce.code.challenge.method": "S256",
-        "use.jwks.url": "true",
-        "jwks.url": "https://idp.${LEDGERLINE_DOMAIN}/realms/ledgerline/protocol/openid-connect/certs",
-        "token.endpoint.auth.signing.alg": "PS256"
-      },
-      "defaultClientScopes": [
-        "basic",
-        "profile",
-        "email"
-      ],
-      "optionalClientScopes": [],
-      "fullScopeAllowed": false
     },
     {
       "clientId": "continuity-directory",
@@ -959,51 +915,6 @@
           }
         }
       ]
-    },
-    {
-      "name": "xaa-ledgerline",
-      "description": "Cross App Access connection: S&V's agent platform (kagent) -> Ledgerline Research",
-      "protocol": "openid-connect",
-      "attributes": {
-        "include.in.token.scope": "false",
-        "display.on.consent.screen": "false"
-      },
-      "protocolMappers": [
-        {
-          "name": "client_id at Ledgerline",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-hardcoded-claim-mapper",
-          "config": {
-            "claim.name": "client_id",
-            "claim.value": "${SV_CLIENT_AT_LEDGERLINE}",
-            "jsonType.label": "String",
-            "access.token.claim": "true",
-            "id.token.claim": "false",
-            "userinfo.token.claim": "false",
-            "introspection.token.claim": "false"
-          }
-        },
-        {
-          "name": "aud Ledgerline AS",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-audience-mapper",
-          "config": {
-            "included.client.audience": "${LEDGERLINE_AS_ISSUER}",
-            "access.token.claim": "true",
-            "id.token.claim": "false",
-            "introspection.token.claim": "false"
-          }
-        }
-      ]
-    },
-    {
-      "name": "research:read",
-      "description": "Read Ledgerline research (granted cross-app)",
-      "protocol": "openid-connect",
-      "attributes": {
-        "include.in.token.scope": "true",
-        "display.on.consent.screen": "false"
-      }
     }
   ],
   "clientScopeMappings": {

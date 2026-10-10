@@ -22,17 +22,18 @@ OTHER_ID=$(sso_token carol carol-demo | jq -r '.id_token // empty') || OTHER_ID=
 [ -n "$OTHER_ID" ] || die "could not sign Carol in (her ID token is the one swapped in below)"
 # Bob's agent's workload identity (its worker pool's ServiceAccount), another
 # workload in the same namespace, and one in another namespace.
-probe_pod sv-agents bob-assistant; probe_pod sv-agents; probe_pod observability; probe_pod "$KAGENT_UI_NS" "$KAGENT_UI_SA"
+probe_pod sv-agents bob-assistant; probe_pod sv-agents; probe_pod observability; probe_pod "$KAGENT_UI_NS" "$KAGENT_UI_SA"; probe_pod kagent kagent-ops; probe_pod kagent kagent-controller
 AGENT=sv-agents/probe-bob-assistant
-# Agents call the tool's own Service; the mesh carries every call into sv-mcp's
-# agentgateway waypoint. There is no gateway URL to remember, or to skip.
-GW=http://bob-workspace-mcp.sv-mcp:3000/mcp
+# Agents call the workspace at the firm's front door, the ai-gateway; the
+# workspace takes connections from that gateway alone.
+GW=http://ai-gateway.agentgateway-system/mcp/bob-workspace
 POD_IP=$(K get pod -n sv-mcp -l app.kubernetes.io/name=bob-workspace -o jsonpath='{.items[0].status.podIP}')
 [ -n "$POD_IP" ] || die "no bob-workspace pod in sv-mcp (make layer-95)"
 TMPD=$(umask 077; mktemp -d); on_exit "rm -rf $TMPD"   # every temp file, gone on exit
 pass=0 fail=0 skip=0
 res() { if [ "$1" = ok ]; then ok "$2"; pass=$((pass+1)); else warn "$2"; echo "      got: ${3:0:300}"; fail=$((fail+1)); fi; }
 skipped() { printf '  - skipped: %s\n' "$*"; skip=$((skip+1)); }
+expect_res() { if echo "$3" | grep -qE "$1"; then res ok "$2"; else res no "$2" "$3"; fi; }
 check() {  # check <expect-regex> <label> <ns>[/<pod>] <probe args...>
   local want=$1 label=$2 ns=${3%%/*} pod=probe; [[ $3 == */* ]] && pod=${3#*/}; shift 3
   local out; out=$(probe_exec "$ns/$pod" "$@" 2>&1 | tail -1) || true
@@ -46,11 +47,31 @@ step "Allowed: an S&V agent workload acting for Bob"
 check '"whoami"'                                "agent lists Bob's tools (as Bob)"            $AGENT $GW list --token "$BOB"
 check '\\"acting_for\\": \\"bob@.*\\"audience\\": \\"bob-workspace\\"' \
                                                 "whoami: acts as bob, token aud=bob-workspace" $AGENT $GW call whoami '{}' --token "$BOB"
+# the token the workspace accepts is the gateway's, short-lived, for it alone
+ISS_RE=$(echo "$MCP_TOKEN_ISSUER" | sed 's/[.]/\\./g')
+check "issuer[^0-9a-z]{0,6}$ISS_RE.*token_lifetime_s[^0-9]{0,6}[1-5][^0-9]" \
+                                                "whoami: the token was minted for the workspace by the gateway ($MCP_TOKEN_LIFETIME)" $AGENT $GW call whoami '{}' --token "$BOB"
+if [ "$AGW_EDITION" = enterprise ]; then
+  # the agent holds Bob's token, but can't trade it for one a tool accepts,
+  # and neither can a tool server: only the gateway reaches the STS. The token
+  # goes on stdin, never a command line; curl's own 000 (the mesh refused the
+  # connection) is the expected answer, a failed kubectl exec is not.
+  sts_try() {  # sts_try <ns>/<pod>: the STS's answer to Bob's token from that workload
+    printf 'subject_token=%s&grant_type=urn:ietf:params:oauth:grant-type:token-exchange&subject_token_type=urn:ietf:params:oauth:token-type:jwt&audience=bob-workspace' \
+      "$(jq -rn --arg t "$BOB" '$t|@uri')" | K exec -i -n "${1%%/*}" "${1#*/}" -- sh -c \
+      "curl -s -m 10 -o /dev/null -w 'sts:%{http_code}' -X POST http://$AGW_RELEASE.agentgateway-system:7777/oauth2/token --data-binary @-; true" 2>&1
+  }
+  expect_res '^sts:000$' "the agent asks the STS for a workspace token with Bob's token: refused (only the gateway may)" "$(sts_try sv-agents/probe-bob-assistant)"
+  probe_pod sv-mcp bob-workspace   # the workspace's own identity
+  expect_res '^sts:000$' "the workspace asks the STS with Bob's token: refused (only the gateway may)" "$(sts_try sv-mcp/probe-bob-workspace)"
+else
+  skipped "the agent can't mint a tool's token itself: agentgateway's STS is Enterprise"
+fi
 check 'Alice Chen'                              "list_clients returns Bob's book"             $AGENT $GW call list_clients '{}' --token "$BOB"
 check 'account_number\\": \\"(\\u2022){4}8265\\"' \
-                                                "get_client: account number masked by the waypoint's guardrail" $AGENT $GW call get_client '{"name": "Marcus Webb"}' --token "$BOB"
+                                                "get_client: account number masked by the front door's guardrail" $AGENT $GW call get_client '{"name": "Marcus Webb"}' --token "$BOB"
 # mcp-guard's record of what it masked: the tool and a count, never the value
-if ! guard_log=$(K logs -n sv-mcp -l app=mcp-guard --since=10m --tail=-1 2>&1); then
+if ! guard_log=$(K logs -n agentgateway-system -l app=mcp-guard --since=10m --tail=-1 2>&1); then
   res no "mcp-guard logs the mask, not the account number" "could not read mcp-guard's log: $guard_log"
 else
   masked=$(echo "$guard_log" | grep -c '"msg":"masked"') || masked=0
@@ -63,8 +84,45 @@ check 'Unknown tool|isError": true|http": 40[13]' "export_book: hidden from advi
 check 'http": 40[13]|isError": true'            "agent with no user token (discovery lane is controller-only)" $AGENT $GW call whoami '{}'
 check 'http": 40[13]|isError": true'            "right user, wrong workload (observability)"  observability $GW call whoami '{}' --token "$BOB"
 check 'http": 40[13]|isError": true'            "right user, not an agent (another sv-agents workload)" sv-agents $GW call whoami '{}' --token "$BOB"
-check 'http": 40[13]|RBAC|isError": true|refused|reset|Broken pipe|Connection' \
-                                                "skip the waypoint: dial a pod IP with Bob's token" $AGENT "http://$POD_IP:3000/mcp" call whoami '{}' --token "$BOB"
+check 'http": 0|http": 40[13]|RBAC|isError": true|refused|reset|Broken pipe|Connection' \
+                                                "skip the front door: dial the workspace's Service with Bob's token" $AGENT http://bob-workspace-mcp.sv-mcp:3000/mcp call whoami '{}' --token "$BOB"
+check 'http": 0|http": 40[13]|RBAC|isError": true|refused|reset|Broken pipe|Connection' \
+                                                "skip the front door: dial a pod IP with Bob's token" $AGENT "http://$POD_IP:3000/mcp" call whoami '{}' --token "$BOB"
+
+step "The ops agents' tools (kagent-tools), behind the same front door"
+OPS_GW=http://ai-gateway.agentgateway-system/mcp/kagent-tools
+n=$(K get remotemcpserver kagent-tool-server -n kagent -o json 2>/dev/null \
+  | jq -r 'if (.spec.url | test("/mcp/kagent-tools$")) then (.status.discoveredTools // [] | length) else "not via the gateway: \(.spec.url)" end' 2>&1) || n=""
+expect_res '^[1-9][0-9]*$' "kagent lists the ops tools through the gateway" "$n"
+check 'http": 40[13]|isError": true'            "an ops agent's worker, for Bob (not a platform admin): refused" kagent/probe-kagent-ops $OPS_GW list --token "$BOB"
+check 'http": 40[13]|isError": true'            "an ops agent's worker with no user token (discovery lane is controller-only)" kagent/probe-kagent-ops $OPS_GW list
+check '"k8s_get_resources"'                     "the kagent controller lists the ops tools (no user)" kagent/probe-kagent-controller $OPS_GW list
+check 'Unknown tool|http": 40[013]|isError": true' "the kagent controller calls an ops tool (no user): refused, it may only list" kagent/probe-kagent-controller $OPS_GW call k8s_get_resources '{"resource_type": "pods"}'
+check 'http": 0|http": 40[13]|refused|reset|Broken pipe|Connection' \
+                                                "skip the front door: an ops agent's worker dials kagent-tools" kagent/probe-kagent-ops http://kagent-tools.kagent:8084/mcp list
+step "AI clients outside the mesh: sign in at the front door"
+# an MCP client (Claude Code, an IDE) at https://mcp.<firm>, through the edge:
+# told where to sign in, then the same per-call path as the firm's agents
+FRONT=https://mcp.$SV_DOMAIN/mcp/bob-workspace
+hdr=$(K exec -n observability probe -- sh -c "curl -s -m 10 -o /dev/null -D - -X POST '$FRONT' -H 'content-type: application/json' -d '{}'" 2>&1) || hdr=""
+if echo "$hdr" | head -1 | grep -q ' 401' && echo "$hdr" | grep -qi 'www-authenticate:.*resource_metadata'; then
+  res ok "no token: 401, pointing the client to where it signs in (protected-resource metadata)"
+else res no "no token: 401, pointing the client to where it signs in" "$(echo "$hdr" | head -1)"; fi
+prm=$(K exec -n observability probe -- sh -c "curl -s -m 10 https://mcp.$SV_DOMAIN/.well-known/oauth-protected-resource/mcp/bob-workspace" 2>&1 | jq -r '.authorization_servers[0] // empty' 2>/dev/null) || prm=""
+if [ -n "$prm" ]; then res ok "the metadata names the authorization server the client signs in at ($prm)"
+else res no "the metadata names the authorization server the client signs in at" "none"; fi
+CLIENT=$(mcp_client_token bob bob-demo | jq -r '.access_token // empty') || CLIENT=""
+if [ -z "$CLIENT" ]; then res no "Bob signs in as an AI client (sv-mcp-client), through S&V's own IdP" "no token"
+else
+  check '\\"acting_for\\": \\"bob@.*\\"audience\\": \\"bob-workspace\\"' \
+                                                "an AI client, for Bob: whoami acts as bob, a token minted for the workspace" observability $FRONT call whoami '{}' --token "$CLIENT"
+  check "issuer[^0-9a-z]{0,6}$ISS_RE" "an AI client's call: the workspace's token is the gateway's, not Bob's" observability $FRONT call whoami '{}' --token "$CLIENT"
+  check 'Unknown tool|isError": true|http": 40[13]' "an AI client, for Bob: export_book is still compliance-only" observability $FRONT call export_book '{}' --token "$CLIENT"
+fi
+check 'http": 40[13]|isError": true'            "the front door with a token for another app (kagent): refused" observability $FRONT call whoami '{}' --token "$BOB"
+DANA_CLIENT=$(mcp_client_token dana dana-demo | jq -r '.access_token // empty') || DANA_CLIENT=""
+check 'http": 40[13]|isError": true'            "an AI client for a platform engineer (not an advisor): refused" observability $FRONT call whoami '{}' --token "$DANA_CLIENT"
+
 XAA=http://ai-gateway.agentgateway-system/xaa/ledgerline/mcp
 # Ledgerline's account for Bob: its own user ID (its own Keycloak), or a token
 # an AS outside the lab issued for Bob
@@ -75,25 +133,15 @@ if ras_external; then
   ACCOUNT="issuer[\\\"]*: [\\\"]*$ISS.*ledgerline_account[\\\"]*: [\\\"]*bob|ledgerline_account[\\\"]*: [\\\"]*bob.*issuer[\\\"]*: [\\\"]*$ISS"
   CHAT='bob'
 fi
-# the IdP that should vouch for Bob: his session's (the token's idp claim)
-# when it issues ID-JAGs and is S&V's active tier, else S&V's broker
-# ("sterling-vance"). These checks sign Bob in through S&V's own IdP, which
-# vouches for him; Ledgerline links his seat to it at his first sign-in there.
-SESSION_IDP=$(echo "$BOB" | cut -d. -f2 | python3 -c 'import base64,json,sys; s=sys.stdin.read().strip(); print(json.loads(base64.urlsafe_b64decode(s+"="*(-len(s)%4))).get("idp",""))')
-ACTIVE=$(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.active}' 2>/dev/null) || ACTIVE=""
-VOUCHER=sterling-vance
-if [ -n "$SESSION_IDP" ] && [ "$SESSION_IDP" = "$ACTIVE" ]; then
-  case " $(idp_xaa_upstreams) " in *" $SESSION_IDP "*) VOUCHER=$SESSION_IDP ;; esac
-fi
 step "Cross App Access: Bob's agent -> Ledgerline Research (ID-JAG)"
-ras_external || { ledgerline_signin bob bob-demo || die "Bob could not sign in to Ledgerline through $ACTIVE"; }
 check "$ACCOUNT"                                "account_info: Ledgerline's own account for Bob"  $AGENT $XAA call account_info '{}' --token "$BOB"
+check "$ACCOUNT"                                "an AI client at S&V's front door, for Bob: Ledgerline's own account, through S&V's gateway" observability https://mcp.$SV_DOMAIN/mcp/ledgerline call account_info '{}' --token "$CLIENT"
 # the ID-JAG the gateway verified at the Ledgerline leg (ai-gateway's access
-# log: its claims; the gateway caches Ledgerline's token for up to five minutes)
-if [ "$VOUCHER" = sterling-vance ]; then WANT_ISS="https://idp.$SV_DOMAIN/realms/sterling-vance"
-else WANT_ISS=$(_idp_var "$VOUCHER" ISSUER); fi
+# log: its claims; a fresh one per call, living MCP_TOKEN_LIFETIME at most)
+# S&V's broker vouches for every S&V user, whichever IdP signed them in
+WANT_ISS="https://idp.$SV_DOMAIN/realms/sterling-vance"
 if ! gw_log=$(K logs -n agentgateway-system -l gateway.networking.k8s.io/gateway-name=ai-gateway --since=6m --tail=-1 2>&1); then
-  res no "ID-JAG from $VOUCHER, verified at S&V's egress" "could not read ai-gateway's log: $gw_log"
+  res no "ID-JAG from S&V's broker, verified at S&V's egress" "could not read ai-gateway's log: $gw_log"
 else
   vouched=$(echo "$gw_log" | grep 'route=agentgateway-system/xaa-as-ledgerline ' | grep 'http.status=200 ' | python3 -c '
 import json, sys
@@ -103,12 +151,12 @@ for line in sys.stdin:
     if i >= 0:
         last = json.JSONDecoder().raw_decode(line[i + 5:])[0]
 if last:
-    print(last.get("iss", ""), "aud=%s client_id=%s" % (last.get("aud"), last.get("client_id")))') || vouched=""
-  if [ -n "$vouched" ] && [ "${vouched%% *}" = "${WANT_ISS%/}" ]; then res ok "ID-JAG from $VOUCHER, verified at S&V's egress: ${vouched#* }"
-  else
-    res no "ID-JAG from $VOUCHER, verified at S&V's egress" "${vouched:-no ID-JAG in the ai-gateway log}"
-    [ "$VOUCHER" != sterling-vance ] && echo "      $VOUCHER vouches for a session through it once Bob has signed in to Ledgerline through it (https://idp.$LEDGERLINE_DOMAIN/realms/ledgerline/account)"
-  fi
+    print(last.get("iss", ""), "aud=%s client_id=%s" % (last.get("aud"), last.get("client_id")), int(last.get("exp", 0)) - int(last.get("iat", 0)))') || vouched=""
+  life=${vouched##* }; vouched=${vouched% *}
+  if [ -n "$vouched" ] && [ "${vouched%% *}" = "${WANT_ISS%/}" ]; then res ok "ID-JAG from S&V's broker, verified at S&V's egress: ${vouched#* }"
+  else res no "ID-JAG from S&V's broker, verified at S&V's egress" "${vouched:-no ID-JAG in the ai-gateway log}"; fi
+  if [ -n "$life" ] && [ "$life" -le "$MCP_TOKEN_LIFETIME_S" ] 2>/dev/null; then res ok "the ID-JAG lives ${life}s: no longer than a minted tool token ($MCP_TOKEN_LIFETIME)"
+  else res no "the ID-JAG lives no longer than a minted tool token ($MCP_TOKEN_LIFETIME)" "${life:-no ID-JAG}s"; fi
 fi
 # the token requests go out through ai-gateway's own routes: no one else may use them
 code=$(K exec -n sv-agents probe-bob-assistant -- curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST \
@@ -117,6 +165,28 @@ case "$code" in 401|403) res ok "Bob's agent asks Ledgerline's token endpoint th
   *) res no "Bob's agent asks Ledgerline's token endpoint through the gateway's leg: refused" "HTTP ${code:-no answer}" ;; esac
 check 'overweight'                              "sector_outlook through XAA"                       $AGENT $XAA call sector_outlook '{"sector":"technology"}' --token "$BOB"
 check "$ACCOUNT"                                "another user's ID token is replaced: still Bob"   $AGENT $XAA call account_info '{}' --token "$BOB" --header "x-id-token=$OTHER_ID"
+# every call vouched afresh: as many distinct ID-JAGs as calls through the leg
+# to Ledgerline's AS; and, at Ledgerline's own AS, a token no longer lived
+jags=$(K logs -n agentgateway-system -l gateway.networking.k8s.io/gateway-name=ai-gateway --since=2m --tail=-1 2>/dev/null \
+  | grep 'route=agentgateway-system/xaa-as-ledgerline ' | grep -oE '"jti": "[^"]+"' | sort | uniq -c) || jags=""
+calls=$(echo "$jags" | awk 'NF {n++} END {print n+0}'); reused=$(echo "$jags" | awk '$1 > 1 {n++} END {print n+0}')
+if [ "$calls" -ge 3 ] && [ "$reused" = 0 ]; then res ok "a fresh ID-JAG for every call to Ledgerline ($calls, none reused)"
+else res no "a fresh ID-JAG for every call to Ledgerline" "$calls distinct, $reused reused"; fi
+if ras_external; then
+  skipped "Ledgerline's token lives no longer than the ID-JAG: set at its own AS ($LEDGERLINE_AS_ISSUER)"
+else
+  ll_life=$(K logs -n ledgerline -l gateway.networking.k8s.io/gateway-name=mcp-gateway --since=2m --tail=-1 2>/dev/null | python3 -c '
+import json, sys
+last = None
+for line in sys.stdin:
+    i = line.find(" jwt={")
+    if i >= 0:
+        last = json.JSONDecoder().raw_decode(line[i + 5:])[0]
+if last:
+    print(int(last.get("exp", 0)) - int(last.get("iat", 0)))') || ll_life=""
+  if [ -n "$ll_life" ] && [ "$ll_life" -le "$MCP_TOKEN_LIFETIME_S" ] 2>/dev/null; then res ok "Ledgerline's token lives ${ll_life}s: no longer than the ID-JAG it was given"
+  else res no "Ledgerline's token lives no longer than the ID-JAG it was given" "${ll_life:-no token in the log of Ledgerline gateway}s"; fi
+fi
 # Ledgerline's server records any ID token that reaches it: none may
 # (an unreadable log is a failure, not a clean one)
 if [ -z "$(K get pods -n ledgerline -l app.kubernetes.io/name=ledgerline-research -o name 2>/dev/null)" ]; then
@@ -139,17 +209,15 @@ if [ "$KGATEWAY_EDITION" = enterprise ]; then
 else
   skipped "SQL injection at the edge refused: the WAF is Solo Enterprise for kgateway's"
 fi
-# Ledgerline's own MCP gateway decides per tool from the MCP request itself
-check 'sector_outlook'                          "Ledgerline's catalog is public: listed without a token" $AGENT https://mcp.ledgerline.lab/mcp list
-check 'http": 400.*[Mm]ismatch'                 "a call claiming to be tools/list (mcp-method header): refused at Ledgerline's gateway" $AGENT https://mcp.ledgerline.lab/mcp call sector_outlook '{"sector": "technology"}' --header mcp-method=tools/list
-check 'http": 40[13]|not allowed|[Uu]nknown tool|[Ff]orbidden' \
-                                                "a research call with no Ledgerline token: refused at Ledgerline's gateway" $AGENT https://mcp.ledgerline.lab/mcp call sector_outlook '{"sector": "technology"}'
+# Ledgerline answers nothing without its own token: not even its tool list
+check 'http": 401'                              "Ledgerline with no token: 401, nothing listed" $AGENT https://mcp.ledgerline.lab/mcp list
+check 'http": 401'                              "a research call with no Ledgerline token: 401 at Ledgerline's gateway" $AGENT https://mcp.ledgerline.lab/mcp call sector_outlook '{"sector": "technology"}'
 # and through Bob's agent itself, as in the chat (the model picks the tool)
 if ! why=$(llm_ready); then
   skipped "Bob's agent, in chat: needs the model ($why)"
 else
   ask='{jsonrpc:"2.0",id:"1",method:"message/send",params:{message:{role:"user",kind:"message",messageId:(now|tostring),contextId:$c,parts:[{kind:"text",text:"Which Ledgerline account am I using? Use account_info."}]}}}'
-  out=$(a2a_send "$CHAT_TOKEN" "$(jq -nc --arg c "$(new_uuid)" "$ask")" | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"' 2>&1) || true
+  out=$(a2a_ask "$CHAT_TOKEN" "$(jq -nc --arg c "$(new_uuid)" "$ask")" | jq -r '[.result.history[]? | select(.role=="agent") | .parts[]? | .text // empty] | last // "no reply"' 2>&1) || true
   if echo "$out" | grep -qE "$CHAT"; then res ok "Bob's agent, in chat ($CHAT_VIA): Ledgerline's own account for Bob"
   else res no "Bob's agent, in chat ($CHAT_VIA): Ledgerline's own account for Bob" "$out"; fi
 fi
@@ -239,8 +307,15 @@ else
       | K exec -i -n sv-agents probe-advisor-desk -- sh -c \
         "curl -s -m 180 -o /dev/null -w '%{http_code}' http://ai-gateway.agentgateway-system/v1/chat/completions -H 'content-type: application/json' -d @-"
   }
-  first=$(ask_as_desk "$pad Summarize in one word.") || first=""
-  second=$(ask_as_desk "Say hi.") || second=""
+  # the limit counts per clock minute: a slow model can finish the first call
+  # at the end of one minute and leave the second to the next, so the pair is
+  # tried again only when it straddled a minute
+  for _ in 1 2 3; do
+    first=$(ask_as_desk "$pad Summarize in one word.") || first=""
+    m=$(date -u +%H%M)
+    second=$(ask_as_desk "Say hi.") || second=""
+    [ "$second" != 429 ] && [ "$m" != "$(date -u +%H%M)" ] || break
+  done
   if [ "$second" = 429 ]; then res ok "an agent over its token rate limit: refused (advisor-desk, 2000 tokens a minute)"
   else res no "an agent over its token rate limit: refused (advisor-desk, 2000 tokens a minute)" "first $first, then $second"; fi
   # key "capped" has a budget of one token a day: its second call, at the latest, is over
@@ -300,7 +375,6 @@ gate_says() {  # gate_says <token> <url> [tool]: "<status> <x-continuity-decisio
 if ! K get ns sv-contingency >/dev/null 2>&1 || ! K get idc sterling-vance -n sv-identity -o json | jq -e '.spec.tiers | any(.name == "contingency")' >/dev/null; then
   skipped "failover to a weaker IdP: S&V's contingency IdP isn't in ENTERPRISE_IDP"
 else
-  expect_res() { if echo "$3" | grep -qE "$1"; then res ok "$2"; else res no "$2" "$3"; fi; }
   expect_res '^aal2 pwd otp$' "Bob's sign-in at S&V's own Keycloak took a second factor: idp_acr aal2, idp_amr pwd otp" "$(claim "$BOB" idp_acr) $(claim "$BOB" idp_amr)"
   expect_res '^200 allow advisor-workspace: AAL2 via keycloak' "advisor-workspace (Critical, AAL2): Bob's agent allowed" "$(gate_says "$BOB" "$GW")"
   expect_res '^200 allow ledgerline-research: AAL2 via keycloak' "ledgerline-research (High, AAL2): allowed before anything is exchanged" "$(gate_says "$BOB" "$XAA")"

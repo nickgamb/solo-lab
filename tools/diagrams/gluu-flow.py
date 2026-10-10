@@ -32,18 +32,18 @@ P = dict(bob=C["teal"], solo=C["lime"], gluu=C["amber"], kc=C["kc"])
 NODES = [  # lane, product, kicker, title, body lines
     ("bob", "bob", "Bob · browser", "Signs in to kagent", ["kagent.sterling.lab, passkey", "at S&V's Gluu"]),
     ("svidp", "gluu", "Gluu · S&V's IdP", "Authenticates Bob", ["passkey (acr fido2), OIDC", "code flow + PKCE S256"]),
-    ("plat", "kc", "Keycloak · S&V's broker", "Links Bob, keeps his Gluu tokens", ["Gluu tokens (storeTokens), renewed here;", "S&V session for kagent at the edge"]),
+    ("plat", "kc", "Keycloak · S&V's broker", "Links Bob to his broker account", ["by verified email: the ID-JAG's sub;", "S&V session for kagent at the edge"]),
     ("bob", "bob", "Bob · kagent chat", "Asks his agent", ["“Which Ledgerline account", "am I using?”"]),
     ("plat", "solo", "kagent · Bob's agent", "Calls the Ledgerline tool", ["tools/call account_info to ai-gateway,", "with Bob's S&V access token only"]),
     ("plat", "solo", "agentgateway · S&V egress", "Admits it, checks assurance", ["JWT + agent's SPIFFE ID + advisors; gate:", "AAL2 passkey ✓; idtoken-exchange: ID token"]),
-    ("svidp", "gluu", "Gluu · S&V's IdP", "Vouches for Bob", ["token exchange: ID token", "→ ID-JAG for Ledgerline only"]),
-    ("plat", "solo", "agentgateway · S&V egress", "Checks the ID-JAG", ["verified against Gluu's keys: iss, aud,", "sub, exp, typ, client_id; claims logged"]),
+    ("plat", "kc", "Keycloak · S&V's broker", "Vouches for Bob", ["token exchange as kagent: ID token", "→ ID-JAG for Ledgerline only"]),
+    ("plat", "solo", "agentgateway · S&V egress", "Checks the ID-JAG", ["verified against the broker's keys: iss,", "aud, sub, exp, typ, client_id; claims logged"]),
     ("ll", "gluu", "Gluu · Ledgerline's AS", "Redeems it (RFC 7523)", ["private_key_jwt from S&V;", "a 5-minute token for its Bob"]),
-    ("ll", "solo", "kmcp + Istio · Ledgerline", "Answers as Ledgerline's Bob", ["waypoint and server verify", "Gluu's token; account_info runs"]),
+    ("ll", "solo", "kmcp + agentgateway · Ledgerline", "Answers as Ledgerline's Bob", ["its MCP gateway and server verify", "Gluu's token; account_info runs"]),
     ("bob", "bob", "Bob · kagent chat", "Sees his Ledgerline account", ["“bob”, no consent screen,", "no shared secret"]),
 ]
-EDGES = ["OIDC · PKCE", "ID + refresh token", "signed in", "message", "S&V access token",
-         "Gluu ID token", "ID-JAG", "ID-JAG + private_key_jwt", "Ledgerline token", "result"]
+EDGES = ["OIDC · PKCE", "Gluu ID token", "signed in", "message", "S&V access token",
+         "broker ID token", "ID-JAG", "ID-JAG + private_key_jwt", "Ledgerline token", "result"]
 KEY = {1: "1", 4: "2", 6: "3", 7: "4", 9: "4"}  # edge index -> callout number
 
 def gap_y(i): return ny(i) + NH + (STEP - NH) / 2  # mid gap below node i
@@ -54,9 +54,9 @@ def add(s): out.append(s)
 add(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" '
     'aria-labelledby="t d">')
 add('<title id="t">Gluu: Cross App Access, end to end</title>')
-add('<desc id="d">Bob signs in with a passkey at S&amp;V\'s Gluu; S&amp;V\'s broker keeps his Gluu tokens. His agent calls '
-    'Ledgerline through S&amp;V\'s egress gateway with only his S&amp;V access token. The egress gets his Gluu ID token, '
-    'S&amp;V\'s Gluu issues an ID-JAG, the egress checks it, Ledgerline\'s Gluu redeems it for a Ledgerline token, and '
+add('<desc id="d">Bob signs in with a passkey at S&amp;V\'s Gluu; S&amp;V\'s broker links him to his broker account. His agent calls '
+    'Ledgerline through S&amp;V\'s egress gateway with only his S&amp;V access token. The egress gets his ID token from the broker, '
+    'S&amp;V\'s broker issues an ID-JAG, the egress checks it, Ledgerline\'s Gluu redeems it for a Ledgerline token, and '
     'Ledgerline answers as its own account for Bob.</desc>')
 add('<defs><style>@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap");</style>')
 for name, col in [("a", C["edge"]), ("k", C["lime"])]:
@@ -69,8 +69,8 @@ add(f'<rect width="{W}" height="{H}" fill="{C["bg"]}"/>')
 add(f'<text x="40" y="62" font-family="{SANS}" font-size="32" font-weight="700" fill="{C["ink"]}" letter-spacing="-0.4">'
     'Gluu · Cross App Access, end to end</text>')
 for k, line in enumerate([
-    "Bob signs in with a passkey at S&V's Gluu. His agent reaches Ledgerline as him: S&V's Gluu vouches (ID-JAG), Ledgerline's Gluu redeems it.",
-    "The agent only ever holds Bob's S&V access token. Gluu unreachable: the next IdP vouches. A sign-in below AAL2, or Gluu refusing: refused.",
+    "Bob signs in with a passkey at S&V's Gluu. His agent reaches Ledgerline as him: S&V's broker vouches (ID-JAG), Ledgerline's Gluu redeems it.",
+    "The agent only ever holds Bob's S&V access token. Gluu unreachable: the next IdP signs Bob in, the broker still vouches. Below AAL2: refused.",
 ]):
     add(f'<text x="40" y="{96 + k * 22}" font-family="{SANS}" font-size="15.5" fill="{C["mid"]}">{escape(line)}</text>')
 legend = [("Bob", P["bob"]), ("Solo", P["solo"]), ("Gluu", P["gluu"]), ("Keycloak", P["kc"])]
@@ -204,7 +204,7 @@ def panel(num, x, y, w, tab, caption, lines, leaders=()):
 
 PX, PW = 1340, 720
 def lead(i): return [anchors[i]]
-panel("1", PX, 436, PW, "gluu-id-token.json", "Bob's Gluu ID token, kept by S&V's broker", [
+panel("1", PX, 436, PW, "gluu-id-token.json", "Bob's Gluu ID token, at S&V's broker", [
     "// Gluu → S&V's broker: OIDC code flow, PKCE S256",
     "{",
     '  "iss": "https://sv.gluu.example",',
@@ -213,7 +213,7 @@ panel("1", PX, 436, PW, "gluu-id-token.json", "Bob's Gluu ID token, kept by S&V'
     '  "email": "bob@sterling.lab", "email_verified": true,',
     '  "acr": "fido2", "exp": 1791305100',
     "}",
-    "// refresh token stays in the broker; the egress gets the access token (API v2)",
+    "// the broker links it to Bob's broker account; Ledgerline never sees it",
 ], lead(1))
 panel("2", PX, 768, PW, "tools-call.http", "What the agent sends, and all it holds", [
     "POST /xaa/ledgerline/mcp HTTP/1.1",
@@ -222,25 +222,25 @@ panel("2", PX, 768, PW, "tools-call.http", "What the agent sends, and all it hol
     "// the bearer, decoded: S&V's own token, nothing cross-company",
     "{",
     '  "iss": "https://idp.sterling.lab/realms/sterling-vance",',
-    '  "aud": ["ai-gateway", "mcp-waypoint"], "azp": "kagent",',
+    '  "aud": "ai-gateway", "azp": "kagent",',
     '  "preferred_username": "bob", "groups": ["advisors"]',
     "}",
 ], lead(4))
 panel("3", PX, 1048, PW, "id-jag.jwt", "The ID-JAG, checked at S&V's egress", [
-    "// ai-gateway → S&V's Gluu, as S&V's client there (RFC 8693)",
+    "// ai-gateway → S&V's broker, as kagent (RFC 8693)",
     "grant_type=urn:ietf:params:oauth:grant-type:token-exchange",
     "requested_token_type=urn:ietf:params:oauth:token-type:id-jag",
-    "subject_token=<Bob's Gluu ID token>",
+    "subject_token=<Bob's ID token from the broker>",
     "audience=https://ledgerline.gluu.example",
-    '{ "typ": "oauth-id-jag+jwt", "alg": "RS256" }        ✓ typ, signature',
-    "{",
-    '  "iss": "https://sv.gluu.example",                   ✓ iss',
-    '  "sub": "7c1e0a4e-3d9b-4f61-9b2e-0b0b0b0b0b0b",       ✓ sub',
-    '  "aud": "https://ledgerline.gluu.example",           ✓ aud',
-    '  "client_id": "sterling-vance-kagent",               ✓ client_id',
+    '{ "typ": "oauth-id-jag+jwt", "alg": "RS256" }               ✓ typ, signature',
+    '{',
+    '  "iss": "https://idp.sterling.lab/realms/sterling-vance",  ✓ iss',
+    '  "sub": "a3f1c2d4-5e6f-4a1b-8c2d-0b0b0b0b0b0b",            ✓ sub',
+    '  "aud": "https://ledgerline.gluu.example",                 ✓ aud',
+    '  "client_id": "sterling-vance-kagent",                     ✓ client_id',
     '  "scope": "research:read", "jti": "0b7469b3-ddb6…",',
-    '  "exp": 1791305156                                   ✓ exp, 300 s',
-    "}",
+    '  "exp": 1791305156                                         ✓ exp, 300 s',
+    '}',
 ], lead(6))
 panel("4", PX, 1406, PW, "ledgerline.json", "Ledgerline redeems it, then answers", [
     "// S&V's egress → Ledgerline's Gluu (RFC 7523)",

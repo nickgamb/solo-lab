@@ -15,7 +15,7 @@ oidc:
   secretRef: kagent-oidc      # layer 45
   secretKey: client-secret
   # Pass the user's own Keycloak token to agents instead of a kagent-minted
-  # one: KAGENT_PROPAGATE_TOKEN and the sv-mcp waypoint's RFC 8693 exchange
+  # one: KAGENT_PROPAGATE_TOKEN and the front door's checks on every tool call
   # need it.
   skipOBO: true
 

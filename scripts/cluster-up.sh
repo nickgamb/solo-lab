@@ -106,14 +106,18 @@ ok "caches up; push your own images to localhost:$LAB_REGISTRY_PORT"
 
 step "cloud-provider-kind (LoadBalancer IPs on the kind network)"
 cpk="registry.k8s.io/cloud-provider-kind/cloud-controller-manager:$CLOUD_PROVIDER_KIND_VERSION@$CLOUD_PROVIDER_KIND_DIGEST"
-# a container from another pin is replaced
+# load balancers only: the lab installs its own Gateway API CRDs (layer 00),
+# and a cloud provider installing its own into a rebuilt cluster fails on them
+cpk_args='["--gateway-channel","disabled"]'
+# a container from another pin, or other arguments, is replaced
 if [ -n "$(docker ps -aq -f name='^lab-cloud-provider-kind$')" ] \
-   && [ "$(docker inspect -f '{{.Config.Image}}' lab-cloud-provider-kind)" != "$cpk" ]; then
+   && { [ "$(docker inspect -f '{{.Config.Image}}' lab-cloud-provider-kind)" != "$cpk" ] \
+        || [ "$(docker inspect -f '{{json .Args}}' lab-cloud-provider-kind)" != "$cpk_args" ]; }; then
   docker rm -f lab-cloud-provider-kind >/dev/null
 fi
 if [ -z "$(docker ps -aq -f name='^lab-cloud-provider-kind$')" ]; then
   docker run -d --restart=always --name lab-cloud-provider-kind --network kind \
-    -v "${LAB_DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock" "$cpk" >/dev/null
+    -v "${LAB_DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock" "$cpk" --gateway-channel disabled >/dev/null
 else
   docker start lab-cloud-provider-kind >/dev/null
 fi

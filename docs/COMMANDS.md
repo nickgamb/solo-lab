@@ -41,10 +41,12 @@ the repo root: `bash -c '. scripts/lib.sh; ...'`.
 | `kubectl --context kind-solo-lab -n istio-system logs ds/ztunnel --since=5m \| grep -i -E "deny\|rbac"` | recent connections ztunnel refused |
 
 **Try a call as a real workload identity.** `make bob-verify` and `make tour`
-create probe pods. `probe` (in `sv-agents`, `observability`, and `kagent` for
-the tour) has its own ServiceAccount, so its own SPIFFE ID: some workload,
-nobody special. `probe-bob-assistant` in `sv-agents` runs as Bob's agent's
-ServiceAccount, to call as the agent.
+create probe pods. `probe` (in `sv-agents` and `observability`) has its own
+ServiceAccount, so its own SPIFFE ID: some workload, nobody special.
+`probe-<sa>` runs as a workload's ServiceAccount, to call as it:
+`probe-bob-assistant` in `sv-agents` as Bob's agent, and for `make
+bob-verify` `probe-kagent-ops` and `probe-kagent-controller` in `kagent`,
+`probe-bob-workspace` in `sv-mcp`.
 
 ```bash
 kubectl --context kind-solo-lab -n sv-agents exec probe -- curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://kps-prometheus.observability:9090/-/ready
@@ -54,10 +56,10 @@ kubectl --context kind-solo-lab -n sv-agents exec probe -- curl -s -m 5 -o /dev/
 isn't one.
 
 ```bash
-kubectl --context kind-solo-lab -n sv-agents exec probe-bob-assistant -- python3 /tmp/p.py http://bob-workspace-mcp.sv-mcp:3000/mcp list --token "$(jq -r .access_token /tmp/bob.json)"
+kubectl --context kind-solo-lab -n sv-agents exec probe-bob-assistant -- python3 /tmp/p.py http://ai-gateway.agentgateway-system/mcp/bob-workspace list --token "$(jq -r .access_token /tmp/bob.json)"
 ```
 
-Bob's tools, as his agent (the token is from [Get Bob's tokens](#identity)).
+Bob's tools, as his agent, through the firm's gateway (the token is from [Get Bob's tokens](#identity)).
 `/tmp/p.py` is `tools/mcp-probe.py`: `list`, or `call <tool> '<json args>'`,
 with `--token <jwt>` and `--header name=value`.
 
@@ -72,7 +74,7 @@ with `--token <jwt>` and `--header name=value`.
 | `kubectl --context kind-solo-lab get agentgatewaybackend llm -n agentgateway-system -o jsonpath='{range .spec.ai.groups[*].providers[*]}{.name}{"\n"}{end}'` | the model chain, in failover order (what the Model Continuity tab edits) |
 | `kubectl --context kind-solo-lab get gatewayextension,trafficpolicy -A` | the edge's SSO extensions and where they attach |
 | `kubectl --context kind-solo-lab -n agentgateway-system logs deploy/ai-gateway -f \| grep request` | ai-gateway's access log, live: caller identity, route, JWT claims, status |
-| `kubectl --context kind-solo-lab -n sv-mcp logs deploy/mcp-waypoint -f \| grep request` | the MCP waypoint's access log: tool, user, allowed or refused |
+| `kubectl --context kind-solo-lab -n agentgateway-system logs deploy/ai-gateway -f \| grep request \| grep mcp.tool.name` | the MCP calls in ai-gateway's access log: tool, user, allowed or refused |
 | `kubectl --context kind-solo-lab -n meridian logs deploy/meridian -f \| grep request` | Meridian's gateway |
 | `kubectl --context kind-solo-lab -n kgateway-system logs deploy/edge -f` | the edge (Envoy) |
 | `make llm LLM_PROVIDER=ollama` | point ai-gateway's model route at a provider |
@@ -80,7 +82,8 @@ with `--token <jwt>` and `--header name=value`.
 
 **Use the firm's model from your laptop.** `https://llm.sterling.lab/v1` takes
 OpenAI chat completions and Anthropic messages with the key in
-`.lab/secrets.env`; prompt guards, failover and pricing apply as for agents.
+`.lab/secrets.env` (`/v1` only, up to 180 s a call); prompt guards, failover
+and pricing apply as for agents.
 Claude Code, for one:
 
 ```bash
@@ -94,7 +97,7 @@ ANTHROPIC_BASE_URL=https://llm.sterling.lab ANTHROPIC_AUTH_TOKEN="$(grep '^LLM_A
 | `curl -s https://idp.sterling.lab/realms/sterling-vance/.well-known/openid-configuration \| jq` | S&V's issuer and endpoints (same for `idp.alice.lab/realms/alice`, `idp.ledgerline.lab/realms/ledgerline`, `idp.ops.lab/realms/ops`) |
 | `grep -E 'KC_ADMIN_PASSWORD' .lab/secrets.env` | each Keycloak's admin password (user `admin`) |
 | `kubectl --context kind-solo-lab -n sv-identity port-forward svc/keycloak 18080:80` | S&V broker's admin console at http://127.0.0.1:18080/admin (the edge publishes only the realm; same for `sv-workforce`, `ops-identity`, `alice-identity`, `ledgerline-identity`) |
-| `make xaa-logs SINCE=2h` | the Cross App Access trail: both token requests, the ID-JAG's claims and every check, tokens redacted |
+| `make xaa-logs SINCE=2h` | the Cross App Access trail: both token requests (S&V's broker, Ledgerline's AS), the ID-JAG's claims and every check, tokens redacted |
 | `kubectl --context kind-solo-lab -n sv-identity logs deploy/keycloak --since=10m \| grep -i -E "claim\|IDENTITY_PROVIDER\|error"` | sign-in and broker errors (it names the claim or step that failed) |
 
 **Get Bob's tokens** (the scripted browser sign-in the checks use: kagent's
@@ -148,7 +151,7 @@ jq -r .access_token /tmp/bob.json | jq -R 'split(".")[1] | gsub("-";"+") | gsub(
 | `kubectl --context kind-solo-lab get validatingadmissionpolicy assurance-gate-fail-closed -o jsonpath='{.spec.validations[*].expression}'` | the admission rule that holds every policy asking a gate to FailClosed (its binding selects the gates by label) |
 | `kubectl --context kind-solo-lab get referencegrant,authorizationpolicy -n sv-identity -l continuity.lab.solo.io/assurance-gate-caller` | the grants the Observatory added when enforcement was turned on at another gateway |
 | `kubectl --context kind-solo-lab -n sv-identity logs -l app=assurance-gate --prefix -f \| grep '"msg":"decision"'` | the gate's decisions: rule, allow, deny or would-deny, why, the session's IdP and acr |
-| `kubectl --context kind-solo-lab -n sv-mcp logs deploy/mcp-waypoint \| grep -o 'continuity.decision="[^"]*"'` | the decisions as the waypoint logged them |
+| `kubectl --context kind-solo-lab -n agentgateway-system logs deploy/ai-gateway \| grep -o 'continuity.decision="[^"]*"'` | the decisions as ai-gateway logged them |
 | `kubectl --context kind-solo-lab patch wlp advisor-workspace -n sv-identity --type merge -p '{"spec":{"assurance":{"minimum":"AAL1"}}}'` | change what a rule requires (the gate applies it to the next request) |
 | `kubectl --context kind-solo-lab patch wlp advisor-workspace -n sv-identity --type merge -p '{"spec":{"mode":"ReportOnly"}}'` | let its refusals through, logged as `would-deny`, to see a change's effect first (`Enforce` to enforce again) |
 | `kubectl --context kind-solo-lab -n sv-identity port-forward svc/assurance-gate 19002:evaluate` | the gate's evaluate port on your machine (its mesh policy lets only the Observatory call it in the cluster) |

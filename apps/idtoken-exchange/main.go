@@ -1,8 +1,9 @@
 // idtoken-exchange: agentgateway's external processor (ext_proc) for Cross App
 // Access. Given the caller's access token the gateway verified, it sets
-// x-id-token to an OIDC ID token for the same user from the enterprise IdP
-// that vouches for them, which the gateway then trades for an ID-JAG
-// (demos/bob/manifests/xaa/ledgerline.yaml).
+// x-id-token to an OIDC ID token for the same user from S&V's broker, which
+// the gateway then trades there for an ID-JAG
+// (demos/bob/manifests/xaa/ledgerline.yaml). The broker vouches for every S&V
+// user, whichever upstream IdP signed them in, so a partner trusts one issuer.
 //
 // It exists because the agent doesn't have the ID token: kagent passes agents
 // the caller's access token, not the ID token. And agentgateway's own token
@@ -10,33 +11,10 @@
 // while RFC 8693 (2.2.1) has an IdP return N_A for a token that isn't an
 // access token, as Keycloak does for an ID token.
 //
-// Which IdP: the one the user's session came from (the access token's idp
-// claim, Keycloak's identity_provider session note), when it is an upstream
-// that issues ID-JAGs (OPS, scripts/idp.sh xaa_env); otherwise S&V's Keycloak,
-// for its own sessions and for upstreams that don't issue ID-JAGs. A session
-// from an upstream that S&V's identity continuity no longer has active
-// (CONTINUITY, the IdentityContinuity's status.active) is refused: the user
-// signs in again. The controller alone decides failover, and an upstream that
-// isn't active is never called.
-//
-//	upstream  S&V's broker brokers the user's sign-in there and keeps their
-//	          upstream tokens. Its Identity Brokering API v2 gives the
-//	          user's upstream access token, renewed by the broker with the
-//	          stored refresh token (which never leaves it), to client
-//	          xaa-egress alone (its own key, for those upstreams only) with
-//	          the user's own access token. The upstream then exchanges that
-//	          access token for the user's ID token (RFC 8693), as S&V's
-//	          client there (private_key_jwt), so the upstream decides on
-//	          every call. S&V is a confidential client there, so the refresh
-//	          token is not rotated (RFC 9700 4.14.2) and nothing is kept
-//	          between replicas. A user with no account there gets S&V's
-//	          Keycloak; an upstream that refuses (revoked, disabled) refuses
-//	          the call.
-//	keycloak  RFC 8693 at S&V's Keycloak, as the requesting app (kagent):
-//	            subject_token=<access token>  subject_token_type=...:access_token
-//	            requested_token_type=...:id_token  scope=openid
-//	          Keycloak issues it only for a live session of that user and
-//	          client, so the ID token belongs to the same sign-in.
+// At the broker, as the requesting app (kagent): RFC 8693 for a refresh token
+// in the user's session, then that refresh token for the ID token (exchange,
+// below). The broker issues them only for a live session of that user, so the
+// ID token belongs to the same sign-in.
 package main
 
 import (
@@ -63,11 +41,10 @@ import (
 )
 
 const (
-	tokenExchange   = "urn:ietf:params:oauth:grant-type:token-exchange"
-	typeAccessToken = "urn:ietf:params:oauth:token-type:access_token"
-	typeIDToken     = "urn:ietf:params:oauth:token-type:id_token"
-	// how long an upstream ID token is reused before the upstream is asked again
-	upstreamTTL = time.Minute
+	tokenExchange    = "urn:ietf:params:oauth:grant-type:token-exchange"
+	typeAccessToken  = "urn:ietf:params:oauth:token-type:access_token"
+	typeIDToken      = "urn:ietf:params:oauth:token-type:id_token"
+	typeRefreshToken = "urn:ietf:params:oauth:token-type:refresh_token"
 	// how many ID tokens are cached at most
 	maxCached = 10000
 )
@@ -79,31 +56,21 @@ func env(k, def string) string {
 	return def
 }
 
-// op is an OpenID Provider and S&V's client there.
+// op is S&V's broker and S&V's client there.
 type op struct {
-	Name     string `json:"name"`
-	Issuer   string `json:"issuer"`
-	TokenURL string `json:"token_url"`
-	ClientID string `json:"client_id"`
-	Auth     string `json:"auth"` // private_key_jwt, client_secret_post or client_secret_basic
-	secret   string
-	key      *clientKey
+	Name, TokenURL, ClientID string
+	Auth                     string // client_secret_post or client_secret_basic
+	secret                   string
 }
 
 // exchanger turns access tokens into ID tokens, caching each for a while.
 type exchanger struct {
-	keycloak   op   // S&V's Keycloak, as kagent: the ID token, the floor
-	broker     op   // S&V's Keycloak, as the client that may read stored upstream tokens
-	upstreams  []op // ID-JAG-issuing upstreams, in failover order
-	brokerURL  string
-	hc         *http.Client
-	now        func() time.Time
-	staleAfter time.Duration // how long the last read of the active tier stays good
+	broker op // S&V's broker, as kagent
+	hc     *http.Client
+	now    func() time.Time
 
-	mu     sync.Mutex
-	known  bool   // the active tier has been read, and isn't stale
-	active string // the active tier; "" when no upstream is active
-	cache  map[[32]byte]cached
+	mu    sync.Mutex
+	cache map[[32]byte]cached
 }
 
 type cached struct {
@@ -112,61 +79,20 @@ type cached struct {
 }
 
 var (
-	// errRefused: an IdP declined (bad or expired subject token, no live
-	// session, revoked or disabled upstream account): the caller is refused.
+	// errRefused: the broker declined (bad or expired subject token, no live
+	// session): the caller is refused.
 	errRefused = errors.New("refused")
-	// errUnavailable: the upstream didn't answer, or answered 5xx.
-	errUnavailable = errors.New("upstream unavailable")
-	// errNoActive: the active tier isn't known yet.
-	errNoActive = errors.New("active tier unknown")
+	// errUnavailable: the broker didn't answer, or answered 5xx.
+	errUnavailable = errors.New("broker unavailable")
 )
-
-// setActive records the active tier read from the IdentityContinuity; a
-// change drops every cached ID token, so nothing from the previous IdP is
-// handed out after failover.
-func (x *exchanger) setActive(tier string) {
-	x.mu.Lock()
-	defer x.mu.Unlock()
-	if x.known && tier == x.active {
-		return
-	}
-	slog.Info("active tier", "from", x.active, "to", tier)
-	x.known, x.active = true, tier
-	x.cache = map[[32]byte]cached{}
-}
-
-// forget drops the active tier when the last read of it went stale: no
-// answers until it is read again.
-func (x *exchanger) forget() {
-	x.mu.Lock()
-	defer x.mu.Unlock()
-	if !x.known {
-		return
-	}
-	slog.Warn("active tier stale", "was", x.active)
-	x.known, x.active = false, ""
-	x.cache = map[[32]byte]cached{}
-}
-
-// ready: the active tier is known.
-func (x *exchanger) ready() bool {
-	x.mu.Lock()
-	defer x.mu.Unlock()
-	return x.known
-}
 
 func (x *exchanger) idToken(ctx context.Context, accessToken string) (id, source string, err error) {
 	key := sha256.Sum256([]byte(accessToken))
 	now := x.now()
 	x.mu.Lock()
-	active := x.active
-	if !x.known {
-		x.mu.Unlock()
-		return "", "", errNoActive
-	}
 	if c, ok := x.cache[key]; ok && now.Before(c.exp) {
 		x.mu.Unlock()
-		return c.idToken, payload(c.idToken).Iss, nil
+		return c.idToken, x.broker.Name, nil
 	}
 	for k, c := range x.cache { // small and short-lived: prune on the way
 		if !now.Before(c.exp) {
@@ -175,43 +101,16 @@ func (x *exchanger) idToken(ctx context.Context, accessToken string) (id, source
 	}
 	x.mu.Unlock()
 
-	source, ttl := x.keycloak.Name, time.Duration(0)
-	if sess := payload(accessToken).IdP; sess != "" {
-		if active == "" {
-			return "", sess, fmt.Errorf("%w: the session came from %s, and no upstream IdP is active: sign in again", errRefused, sess)
-		}
-		if sess != active {
-			return "", sess, fmt.Errorf("%w: the session came from %s, which is no longer the active IdP (%s): sign in again", errRefused, sess, active)
-		}
-		for _, u := range x.upstreams {
-			if u.Name != sess {
-				continue
-			}
-			if id, err = x.fromUpstream(ctx, accessToken, u); err != nil {
-				return "", u.Name, err
-			}
-			source, ttl = u.Name, upstreamTTL
-		}
+	if id, err = x.exchange(ctx, accessToken); err != nil {
+		return "", x.broker.Name, err
 	}
-	if id == "" {
-		if id, err = x.exchange(ctx, accessToken); err != nil {
-			return "", source, err
-		}
-	}
-	// cache until the earlier of the two expiries, less a little slack, and
-	// an upstream's for no longer than upstreamTTL
-	exp := earliest(expiry(id), expiry(accessToken)).Add(-10 * time.Second)
-	if ttl > 0 {
-		exp = earliest(exp, now.Add(ttl))
-	}
-	if exp.After(now) {
+	// cache until the earlier of the two expiries, less a little slack
+	if exp := earliest(expiry(id), expiry(accessToken)).Add(-10 * time.Second); exp.After(now) {
 		x.mu.Lock()
-		if x.known && x.active == active { // not if failover happened meanwhile
-			x.store(key, cached{idToken: id, exp: exp}, now)
-		}
+		x.store(key, cached{idToken: id, exp: exp}, now)
 		x.mu.Unlock()
 	}
-	return id, source, nil
+	return id, x.broker.Name, nil
 }
 
 // store caches c under key, keeping at most maxCached entries: expired ones
@@ -237,90 +136,45 @@ func (x *exchanger) store(key [32]byte, c cached, now time.Time) {
 	x.cache[key] = c
 }
 
-// exchange gets the ID token from S&V's Keycloak (RFC 8693).
+// exchange gets the ID token from S&V's broker in two steps. RFC 8693 for a
+// refresh token in the user's own session (the kagent client's
+// enableRefreshRequestedTokenType SAME_SESSION), which gives kagent a lasting
+// client session in it, then that refresh token for the ID token. An ID token
+// exchanged for directly carries only a transient client session, and the
+// broker issues an ID-JAG only for a session the requesting app (kagent) is
+// in: a user who signed in through another of S&V's apps (the Solo UI's
+// kagent-ui) would be refused. The refresh token never leaves this request.
 func (x *exchanger) exchange(ctx context.Context, accessToken string) (string, error) {
-	var out struct {
-		AccessToken     string `json:"access_token"` // RFC 8693 carries any issued token here
+	var rt struct {
+		RefreshToken    string `json:"refresh_token"`
 		IssuedTokenType string `json:"issued_token_type"`
 	}
-	if err := x.tokenRequest(ctx, x.keycloak, url.Values{
+	if err := x.tokenRequest(ctx, x.broker, url.Values{
 		"grant_type":           {tokenExchange},
 		"subject_token":        {accessToken},
 		"subject_token_type":   {typeAccessToken},
-		"requested_token_type": {typeIDToken},
+		"requested_token_type": {typeRefreshToken},
 		"scope":                {"openid"},
-	}, &out); err != nil {
+	}, &rt); err != nil {
 		return "", err
 	}
-	if out.IssuedTokenType != typeIDToken || out.AccessToken == "" {
-		return "", fmt.Errorf("token endpoint issued %q, not an ID token", out.IssuedTokenType)
+	if rt.IssuedTokenType != typeRefreshToken || rt.RefreshToken == "" {
+		return "", fmt.Errorf("token endpoint issued %q, not a refresh token", rt.IssuedTokenType)
 	}
-	return out.AccessToken, nil
-}
-
-// fromUpstream reads the user's tokens from upstream u out of S&V's Keycloak
-// and renews the ID token there.
-func (x *exchanger) fromUpstream(ctx context.Context, accessToken string, u op) (string, error) {
-	form := url.Values{"token": {accessToken}}
-	user, pass, err := x.broker.authenticate(form, x.now()) // as xaa-egress, the one client allowed
-	if err != nil {
-		return "", err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, x.brokerURL+"/"+url.PathEscape(u.Name)+"/token", strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if user != "" {
-		req.SetBasicAuth(user, pass)
-	}
-	resp, err := x.hc.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("broker: %w", err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	switch {
-	case resp.StatusCode != http.StatusOK: // a session from u always has its tokens: anything else fails closed
-		return "", fmt.Errorf("broker: HTTP %d: %s", resp.StatusCode, oauthError(body))
-	}
-	var stored struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.Unmarshal(body, &stored); err != nil {
-		return "", fmt.Errorf("broker: %w", err)
-	}
-	if stored.AccessToken == "" {
-		return "", fmt.Errorf("%w: %s: no upstream token stored for this session", errRefused, u.Name)
-	}
-	return x.idTokenAt(ctx, u, stored.AccessToken)
-}
-
-// idTokenAt has upstream u exchange the user's access token there for their
-// ID token there (RFC 8693), as S&V's client at u.
-func (x *exchanger) idTokenAt(ctx context.Context, u op, accessToken string) (string, error) {
 	var out struct {
-		AccessToken     string `json:"access_token"` // RFC 8693 carries any issued token here
-		IDToken         string `json:"id_token"`
-		IssuedTokenType string `json:"issued_token_type"`
+		IDToken string `json:"id_token"`
 	}
-	if err := x.tokenRequest(ctx, u, url.Values{
-		"grant_type":           {tokenExchange},
-		"subject_token":        {accessToken},
-		"subject_token_type":   {typeAccessToken},
-		"requested_token_type": {typeIDToken},
-		"scope":                {"openid"},
+	if err := x.tokenRequest(ctx, x.broker, url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {rt.RefreshToken},
+		"scope":         {"openid"},
 	}, &out); err != nil {
 		return "", err
 	}
-	id := out.AccessToken
-	if out.IssuedTokenType != typeIDToken {
-		id = out.IDToken
+	if out.IDToken == "" {
+		return "", errors.New("token endpoint returned no ID token")
 	}
-	if id == "" {
-		return "", fmt.Errorf("%s: token exchange returned no ID token", u.Name)
-	}
-	return id, nil
+	return out.IDToken, nil
 }
 
 // tokenRequest POSTs a form to o's token endpoint as S&V's client there. A
@@ -373,7 +227,6 @@ func oauthError(body []byte) string {
 func payload(jwt string) (c struct {
 	Exp int64  `json:"exp"`
 	Sub string `json:"sub"`
-	IdP string `json:"idp"`
 	Iss string `json:"iss"`
 	Aud any    `json:"aud"`
 	Jti string `json:"jti"`
@@ -404,77 +257,25 @@ func earliest(a, b time.Time) time.Time {
 	return a
 }
 
-// loadOPs reads OPS (JSON, the last entry S&V's Keycloak) and S&V's
-// credential at each from dir.
-func loadOPs(raw, dir string) (keycloak op, upstreams []op, err error) {
-	var ops []op
-	if err := json.Unmarshal([]byte(raw), &ops); err != nil || len(ops) == 0 {
-		return op{}, nil, fmt.Errorf("OPS: a JSON list, S&V's Keycloak last: %v", err)
-	}
-	for i := range ops {
-		if ops[i].Name == "" || ops[i].TokenURL == "" || ops[i].ClientID == "" {
-			return op{}, nil, fmt.Errorf("OPS[%d]: name, token_url and client_id are required", i)
-		}
-		if err := ops[i].loadCredential(dir); err != nil {
-			return op{}, nil, err
-		}
-	}
-	return ops[len(ops)-1], ops[:len(ops)-1], nil
-}
-
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	keycloak, upstreams, err := loadOPs(os.Getenv("OPS"), env("SECRETS_DIR", "/var/run/secrets/op"))
-	if err != nil {
+	broker := op{Name: env("BROKER_NAME", "sterling-vance"),
+		TokenURL: env("TOKEN_URL", "http://keycloak.sv-identity/realms/sterling-vance/protocol/openid-connect/token"),
+		ClientID: env("CLIENT_ID", "kagent"), Auth: env("CLIENT_AUTH", "client_secret_basic")}
+	if err := broker.loadCredential(env("SECRETS_DIR", "/var/run/secrets/op")); err != nil {
 		slog.Error("config", "err", err)
 		os.Exit(1)
-	}
-	broker := op{Name: "broker", Issuer: keycloak.Issuer, TokenURL: keycloak.TokenURL,
-		ClientID: env("BROKER_CLIENT_ID", "xaa-egress"), Auth: "private_key_jwt"}
-	if len(upstreams) > 0 {
-		if err := broker.loadCredential(env("SECRETS_DIR", "/var/run/secrets/op")); err != nil {
-			slog.Error("config", "err", err)
-			os.Exit(1)
-		}
 	}
 	hc, err := caClient(os.Getenv("CA_FILE"))
 	if err != nil {
 		slog.Error("CA_FILE", "err", err)
 		os.Exit(1)
 	}
-	x := &exchanger{
-		keycloak:   keycloak,
-		broker:     broker,
-		upstreams:  upstreams,
-		brokerURL:  env("BROKER_URL", "http://keycloak.sv-identity/realms/sterling-vance/broker"),
-		hc:         hc,
-		now:        time.Now,
-		staleAfter: defaultStaleAfter,
-		cache:      map[[32]byte]cached{},
-	}
-	names := []string{}
-	for _, u := range upstreams {
-		names = append(names, u.Name+" ("+u.Auth+")")
-	}
-	sa := env("SA_DIR", "/var/run/secrets/kubernetes.io/serviceaccount")
-	api, err := kubeClient(sa + "/ca.crt")
-	if err != nil {
-		slog.Error("kubernetes client", "err", err)
-		os.Exit(1)
-	}
-	base := "https://" + os.Getenv("KUBERNETES_SERVICE_HOST") + ":" + env("KUBERNETES_SERVICE_PORT", "443")
-	go x.watchActive(ctx, api, base, sa+"/token", env("CONTINUITY", "sv-identity/sterling-vance"), 2*time.Second)
+	x := &exchanger{broker: broker, hc: hc, now: time.Now, cache: map[[32]byte]cached{}}
 
-	// readiness: not ready until it knows which IdP vouches
 	health := &http.Server{Addr: env("HEALTH_LISTEN", ":8081"), ReadHeaderTimeout: 5 * time.Second,
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			if !x.ready() {
-				http.Error(w, "active tier unknown", http.StatusServiceUnavailable)
-				return
-			}
-			w.Write([]byte("ok"))
-		})}
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })}
 	go func() {
 		if err := health.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("health", "err", err)
@@ -490,7 +291,7 @@ func main() {
 	srv := grpc.NewServer()
 	extproc.RegisterExternalProcessorServer(srv, &processor{x: x})
 	go func() {
-		slog.Info("listening (ext_proc)", "addr", lis.Addr().String(), "upstreams", names, "keycloak", keycloak.TokenURL, "client_id", keycloak.ClientID)
+		slog.Info("listening (ext_proc)", "addr", lis.Addr().String(), "broker", broker.TokenURL, "client_id", broker.ClientID)
 		if err := srv.Serve(lis); err != nil {
 			slog.Error("server", "err", err)
 			os.Exit(1)

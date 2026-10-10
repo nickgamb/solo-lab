@@ -25,5 +25,6 @@ tiers:
   contingency:
     attributes:
     - {attribute: department, path: department}
-# The scheduled directory sync (optional; without it, run it on demand).
+# The directory sync's schedule (optional; without it, SV_SYNC_SCHEDULE in
+# config/lab.env).
 # sync: {schedule: "0 * * * *", suspend: false}

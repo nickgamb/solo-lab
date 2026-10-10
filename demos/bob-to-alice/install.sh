@@ -55,6 +55,17 @@ ok "uma-as uma-pep alice-vault-mcp portal agent-adapter"
 step "CloudNativePG operator (Alice's database)"
 K create namespace cnpg-system --dry-run=client -o yaml | K apply -f - >/dev/null
 K label namespace cnpg-system istio.io/dataplane-mode=ambient lab.solo.io/party=platform --overwrite >/dev/null
+# mutual TLS mesh-wide (layer 80), but the API server calls the operator's
+# admission webhook from outside the mesh
+K apply -f - >/dev/null <<'YAML'
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: webhook, namespace: cnpg-system}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: cloudnative-pg}}
+  mtls: {mode: STRICT}
+  portLevelMtls: {"9443": {mode: PERMISSIVE}}
+YAML
 helm_up cnpg cloudnative-pg "$CNPG_VERSION" cnpg-system --repo https://cloudnative-pg.github.io/charts
 deny_internet cnpg-system
 

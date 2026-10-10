@@ -3,14 +3,14 @@
 # Each says only what differs from the chain's assurancePolicy (AAL1, any IdP,
 # no break-glass). Owned with the firm's identity chain, in sv-identity. The
 # assurance gate enforces them at the workloads' policy points
-# (20-waypoint.yaml, xaa/ledgerline.yaml); the Observatory's Identity
+# (20-front-door.yaml, xaa/ledgerline.yaml); the Observatory's Identity
 # Continuity tab edits them (Assurance rules).
 apiVersion: continuity.lab.solo.io/v1alpha1
 kind: WorkloadProfile
 metadata: {name: advisor-workspace, namespace: sv-identity}
 spec:
   continuity: sterling-vance
-  description: Bob's workspace tools (client book, calendar, notes) behind the sv-mcp waypoint, used by his agents on his behalf
+  description: Bob's workspace tools (client book, calendar, notes) behind the firm's front door, used by his agents on his behalf
   criticality: Critical
   obligations: [client-data, books-and-records]
   owner: Wealth platform
@@ -29,7 +29,7 @@ spec:
   owner: Research desk
   workloads: [{namespace: agentgateway-system, serviceAccount: ai-gateway}]
   clients: [kagent, kagent-ui]
-  # the IdP that vouches for Bob to Ledgerline is the one signing him in
+  # Bob's session must come from the IdP that is active now
   sessions: ActiveIdPOnly
   assurance: {minimum: AAL2}
 ---

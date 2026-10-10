@@ -64,6 +64,7 @@ type builder struct {
 	orders  map[string]int      // party -> declared order
 	envE    map[string]bool     // edges derived from workload env
 	sso     []SSO
+	trusts  []Trust
 	ctl     string // the kagent controller's node
 }
 
@@ -74,6 +75,14 @@ type SSO struct {
 	IdP    []string `json:"idp"`  // node ids of the provider
 	Apps   []string `json:"apps"` // node ids of the protected app
 	Hosts  []string `json:"hosts"`
+}
+
+// Trust is a gateway policy that verifies an issuer's tokens, and what the
+// calls it admits reach.
+type Trust struct {
+	Issuer   string
+	Gateways []string // node ids
+	Targets  []string // node ids behind its routes or backends
 }
 
 var urlRe = regexp.MustCompile(`https?://[A-Za-z0-9.\-]+(:[0-9]+)?[^\s"']*`)
@@ -99,7 +108,7 @@ func Build(k *Kube, observed []Observed) (Graph, *Index) {
 	b.substrate()
 	b.observed(observed)
 	b.finish()
-	return b.g, &Index{byPod: b.byPod, bySA: b.bySA, byOwner: b.byOwner, hosts: b.hosts, svcWL: b.svcWL, nodes: b.nodes, edgeGW: b.edgeGW, l4: b.l4, sso: b.sso, next: b.adjacency()}
+	return b.g, &Index{byPod: b.byPod, bySA: b.bySA, byOwner: b.byOwner, hosts: b.hosts, svcWL: b.svcWL, nodes: b.nodes, edgeGW: b.edgeGW, l4: b.l4, sso: b.sso, trusts: b.trusts, next: b.adjacency()}
 }
 
 func (b *builder) namespaces() {
@@ -710,6 +719,9 @@ func (b *builder) identityEdges() {
 				n.Related = append(n.Related, *refOf(pol))
 			}
 		}
+		if t := b.trustOf(pol, gws); len(t.Targets) > 0 {
+			b.trusts = append(b.trusts, t)
+		}
 		walk(pol.Object["spec"], func(m map[string]any) {
 			r := obj(m, "backendRef")
 			if r == nil {
@@ -773,6 +785,115 @@ func (b *builder) identityEdges() {
 			b.nodes[id].Related = append(b.nodes[id].Related, *refOf(pol))
 		}
 	}
+}
+
+// trustOf: the issuer a policy verifies tokens from, and where the routes or
+// backends it guards send the calls.
+func (b *builder) trustOf(pol *unstructured.Unstructured, gws []string) Trust {
+	t := Trust{Gateways: gws}
+	for _, p := range slice(pol.Object, "spec", "traffic", "jwtAuthentication", "providers") {
+		if iss := str(p.(map[string]any), "issuer"); iss != "" {
+			t.Issuer = iss
+			break
+		}
+	}
+	if t.Issuer == "" {
+		return t
+	}
+	ns := pol.GetNamespace()
+	for _, tr := range slice(pol.Object, "spec", "targetRefs") {
+		tm := tr.(map[string]any)
+		switch str(tm, "kind") {
+		case "HTTPRoute":
+			for _, r := range b.k.List("httproutes") {
+				if r.GetNamespace() != ns || r.GetName() != str(tm, "name") {
+					continue
+				}
+				for _, rule := range slice(r.Object, "spec", "rules") {
+					for _, br := range slice(rule.(map[string]any), "backendRefs") {
+						t.Targets = appendUniq(t.Targets, b.landsAt(br.(map[string]any), ns)...)
+					}
+				}
+			}
+		case "AgentgatewayBackend":
+			t.Targets = appendUniq(t.Targets, b.landsAt(map[string]any{"kind": "AgentgatewayBackend", "name": str(tm, "name")}, ns)...)
+		}
+	}
+	return t
+}
+
+// landsAt: the workloads a backend reference's calls end at. A host the edge
+// serves is the workloads behind it (not the edge), and MCP targets picked
+// by label are the services they pick.
+func (b *builder) landsAt(bm map[string]any, ns string) []string {
+	if str(bm, "kind") != "AgentgatewayBackend" {
+		ids, _ := b.backendRef(bm, ns)
+		return ids
+	}
+	if v := str(bm, "namespace"); v != "" {
+		ns = v
+	}
+	var be *unstructured.Unstructured
+	for _, x := range b.k.List("agentgatewaybackends") {
+		if x.GetNamespace() == ns && x.GetName() == str(bm, "name") {
+			be = x
+		}
+	}
+	if be == nil {
+		return nil
+	}
+	host := func(h string) []string {
+		if b.edgeHost(h) {
+			return b.hosts[h]
+		}
+		return b.resolveHost(h, ns)
+	}
+	var out []string
+	for _, t := range slice(be.Object, "spec", "mcp", "targets") {
+		tm := t.(map[string]any)
+		if s := obj(tm, "static"); s != nil {
+			if r := obj(s, "backendRef"); r != nil {
+				ids, _ := b.backendRef(r, ns)
+				out = appendUniq(out, ids...)
+			} else {
+				out = appendUniq(out, host(str(s, "host"))...)
+			}
+		}
+		if sel := obj(tm, "selector"); sel != nil {
+			out = appendUniq(out, b.selected(sel, ns)...)
+		}
+	}
+	if s := obj(be.Object, "spec", "static"); s != nil {
+		out = appendUniq(out, host(str(s, "host"))...)
+	}
+	if len(out) == 0 {
+		out, _ = b.backendTargets(be)
+	}
+	return out
+}
+
+// selected: the workloads behind the services an MCP selector picks.
+func (b *builder) selected(sel map[string]any, ns string) []string {
+	inNS := map[string]bool{}
+	if obj(sel, "namespaces") == nil {
+		inNS[ns] = true
+	} else {
+		nsSel := labels.SelectorFromSet(strmap(sel, "namespaces", "matchLabels"))
+		for _, n := range b.k.List("namespaces") {
+			if nsSel.Matches(labels.Set(n.GetLabels())) {
+				inNS[n.GetName()] = true
+			}
+		}
+	}
+	svcSel := labels.SelectorFromSet(strmap(sel, "services", "matchLabels"))
+	var out []string
+	for k, svc := range b.svcObj {
+		if inNS[svc.GetNamespace()] && svcSel.Matches(labels.Set(svc.GetLabels())) {
+			out = appendUniq(out, b.reach(k)...)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (b *builder) policyTargets(pol *unstructured.Unstructured) []string {
@@ -987,6 +1108,13 @@ func (b *builder) brokerSignIns() {
 	for _, ic := range b.k.List("identitycontinuities") {
 		issuer := str(ic.Object, "status", "broker", "issuer")
 		broker := b.resolveURL(str(ic.Object, "spec", "broker", "keycloak", "url"), ic.GetNamespace())
+		// the broker is how the gateways resolve the identity fabric, not
+		// another IdP: drawn as the fabric, with what runs it underneath
+		for _, id := range broker {
+			if n := b.nodes[id]; n != nil && n.Kind != "fabric" {
+				n.Kind, n.Sub, n.Label = "fabric", n.Label, "Identity fabric"
+			}
+		}
 		if issuer == "" || len(broker) == 0 {
 			continue
 		}
@@ -1000,8 +1128,8 @@ func (b *builder) brokerSignIns() {
 				}
 				h := u.Hostname()
 				for _, app := range b.hosts[h] {
-					// another IdP federating to the broker (a partner's
-					// Keycloak) is an identity provider, not an app
+					// an IdP federating to the broker (one of the firm's
+					// own, such as its Keycloak) is an identity provider, not an app
 					if n := b.nodes[app]; n != nil && n.Kind == "idp" {
 						continue
 					}
@@ -1247,7 +1375,7 @@ func kindFor(n *Node) string {
 		return "http"
 	}
 	switch n.Kind {
-	case "idp":
+	case "idp", "fabric":
 		return "oidc"
 	case "mcp":
 		return "mcp"

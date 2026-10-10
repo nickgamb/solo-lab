@@ -33,7 +33,7 @@ spec:
       jwksURI: https://idp.${SV_DOMAIN}/realms/sterling-vance/protocol/openid-connect/certs
       jwksBackendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}
       accessToken:
-        audiences: [ai-gateway, mcp-waypoint]
+        audiences: [ai-gateway]
         claimsToHeaders:
         - {name: preferred_username, header: x-user-id}
 ---

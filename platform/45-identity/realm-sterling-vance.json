@@ -20,6 +20,33 @@
   ],
   "users": [
     {
+      "id": "5b0b0000-0000-4000-8000-000000000b0b",
+      "username": "bob@${SV_DOMAIN}",
+      "email": "bob@${SV_DOMAIN}",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Bob",
+      "lastName": "Reyes"
+    },
+    {
+      "id": "5b0b0000-0000-4000-8000-000000000ca1",
+      "username": "carol@${SV_DOMAIN}",
+      "email": "carol@${SV_DOMAIN}",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Carol",
+      "lastName": "Diaz"
+    },
+    {
+      "id": "5b0b0000-0000-4000-8000-000000000da0",
+      "username": "dana@${SV_DOMAIN}",
+      "email": "dana@${SV_DOMAIN}",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Dana",
+      "lastName": "Okafor"
+    },
+    {
       "username": "ops",
       "email": "ops@${SV_DOMAIN}",
       "firstName": "Platform",
@@ -97,7 +124,8 @@
       "attributes": {
         "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "https://kagent.${SV_DOMAIN}/*",
-        "standard.token.exchange.enabled": "true"
+        "standard.token.exchange.enabled": "true",
+        "standard.token.exchange.enableRefreshRequestedTokenType": "SAME_SESSION"
       },
       "protocolMappers": [
         {
@@ -118,26 +146,6 @@
           "protocolMapper": "oidc-audience-mapper",
           "config": {
             "included.client.audience": "ai-gateway",
-            "access.token.claim": "true",
-            "id.token.claim": "false"
-          }
-        },
-        {
-          "name": "aud-mcp-waypoint",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-audience-mapper",
-          "config": {
-            "included.client.audience": "mcp-waypoint",
-            "access.token.claim": "true",
-            "id.token.claim": "false"
-          }
-        },
-        {
-          "name": "aud-xaa-egress",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-audience-mapper",
-          "config": {
-            "included.client.audience": "xaa-egress",
             "access.token.claim": "true",
             "id.token.claim": "false"
           }
@@ -169,7 +177,6 @@
         "continuity-assurance"
       ],
       "optionalClientScopes": [
-        "offline_access",
         "address",
         "phone",
         "microprofile-jwt",
@@ -180,53 +187,17 @@
       "fullScopeAllowed": false
     },
     {
-      "clientId": "xaa-egress",
-      "name": "S&V egress: stored upstream tokens",
-      "description": "Reads users' stored upstream tokens (Identity Brokering API v2) for the IdPs that vouch for them, and nothing else. Authenticates with the egress's own key (private_key_jwt).",
-      "enabled": true,
-      "publicClient": false,
-      "clientAuthenticatorType": "client-jwt",
-      "standardFlowEnabled": false,
-      "implicitFlowEnabled": false,
-      "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": false,
-      "fullScopeAllowed": false,
-      "attributes": {
-        "external.token.enabled": "true",
-        "external.token.idp": "${XAA_UPSTREAMS}",
-        "use.jwks.url": "false",
-        "jwt.credential.certificate": "${SV_EGRESS_CLIENT_CERT}",
-        "jwt.credential.kid": "${SV_EGRESS_CLIENT_KID}",
-        "token.endpoint.auth.signing.alg": "RS256"
-      },
-      "defaultClientScopes": [
-        "basic"
-      ],
-      "optionalClientScopes": []
-    },
-    {
       "clientId": "ai-gateway",
-      "name": "ai-gateway (audience only: the tokens agents present to it)",
+      "name": "ai-gateway (agentgateway): the tokens agents present to it, and on OSS its exchange for the token an MCP server accepts",
       "enabled": true,
-      "bearerOnly": true,
       "publicClient": false,
+      "secret": "${SV_AI_GATEWAY_CLIENT_SECRET}",
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
-      "fullScopeAllowed": false
-    },
-    {
-      "clientId": "mcp-waypoint",
-      "name": "sv-mcp waypoint (agentgateway): token exchange for S&V tools",
-      "enabled": true,
-      "publicClient": false,
-      "secret": "${SV_MCP_WAYPOINT_CLIENT_SECRET}",
-      "standardFlowEnabled": false,
-      "directAccessGrantsEnabled": false,
-      "serviceAccountsEnabled": true,
       "attributes": {
         "standard.token.exchange.enabled": "true",
-        "access.token.lifespan": "120"
+        "access.token.lifespan": "${MCP_TOKEN_LIFETIME_S}"
       },
       "protocolMappers": [
         {
@@ -268,10 +239,13 @@
     {
       "clientId": "${LEDGERLINE_AS_ISSUER}",
       "name": "Ledgerline Research (resource authorization server)",
-      "description": "Target of Cross App Access. Its clientId is the resource AS issuer, which becomes the ID-JAG audience.",
+      "description": "Target of Cross App Access. Its clientId is the resource AS issuer, which becomes the ID-JAG audience; its token lifespan is how long an ID-JAG for it lives.",
       "enabled": true,
       "publicClient": false,
       "bearerOnly": true,
+      "attributes": {
+        "access.token.lifespan": "${MCP_TOKEN_LIFETIME_S}"
+      },
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
@@ -350,6 +324,76 @@
       "description": "Its service account is how the registry calls the kagent controller (its kagent runtime)."
     },
     {
+      "clientId": "sv-mcp-client",
+      "name": "MCP clients at S&V's front door (Claude Code, IDEs, any MCP client): public, PKCE, loopback redirects; the gateway hands this ID to every client instead of open registration",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "fullScopeAllowed": false,
+      "redirectUris": [
+        "http://127.0.0.1/*",
+        "http://localhost/*"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "aud-ai-gateway",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "ai-gateway",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "aud-kagent",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "kagent",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "idp",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "config": {
+            "user.session.note": "identity_provider",
+            "claim.name": "idp",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ],
+      "defaultClientScopes": [
+        "basic",
+        "profile",
+        "email",
+        "acr",
+        "continuity-assurance"
+      ]
+    },
+    {
       "clientId": "kagent-ui",
       "name": "Solo UI (kagent, agentgateway, mesh): its own PKCE login, on Enterprise",
       "enabled": true,
@@ -396,26 +440,6 @@
           "protocolMapper": "oidc-audience-mapper",
           "config": {
             "included.client.audience": "ai-gateway",
-            "access.token.claim": "true",
-            "id.token.claim": "false"
-          }
-        },
-        {
-          "name": "aud-mcp-waypoint",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-audience-mapper",
-          "config": {
-            "included.client.audience": "mcp-waypoint",
-            "access.token.claim": "true",
-            "id.token.claim": "false"
-          }
-        },
-        {
-          "name": "aud-xaa-egress",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-audience-mapper",
-          "config": {
-            "included.client.audience": "xaa-egress",
             "access.token.claim": "true",
             "id.token.claim": "false"
           }

@@ -1,0 +1,5 @@
+# The edge sends a party's traffic through its waypoint when the Service asks
+# for it (istio.io/ingress-use-waypoint, Alice's authorization server): on
+# kgateway OSS that comes with its waypoint integration.
+waypoint:
+  enabled: true

@@ -1,0 +1,148 @@
+# The ops agents' tool server (kagent-tools, which can read the cluster) behind
+# the firm's gateway, like every MCP server: the agents and the kagent
+# controller reach it at
+#   http://ai-gateway.agentgateway-system.svc.cluster.local/mcp/kagent-tools
+# (kagent-tool-server below) and kagent-tools
+# takes connections from the gateway alone (layer 80, kagent-tools-callers).
+# The gateway finds MCP servers by Service label (lab.solo.io/mcp) and reaches
+# them over the mesh, as itself.
+#
+#   user lane       has a bearer token -> the signed-in user's token verified,
+#                   the caller is an ops agent's worker acting for a platform
+#                   admin; the token stops here (kagent-tools takes none)
+#   discovery lane  no token -> only the kagent controller, and only to list
+#                   tools: kagent-tools takes no token, so the gateway is what
+#                   keeps a call off this lane
+# Either way, only the tools the ops agents name (install.sh).
+
+# The chart's Service for kagent-tools names no MCP protocol; this one does.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kagent-tools-mcp
+  namespace: kagent
+  labels: {lab.solo.io/mcp: kagent-tools}
+spec:
+  selector: {app.kubernetes.io/name: kagent-tools}
+  ports:
+  - {name: mcp, port: 8084, targetPort: 8084, appProtocol: agentgateway.dev/mcp}
+---
+apiVersion: ${AGW_BACKEND_API}
+kind: ${AGW_BACKEND_KIND}
+metadata: {name: kagent-tools, namespace: agentgateway-system}
+spec:
+  mcp:
+    targets:
+    - name: kagent-tools
+      selector:
+        namespaces:
+          matchLabels: {kubernetes.io/metadata.name: kagent}
+        services:
+          matchLabels: {lab.solo.io/mcp: kagent-tools}
+---
+apiVersion: ${AGW_BACKEND_API}
+kind: ${AGW_BACKEND_KIND}
+metadata: {name: kagent-tools-discovery, namespace: agentgateway-system}
+spec:
+  mcp:
+    targets:
+    - name: kagent-tools
+      selector:
+        namespaces:
+          matchLabels: {kubernetes.io/metadata.name: kagent}
+        services:
+          matchLabels: {lab.solo.io/mcp: kagent-tools}
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: kagent-tools-tools, namespace: agentgateway-system}
+spec:
+  targetRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: kagent-tools}]
+  backend:
+    mcp:
+      authorization:
+        action: Allow
+        policy:
+          matchExpressions:
+          - 'mcp.tool.name in ${KAGENT_TOOLS_ALLOWED}'
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: kagent-tools-discovery-tools, namespace: agentgateway-system}
+spec:
+  targetRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: kagent-tools-discovery}]
+  backend:
+    mcp:
+      authorization:
+        action: Allow
+        policy:
+          matchExpressions:
+          - 'mcp.methodName == "tools/list" && mcp.tool.name in ${KAGENT_TOOLS_ALLOWED}'
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: kagent-tools, namespace: agentgateway-system}
+spec:
+  parentRefs: [{name: ai-gateway, sectionName: http}]
+  rules:
+  - matches:
+    - path: {type: PathPrefix, value: /mcp/kagent-tools}
+      headers: [{name: authorization, type: RegularExpression, value: "(?i)^bearer\\s+.+"}]
+    backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: kagent-tools}]
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: kagent-tools-caller, namespace: agentgateway-system}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: kagent-tools}]
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+      - issuer: https://idp.${SV_DOMAIN}/realms/sterling-vance
+        audiences: [ai-gateway]
+        jwks:
+          remote:
+            backendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}
+            jwksPath: /realms/sterling-vance/protocol/openid-connect/certs
+            cacheDuration: 5m
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+        # the ops agents' workers, acting for a platform admin
+        - 'source.identity.namespace == "kagent" && source.identity.serviceAccount == "kagent-ops" && "platform-admins" in jwt.groups'
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: kagent-tools-discovery, namespace: agentgateway-system}
+spec:
+  parentRefs: [{name: ai-gateway, sectionName: http}]
+  rules:
+  - matches: [{path: {type: PathPrefix, value: /mcp/kagent-tools}}]
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier: {remove: [authorization, x-id-token]}
+    backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: kagent-tools-discovery}]
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: kagent-tools-discovery, namespace: agentgateway-system}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: kagent-tools-discovery}]
+  traffic:
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+        - 'source.identity.namespace == "kagent" && source.identity.serviceAccount == "kagent-controller"'
+---
+# The ops agents' tool server, by the name the chart's agents use
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata: {name: kagent-tool-server, namespace: kagent}
+spec:
+  description: "Official KAgent tool server"
+  url: http://ai-gateway.agentgateway-system.svc.cluster.local/mcp/kagent-tools
+  timeout: 30s
+  sseReadTimeout: 5m0s

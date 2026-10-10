@@ -78,7 +78,7 @@ func runSync(args []string) int {
 		st.Schemas = schemas
 	}
 	st.Users, st.Updated, st.Written, st.Created, st.Failed = int32(res.Users), int32(res.Updated), int32(res.Written), int32(res.Created), int32(res.Failed)
-	st.Provisioned = int32(res.Provisioned)
+	st.Provisioned, st.Removed = int32(res.Provisioned), int32(res.Removed)
 	switch {
 	case err != nil:
 		st.Message = err.Error()
@@ -86,6 +86,9 @@ func runSync(args []string) int {
 		st.Message = summarize(res.Errors)
 	default:
 		st.LastSuccess, st.Message = &started, fmt.Sprintf("%d users. broker profiles updated: %d. Failover accounts written: %d, created: %d", res.Users, res.Updated, res.Written, res.Created)
+		if res.Removed > 0 {
+			st.Message += fmt.Sprintf(". Removed, gone from the primary: %d", res.Removed)
+		}
 		if len(res.Notes) > 0 {
 			st.Message += "; " + summarize(res.Notes)
 		}
@@ -164,6 +167,7 @@ func syncOnce(ctx context.Context, c client.Client, ic *v1.IdentityContinuity, c
 	if ic.Spec.Profile != nil {
 		shape = profilesync.Shape{Groups: ic.Spec.Profile.Groups, Domains: ic.Spec.Profile.Domains}
 	}
+	shape.RemoveMissing = ic.Spec.Sync != nil && ic.Spec.Sync.RemoveMissing
 	return profilesync.Run(ctx, kc, primary, failovers, controller.Writable(ic), controller.Lists(ic), shape, func(msg string, kv ...any) { log.Info(msg, kv...) }), schemas, nil
 }
 

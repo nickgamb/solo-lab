@@ -520,7 +520,8 @@ kc_token() {
 }
 # kc_admin <ns> <admin password secret> <realm> <method> <path> [curl args]: a
 # party's Keycloak admin API as its bootstrap admin, over a localhost
-# port-forward; the password and the token never sit on a command line
+# port-forward; the password and the token never sit on a command line. The
+# token travels on stdin, so a request body goes in --data, never @-
 kc_admin() {
   local ns=$1 sec=$2 realm=$3 m=$4 p=$5 lp t; shift 5
   lp=$(free_port); port_forward "$ns" keycloak "$lp" 80
@@ -613,23 +614,27 @@ sso_token() {
     | curl -s --cacert "$LAB_CA_DIR/ca.crt" "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/token" --data @-
 }
 
-# ui_token <user> <pass>: an S&V employee signs in to the Solo UI as in the
-# browser (its public client kagent-ui, authorization code with PKCE) through
-# the broker's active IdP, which must be one of S&V's own. Prints the tokens.
-ui_token() {
-  local verifier challenge state cb code
+# pkce_token <client> <redirect URI> <user> <pass>: an S&V employee signs in
+# with a public client (authorization code with PKCE) through the broker's
+# active IdP, which must be one of S&V's own. Prints the tokens.
+pkce_token() {
+  local client=$1 redirect=$2 verifier challenge state cb code
   verifier=$(openssl rand -hex 32) state=$(openssl rand -hex 8)
   challenge=$(printf '%s' "$verifier" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
-  cb="https://kagent.$SV_DOMAIN/callback"
-  cb=$(browser_signin "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/auth?client_id=kagent-ui&response_type=code&scope=openid&redirect_uri=$(jq -rn --arg u "$cb" '$u|@uri')&state=$state&code_challenge=$challenge&code_challenge_method=S256" \
-    "$cb" "$1" "$2") || return 1
+  cb=$(browser_signin "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/auth?client_id=$client&response_type=code&scope=openid&redirect_uri=$(jq -rn --arg u "$redirect" '$u|@uri')&state=$state&code_challenge=$challenge&code_challenge_method=S256" \
+    "$redirect" "$3" "$4") || return 1
   code=$(echo "$cb" | sed -nE 's/.*[?&]code=([^&]+).*/\1/p')
-  [ -n "$code" ] || { echo "ui_token: no code in $cb" >&2; return 1; }
-  _C=$code _V=$verifier _R="https://kagent.$SV_DOMAIN/callback" jq -rn \
-    '{grant_type: "authorization_code", client_id: "kagent-ui", code: $ENV._C, code_verifier: $ENV._V, redirect_uri: $ENV._R}
+  [ -n "$code" ] || { echo "pkce_token: no code in $cb" >&2; return 1; }
+  _C=$code _V=$verifier _R=$redirect _I=$client jq -rn \
+    '{grant_type: "authorization_code", client_id: $ENV._I, code: $ENV._C, code_verifier: $ENV._V, redirect_uri: $ENV._R}
      | to_entries | map("\(.key)=\(.value | @uri)") | join("&")' \
     | curl -s --cacert "$LAB_CA_DIR/ca.crt" "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/token" --data @-
 }
+# ui_token <user> <pass>: the Solo UI's sign-in (its public client kagent-ui)
+ui_token() { pkce_token kagent-ui "https://kagent.$SV_DOMAIN/callback" "$1" "$2"; }
+# mcp_client_token <user> <pass>: an AI client's sign-in at S&V's front door
+# (the client the gateway hands out, sv-mcp-client, on a loopback redirect)
+mcp_client_token() { pkce_token sv-mcp-client "http://127.0.0.1:33418/callback" "$1" "$2"; }
 
 # a2a_send <access token> <json-rpc body>: one A2A turn with Bob's agent, sent
 # as kagent's UI would (from a probe running as its service account,
@@ -639,6 +644,18 @@ a2a_send() {
   printf '%s\n%s\n' "$1" "$2" | K exec -i -n "$KAGENT_UI_NS" "probe-$KAGENT_UI_SA" -- sh -c \
     'read -r t; read -r b; curl -s -m 300 http://kagent-controller.kagent:8083/api/a2a-sandboxes/sv-agents/bob-assistant/ \
        -H "authorization: Bearer $t" -H "content-type: application/json" -d "$b"'
+}
+# a2a_ask <token> <body>: a2a_send, asked again while the agent's worker pool
+# has no free worker (Agent Substrate: each conversation is an actor, and one
+# that just finished holds its worker for a few seconds), as a person would
+a2a_ask() {
+  local r i
+  for i in 1 2 3 4 5 6 7 8 9; do
+    r=$(a2a_send "$1" "$2")
+    echo "$r" | jq -e '.error.message // "" | test("no free workers")' >/dev/null 2>&1 || break
+    sleep 10
+  done
+  printf '%s\n' "$r"
 }
 # with_bearer <token> curl <args...>: curl with "Authorization: Bearer <token>"
 # read from stdin (-H @-), so the token isn't on curl's command line

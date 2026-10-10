@@ -73,7 +73,6 @@ spec:
         - {name: MERIDIAN_DOMAIN, value: "${MERIDIAN_DOMAIN}"}
         - {name: LEDGERLINE_DOMAIN, value: "${LEDGERLINE_DOMAIN}"}
         - {name: LEDGERLINE_AS_ISSUER, value: "${LEDGERLINE_AS_ISSUER}"}   # S&V: the ID-JAG audience (config/lab.env RESOURCE_AS)
-        - {name: XAA_UPSTREAMS, value: "${XAA_UPSTREAMS}"}                 # S&V: IdPs kagent may read Bob's stored tokens for
         - {name: KC_PASSWORD_GRANT, value: "${LAB_PASSWORD_GRANT}"}   # the realm's user-facing client (config/lab.env)
         envFrom:
         - secretRef: {name: kc-secrets}     # KC_BOOTSTRAP_ADMIN_* + client secrets for the realm placeholders

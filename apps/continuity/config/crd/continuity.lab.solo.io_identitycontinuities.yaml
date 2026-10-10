@@ -279,6 +279,14 @@ spec:
                     required:
                     - name
                     type: object
+                  removeMissing:
+                    description: |-
+                      Remove the broker account of a workforce user the primary no longer
+                      has, or has disabled, with their accounts at the failover IdPs: who
+                      exists is the primary's to say. Only after a complete listing of the
+                      primary, never while it can't be read or lists no one. Off: accounts
+                      stay (profiles preloaded at the broker, for instance).
+                    type: boolean
                   schedule:
                     description: |-
                       Standard cron, in UTC (e.g. "0 2 * * *" daily at 02:00). Empty only
@@ -706,6 +714,12 @@ spec:
                   message:
                     type: string
                   provisioned:
+                    format: int32
+                    type: integer
+                  removed:
+                    description: |-
+                      Removed: accounts removed because the primary no longer has the user
+                      (removeMissing).
                     format: int32
                     type: integer
                   schemas:

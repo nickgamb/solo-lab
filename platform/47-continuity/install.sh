@@ -95,11 +95,7 @@ rollout sv-identity deploy/assurance-gate
 # broker's break-glass accounts (platform admins only), each from its NAME_*
 # settings (config/lab.env). Each existing tier keeps its failover rules,
 # attribute mappings, directory and assurance (the operators' and the
-# Observatory's); issuers and token settings follow .env. For an IdP that
-# issues ID-JAGs the broker keeps the user's tokens (storeTokens) so the
-# egress can have it vouch for them (docs/IDENTITY-FLOWS.md). No offline
-# access: the stored refresh token lives and dies with the user's session at
-# that IdP, so a logout there stops its ID-JAGs.
+# Observatory's); issuers and token settings follow .env.
 # What each IdP's sign-ins prove (NAME_ASSURANCE, NIST 800-63B levels by the
 # acr or amr it asserts): a sign-in asserting none of them is its default,
 # AAL1. An IdP whose policy for S&V's client always takes a second factor says
@@ -111,7 +107,6 @@ DIRECTORY_ATTRIBUTES='{
   "keycloak": [{"attribute": "email", "path": "email"}, {"attribute": "firstName", "path": "firstName"}, {"attribute": "lastName", "path": "lastName"}],
   "scim": [{"attribute": "email", "path": "emails[primary eq true].value"}, {"attribute": "firstName", "path": "name.givenName"}, {"attribute": "lastName", "path": "name.familyName"}]}'
 desired=$({ for n in $CHAIN; do
-  store=false; if idp_issues_idjag "$n"; then store=true; fi
   dir=null
   if has_directory "$n"; then
     dir=$(jq -nc --arg n "$n" --arg type "$(_idp_var "$n" DIRECTORY_TYPE)" --arg url "$(_idp_var "$n" DIRECTORY_URL)" \
@@ -124,12 +119,11 @@ desired=$({ for n in $CHAIN; do
   assurance=$(idp_setting "$n" ASSURANCE '{"default": "AAL1"}')
   echo "$assurance" | jq -e . >/dev/null 2>&1 || die "$(echo "$n" | tr '[:lower:]' '[:upper:]')_ASSURANCE isn't JSON"
   jq -nc --arg n "$n" --arg iss "$(_idp_var "$n" ISSUER)" --arg cid "$(_idp_var "$n" CLIENT_ID)" \
-    --arg auth "$(idp_client_auth "$n")" --argjson store "$store" --argjson dir "$dir" --argjson assurance "$assurance" \
+    --arg auth "$(idp_client_auth "$n")" --argjson dir "$dir" --argjson assurance "$assurance" \
     --arg gclaim "$(idp_setting "$n" GROUPS_CLAIM groups)" --arg display "$(idp_setting "$n" DISPLAY_NAME "$n")" '{name: $n,
     displayName: $display, type: "oidc",
     oidc: ({issuer: $iss, clientID: $cid, clientAuth: $auth}
-      + (if $auth == "private_key_jwt" then {clientAssertionSigningAlg: "PS256"} else {clientSecretRef: {name: "upstream-\($n)"}} end)
-      + (if $store then {scopes: ["openid", "email", "profile"], storeTokens: true} else {} end)),
+      + (if $auth == "private_key_jwt" then {clientAssertionSigningAlg: "PS256"} else {clientSecretRef: {name: "upstream-\($n)"}} end)),
     failoverWhen: {unreachable: true, serverError: true, invalidDiscovery: true, latencyAboveMs: 1500},
     assurance: $assurance,
     groups: {claim: $gclaim}}
@@ -179,11 +173,14 @@ else
       else ($old * ($t | del(.displayName, .failoverWhen) | if $old.directory then del(.directory) else . end
           | if $old.attributes then del(.attributes) else . end | if $old.assurance then del(.assurance) else . end
           | if $old.groups then del(.groups) else . end))
-        | if .oidc.clientAuth == "private_key_jwt" then del(.oidc.clientSecretRef) else . end end)')
+        | if .oidc.clientAuth == "private_key_jwt" then del(.oidc.clientSecretRef) else . end
+        # the broker vouches for everyone, so no upstream tokens are kept (labs from before)
+        | del(.oidc.storeTokens) end)')
   # every S&V caller of an upstream goes through the egress waypoint
   egress=$(render "$D/identitycontinuity.yaml" | yq -o json -I0 '.spec.egress')
   if [ "$(K get idc sterling-vance -n sv-identity -o json | jq -cS '.spec.egress | del(.internalDomains)')" != "$(echo "$egress" | jq -cS .)" ]; then
-    K patch idc sterling-vance -n sv-identity --type merge -p "{\"spec\":{\"egress\":$egress}}" >/dev/null
+    # a key the spec no longer has (exportTo, labs from before) is removed
+    K patch idc sterling-vance -n sv-identity --type merge -p "{\"spec\":{\"egress\":$(echo "$egress" | jq -c '{exportTo: null} + .')}}" >/dev/null
     ok "egress: $(echo "$egress" | jq -c .)"
   fi
   merged=$(add_local "$merged")
@@ -223,6 +220,10 @@ ok "active IdP: $(K get idc sterling-vance -n sv-identity -o jsonpath='{.status.
 if [ -z "$(K get idc sterling-vance -n sv-identity -o jsonpath='{.spec.sync}')" ]; then
   K patch idc sterling-vance -n sv-identity --type merge -p "{\"spec\":{\"sync\":{\"schedule\":\"$SV_SYNC_SCHEDULE\"}}}" >/dev/null
 fi
+# who leaves the primary leaves the broker (SV_SYNC_REMOVE_MISSING; the
+# Observatory's Directory sync tab switches it at runtime)
+case "$SV_SYNC_REMOVE_MISSING" in true|false) ;; *) die "SV_SYNC_REMOVE_MISSING: true or false" ;; esac
+K patch idc sterling-vance -n sv-identity --type merge -p "{\"spec\":{\"sync\":{\"removeMissing\":$SV_SYNC_REMOVE_MISSING}}}" >/dev/null
 # the controller's own image: a CronJob still on the previous one is updated on its next pass
 img=$(K get deploy continuity-controller -n sv-identity -o jsonpath='{.spec.template.spec.containers[0].image}')
 wait_for "the directory sync's CronJob, on $img" 60 2 \

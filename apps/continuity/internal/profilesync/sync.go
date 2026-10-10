@@ -23,6 +23,7 @@ type Broker interface {
 	UpdateUser(ctx context.Context, id string, apply func(keycloak.User) bool) (bool, error)
 	FindUserByEmail(ctx context.Context, email string) (string, error)
 	CreateUser(ctx context.Context, email string, verified bool) (string, error)
+	DeleteUser(ctx context.Context, id string) error
 	EnsureGroup(ctx context.Context, name string) (string, error)
 	UserGroups(ctx context.Context, userID string) ([]string, error)
 	SetUserGroups(ctx context.Context, userID string, want []string, managed map[string]string) (bool, error)
@@ -30,9 +31,11 @@ type Broker interface {
 
 // Shape is what the sync maps beyond attributes: the shape's groups
 // (spec.profile.groups) and the workforce's email domains, which the broker
-// gives an account to (spec.profile.domains).
+// gives an account to (spec.profile.domains); and whether an account the
+// primary no longer has goes (spec.sync.removeMissing).
 type Shape struct {
 	Groups, Domains []string
+	RemoveMissing   bool
 }
 
 // IdP is one IdP in the chain with a directory, and its attribute mapping.
@@ -46,8 +49,9 @@ type IdP struct {
 // attributes by name, never values.
 type Result struct {
 	// Provisioned: broker accounts created for the primary's workforce users.
-	Users, Updated, Written, Created, Failed, Provisioned int
-	Errors                                                []string
+	// Removed: broker accounts removed, the primary no longer having the user.
+	Users, Updated, Written, Created, Failed, Provisioned, Removed int
+	Errors                                                         []string
 	// Notes: users with no way to sign in at a failover yet: created there
 	// without a credential enrollment sent, or not there and the directory
 	// can't create them without a password.
@@ -80,7 +84,12 @@ func Run(ctx context.Context, b Broker, primary *IdP, failovers []IdP, writable,
 		groups[g] = id
 	}
 	if primary != nil {
-		provision(ctx, b, *primary, shape.Domains, logf, &res)
+		present, complete := provision(ctx, b, *primary, shape.Domains, logf, &res)
+		// who the primary no longer has goes, but only on a complete answer
+		// from it: never while it can't be read, never on an empty listing
+		if shape.RemoveMissing && complete && len(present) > 0 {
+			removeMissing(ctx, b, present, failovers, shape.Domains, logf, &res)
+		}
 	}
 	seen := map[string]bool{} // a user moved between pages is synced once
 	for n, first := 0, 0; ; n, first = n+1, first+pageSize {
@@ -112,19 +121,25 @@ func Run(ctx context.Context, b Broker, primary *IdP, failovers []IdP, writable,
 // whose verified email is in the workforce's domains, so that who exists is
 // the primary's to say. The account has no credential: its owner signs in
 // through an IdP, which the broker links to it by that email.
-func provision(ctx context.Context, b Broker, primary IdP, domains []string, logf func(string, ...any), res *Result) {
+// It answers with the workforce emails the primary has, enabled, and whether
+// that listing is complete.
+func provision(ctx context.Context, b Broker, primary IdP, domains []string, logf func(string, ...any), res *Result) (map[string]bool, bool) {
 	l, ok := primary.Dir.(Lister)
 	if !ok || len(domains) == 0 {
-		return
+		return nil, false
 	}
+	present := map[string]bool{}
 	for n, first := 0, 0; n < maxPages; n, first = n+1, first+pageSize {
 		page, err := l.List(ctx, first, pageSize)
 		if err != nil {
 			res.Errors = append(res.Errors, fmt.Sprintf("listing %s's users: %v", primary.Name, err))
-			return
+			return present, false
 		}
 		for _, e := range page {
-			if e.Verified == nil || !*e.Verified || !inDomains(e.Email, domains) {
+			if !e.Disabled && inDomains(e.Email, domains) {
+				present[normalEmail(e.Email)] = true
+			}
+			if e.Disabled || e.Verified == nil || !*e.Verified || !inDomains(e.Email, domains) {
 				continue
 			}
 			mail := normalEmail(e.Email)
@@ -145,8 +160,71 @@ func provision(ctx context.Context, b Broker, primary IdP, domains []string, log
 			logf("broker account provisioned", "user", id, "from", primary.Name)
 		}
 		if len(page) < pageSize {
+			return present, true
+		}
+	}
+	return present, false // stopped at maxPages: not the whole directory
+}
+
+// removeMissing removes each workforce account at the broker whose user the
+// primary no longer has (or has disabled), with their accounts at the
+// failovers whose directories can remove them. Accounts never linked to an
+// IdP (local-only, break-glass) and service accounts stay.
+func removeMissing(ctx context.Context, b Broker, present map[string]bool, failovers []IdP, domains []string, logf func(string, ...any), res *Result) {
+	var gone []keycloak.User
+	for n, first := 0, 0; ; n, first = n+1, first+pageSize {
+		if n == maxPages {
+			res.Errors = append(res.Errors, fmt.Sprintf("listing the broker's users: stopped after %d pages", maxPages))
 			return
 		}
+		page, err := b.Users(ctx, first, pageSize)
+		if err != nil {
+			res.Errors = append(res.Errors, fmt.Sprintf("listing the broker's users: %v", err))
+			return
+		}
+		for _, u := range page {
+			mail := email(u)
+			if u["serviceAccountClientId"] != nil || mail == "" || !inDomains(mail, domains) || present[normalEmail(mail)] {
+				continue
+			}
+			gone = append(gone, u)
+		}
+		if len(page) < pageSize {
+			break
+		}
+	}
+	for _, u := range gone {
+		id, _ := u["id"].(string)
+		if local, err := b.HasRealmRole(ctx, id, LocalOnlyRole); err != nil || local {
+			if err != nil {
+				res.Errors = append(res.Errors, fmt.Sprintf("user %s: roles: %v", id, err))
+			}
+			continue
+		}
+		for _, f := range failovers {
+			r, ok := f.Dir.(Remover)
+			if !ok {
+				continue
+			}
+			fid, err := locate(ctx, b, id, email(u), f)
+			if errors.Is(err, ErrNoUser) {
+				continue
+			}
+			if err == nil {
+				err = r.Remove(ctx, fid)
+			}
+			if err != nil {
+				res.Errors = append(res.Errors, fmt.Sprintf("user %s: %s: remove: %v", id, f.Name, err))
+				continue
+			}
+			logf("removed at failover", "user", id, "idp", f.Name)
+		}
+		if err := b.DeleteUser(ctx, id); err != nil {
+			res.Errors = append(res.Errors, fmt.Sprintf("user %s: broker: remove: %v", id, err))
+			continue
+		}
+		res.Removed++
+		logf("broker account removed: the primary no longer has the user", "user", id)
 	}
 }
 
@@ -463,6 +541,10 @@ func email(u keycloak.User) string { s, _ := u["email"].(string); return s }
 // emailVerified is whether a record's email is verified, when it says:
 // email_verified (OIDC, Auth0) or emailVerified (Keycloak).
 func emailVerified(rec map[string]any) *bool {
+	if _, ok := rec["emails"].([]any); ok { // a SCIM record
+		_, v := scimEmail(rec)
+		return v
+	}
 	for _, k := range []string{"email_verified", "emailVerified"} {
 		switch v := rec[k].(type) {
 		case bool:

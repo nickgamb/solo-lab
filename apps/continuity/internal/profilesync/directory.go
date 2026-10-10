@@ -128,43 +128,78 @@ type api struct {
 
 // call sends method to path with body (JSON) and decodes the answer into out.
 // A 404 is ErrNoUser; any other answer outside 2xx an error with its status.
+// A 429 (a directory's rate limit, e.g. Auth0's Management API) is retried
+// after the wait the directory asks for, a few times.
 func (a *api) call(ctx context.Context, method, path string, body, out any) error {
 	tok, err := a.ts.token(ctx)
 	if err != nil {
 		return err
 	}
-	var rd io.Reader
+	var payload []byte
 	if body != nil {
-		b, err := json.Marshal(body)
+		if payload, err = json.Marshal(body); err != nil {
+			return err
+		}
+	}
+	for try := 1; ; try++ {
+		var rd io.Reader
+		if body != nil {
+			rd = bytes.NewReader(payload)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, a.base+path, rd)
 		if err != nil {
 			return err
 		}
-		rd = bytes.NewReader(b)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		req.Header.Set("Accept", a.accept)
+		if body != nil {
+			req.Header.Set("Content-Type", a.ctype)
+		}
+		resp, err := a.hc.Do(req)
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode == http.StatusTooManyRequests && try < rateLimitTries {
+			wait := retryAfter(resp.Header, time.Now())
+			resp.Body.Close()
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(wait):
+			}
+			continue
+		}
+		defer resp.Body.Close()
+		switch {
+		case resp.StatusCode == http.StatusNotFound:
+			return ErrNoUser
+		case resp.StatusCode < 200 || resp.StatusCode > 299:
+			return fmt.Errorf("directory: %s %s: HTTP %d", method, strings.SplitN(path, "?", 2)[0], resp.StatusCode)
+		}
+		if out == nil || resp.StatusCode == http.StatusNoContent {
+			return nil
+		}
+		return json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, a.base+path, rd)
-	if err != nil {
-		return err
+}
+
+// rateLimitTries: how many times a rate-limited request is sent in all.
+const rateLimitTries = 4
+
+// maxRateLimitWait caps how long one rate-limited request waits.
+var maxRateLimitWait = 10 * time.Second
+
+// retryAfter is how long a rate-limited directory asks to wait: Retry-After
+// (seconds), else X-RateLimit-Reset (the epoch second the limit resets,
+// Auth0's), else a second; at most maxRateLimitWait.
+func retryAfter(h http.Header, now time.Time) time.Duration {
+	wait := time.Second
+	if s, err := strconv.Atoi(strings.TrimSpace(h.Get("Retry-After"))); err == nil && s >= 0 {
+		wait = time.Duration(s) * time.Second
+	} else if r, err := strconv.ParseInt(strings.TrimSpace(h.Get("X-RateLimit-Reset")), 10, 64); err == nil {
+		wait = time.Unix(r, 0).Sub(now)
 	}
-	req.Header.Set("Authorization", "Bearer "+tok)
-	req.Header.Set("Accept", a.accept)
-	if body != nil {
-		req.Header.Set("Content-Type", a.ctype)
-	}
-	resp, err := a.hc.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	switch {
-	case resp.StatusCode == http.StatusNotFound:
-		return ErrNoUser
-	case resp.StatusCode < 200 || resp.StatusCode > 299:
-		return fmt.Errorf("directory: %s %s: HTTP %d", method, strings.SplitN(path, "?", 2)[0], resp.StatusCode)
-	}
-	if out == nil || resp.StatusCode == http.StatusNoContent {
-		return nil
-	}
-	return json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out)
+	return min(max(wait, 100*time.Millisecond), maxRateLimitWait)
 }
 
 // New returns the directory for type typ at base.
@@ -207,18 +242,22 @@ func (d *scim) User(ctx context.Context, id string) (map[string]any, error) {
 
 func (d *scim) Find(ctx context.Context, email string) (string, error) {
 	var r struct {
-		Resources []struct {
-			ID string `json:"id"`
-		} `json:"Resources"`
+		Resources []map[string]any `json:"Resources"`
 	}
 	filter := `emails.value eq ` + strconv.Quote(email)
-	if err := d.call(ctx, http.MethodGet, "/Users?count=2&attributes=id&filter="+url.QueryEscape(filter), nil, &r); err != nil {
+	if err := d.call(ctx, http.MethodGet, "/Users?count=2&attributes=id,emails&filter="+url.QueryEscape(filter), nil, &r); err != nil {
 		return "", err
 	}
 	if len(r.Resources) != 1 {
 		return "", ErrNoUser // none, or not one user: never guess
 	}
-	return r.Resources[0].ID, nil
+	// the filter matches any of a record's emails: the user is the record
+	// whose primary email this is, never one that only lists it
+	if primary, _ := scimEmail(r.Resources[0]); !strings.EqualFold(primary, email) {
+		return "", ErrNoUser
+	}
+	id, _ := r.Resources[0]["id"].(string)
+	return id, nil
 }
 
 // Update patches each path: a plain one is replaced; a filtered one

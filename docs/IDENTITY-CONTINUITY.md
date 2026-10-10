@@ -7,9 +7,10 @@ its password-only contingency IdP) and maps each into one profile. The broker is
 it holds no employee passwords, only break-glass accounts for platform admins.
 S&V's own services trust only the broker. When an IdP goes down, new sign-ins
 move to the next healthy one and nothing downstream changes: same issuer,
-same `sub`, same groups. An IdP that issues ID-JAGs (Gluu, S&V's own Keycloak)
-also vouches for its users to other companies (Cross App Access),
-with the same failover
+same `sub`, same groups. The broker also vouches for S&V's users to the apps
+they reach through Cross App Access (Ledgerline), whichever of S&V's IdPs
+signed them in, so those apps trust one issuer and never see the chain or
+its failover
 ([IDENTITY-FLOWS.md](IDENTITY-FLOWS.md#2-cross-app-access-id-jag-to-a-saas)).
 
 Failover keeps people signed in; it must not lower what a sign-in proves.
@@ -56,13 +57,19 @@ through it is linked to the S&V account with the same verified email. The
 broker is the shape every IdP maps into, not a directory of its own: the
 directory sync gives it an account for each of the primary's users under the
 workforce's email domains (`spec.profile.domains`), without a password, and
-it never creates one at sign-in. Their groups come from the IdPs too
-([Groups](#groups)). Chain
+it never creates one at sign-in. The realm file also carries the demo
+profiles (`bob`, `carol`, `dana`) with fixed ids, so a broker restart keeps
+each one's `sub`: profiles only, no credentials or groups. Their groups come
+from the IdPs ([Groups](#groups)). Chain
 only IdPs that are authoritative for S&V's users. Accounts with role
 `local-only` (the `platform-admins` group: break-glass and platform admins)
 are never linked to an upstream; with every IdP down they are the only ones
 who can sign in. Only the active IdP is enabled at the broker; the others
 keep their users' links but can't sign anyone in, not even by `kc_idp_hint`.
+The IdPs are all S&V's own: through a failover the active one is, for its
+duration, the primary, and what its sign-ins assert (claims, groups) is what
+the broker applies. The directory sync keeps reading the chain's first IdP
+and changes nothing while it can't be read.
 
 S&V's broker authenticates to an upstream with `private_key_jwt`
 (`tiers[].oidc.clientAuth`), signing with a PS256 realm key kept for that alone; its
@@ -70,11 +77,11 @@ public half is in the realm's JWKS and in `make xaa-keys`
 (`sv-upstream-client.jwks.json`). An upstream given `<NAME>_CLIENT_SECRET` in
 `.env` uses `client_secret_post` instead ([Auth0](IDPS.md#auth0-auth0)).
 
-Each upstream's ServiceEntry is exported to `sv-identity` and to the
-namespaces in `spec.egress.exportTo` (`agentgateway-system`, where S&V's
-egress has upstreams vouch for users), so every S&V call to an upstream
-leaves through `sv-egress/egress-waypoint`, and a partition there cuts all
-of them. Cross App Access follows `status.active` the same way sign-in does.
+Each upstream's ServiceEntry is exported to `sv-identity`, so every S&V
+call to an upstream leaves through `sv-egress/egress-waypoint`, and a
+partition there cuts all of them. Cross App Access calls no upstream: the
+broker vouches, and the assurance gate refuses a session from an IdP that is
+no longer active.
 
 Re-running the layer sets the chain to `ENTERPRISE_IDP`: an IdP added in
 the rule builder or by hand is removed. For each IdP it keeps what operators
@@ -134,7 +141,7 @@ doesn't create flows or roles, so the realm needs them first
 | `broker.keycloak.firstBrokerLoginFlow` | first-broker-login flow for every upstream (`continuity-first-broker-login`: link to the existing user) |
 | `egress.namespace`, `egress.waypoint` | route back-channel calls to external upstreams through this waypoint (one ServiceEntry per external IdP) |
 | `egress.internalDomains` | hosts under these domains are in-cluster and get no ServiceEntry |
-| `egress.exportTo` | other namespaces that call upstreams for the broker (`agentgateway-system`): the ServiceEntries are exported there too |
+| `egress.exportTo` | other namespaces that call upstreams for the broker: the ServiceEntries are exported there too |
 | `tiers[]` | ordered; the first eligible, healthy tier is active |
 | `tiers[].name` | also the Keycloak IdP alias |
 | `tiers[].displayName` | shown on the login page and in the Observatory |
@@ -147,10 +154,11 @@ doesn't create flows or roles, so the realm needs them first
 | `tiers[].oidc.clientAssertionSigningAlg` | `PS256`: the realm key kept for client assertions |
 | `tiers[].oidc.clientSecretRef` | Secret and key (default `client-secret`); required unless `clientAuth` is `private_key_jwt`; missing means `NotConfigured` |
 | `tiers[].oidc.scopes` | default `openid email profile` |
-| `tiers[].oidc.storeTokens` | keep the IdP's tokens on each user's link, for Cross App Access |
+| `tiers[].oidc.storeTokens` | keep the IdP's tokens on each user's link |
 | `tiers[].attributes[]` | the IdP's attributes paired with S&V's profile for the directory sync: `attribute` (built-in or `profile.attributes`) and `path` (the attribute in the IdP's user record) |
 | `tiers[].directory` | where the sync reads and writes this IdP's users: `type` (`scim`, `auth0`, `keycloak`), `url`, `credentialsRef` (`client-secret`, and `client-id` unless `clientID` is set), `scopes`, `audience` (Auth0) |
 | `tiers[].directory.clientID` | the directory client's ID; falls back to the Secret's `client-id` key |
+| `tiers[].groups.claim` | the ID token claim with the IdP's groups (or roles); unset: no groups are read from its sign-ins, and the directory sync maps them ([Groups](#groups)) |
 | `tiers[].assurance.levels[]` | what the IdP's sign-ins prove: an `acr` value, or one `amr` value, mapped to a NIST SP 800-63B `level` (`AAL1`, `AAL2`, `AAL3`), and whether that authenticator is `phishingResistant` |
 | `tiers[].assurance.default` | the level of a sign-in that asserts none of them (default `AAL1`); for a local tier, its only level |
 | `tiers[].failoverWhen` | which probe results count against the tier: `unreachable`, `serverError`, `invalidDiscovery` (each default true), `latencyAboveMs` (must be below `health.timeoutSeconds`: a slower answer times out first) |
@@ -158,6 +166,7 @@ doesn't create flows or roles, so the realm needs them first
 | `failback` | `Automatic` (move back up as soon as a higher tier is healthy) or `Manual` |
 | `profile.attributes[]` | S&V's profile beyond `username`, `email`, `firstName`, `lastName`: `name`, `displayName`, `type` (`string` default, `integer`, `number`, `boolean`, `date`, `email`, `uri`: checked by the broker), `multivalued` (a list) |
 | `sync.schedule` | cron, UTC; `sync.suspend` pauses it |
+| `sync.removeMissing` | remove the broker account (and its failover accounts) of a workforce user the primary no longer has or has disabled ([Directory sync](#directory-sync)) |
 | `sync.credentialsRef` | Secret with the sync's realm client (default `continuity-sync`) |
 
 ### status
@@ -168,9 +177,10 @@ the local tier), `activeSince`, `broker.issuer`, `egressNamespace`, per tier (`c
 successes, `redirectURI`: the callback the upstream app must allow, and
 `trust`: its [trust checks](#trust-across-idps)),
 the last 20 `transitions`, `sync` (CronJob, last run and last success,
-users, S&V profiles updated, failover accounts written and created,
-failures, and each IdP's attribute paths as its directory last showed
-them), and
+users, broker accounts provisioned and removed, S&V profiles updated,
+failover accounts written and created, failures, and each IdP's attribute
+paths as its directory last showed them), `broker.signIn` (the broker's
+browser sign-in clients and their redirect URIs), and
 conditions `Ready`, `Degraded` (not on the first IdP), `RulesEffective`
 (False while a latency rule is at or above the probe timeout),
 `ProfileApplied` and `TrustConsistent` (False while an IdP fails a trust
@@ -249,8 +259,15 @@ schedule (`spec.sync`), through S&V's profile on the broker:
 
 1. **Primary → S&V's profile.** The chain's first IdP is the primary, and
    says who exists. The sync first gives the broker an account for each of
-   its users whose verified email is under one of `spec.profile.domains`
-   (`status.sync.provisioned`). Then, for each employee, it reads their
+   its users, enabled there, whose verified email is under one of
+   `spec.profile.domains` (`status.sync.provisioned`). With
+   `spec.sync.removeMissing` (`SV_SYNC_REMOVE_MISSING`, default `true`; the
+   Observatory's Directory sync, Schedule), it then removes the broker
+   account of each workforce user the primary no longer has or has disabled,
+   with their accounts at the failovers (`status.sync.removed`); only after
+   a complete, non-empty listing of the primary, never while it can't be
+   read. Accounts with role `local-only` (break-glass) and service
+   accounts stay. Then, for each employee, it reads their
    record from the primary's directory and writes the mapped attributes, and
    their groups ([Groups](#groups)), into S&V's profile, the standard every
    IdP maps to.
@@ -268,11 +285,15 @@ is listed in the run's message until the realm has one, and can't sign in
 at that IdP before then.
 
 Reorder the chain and the roles follow. A user is found at an IdP by the
-broker's link to it, else by email (one match, never a guess). After each
+broker's link to it, else by email (one match, never a guess; at a SCIM
+directory, only the record whose primary email it is). SCIM listings
+follow a directory's own page size, and a directory's rate limit (`429`) is
+waited out a few times. After each
 write the sync reads the record back, so an attribute the directory drops
 is reported. It never reads or writes a password or other credential,
-never writes the username, and never deletes a user; accounts with role
-`local-only` are left alone. Tokens carry the standard claims only.
+never writes the username, and deletes a user only with `removeMissing`;
+accounts with role `local-only` are left alone. Tokens carry the standard
+claims only.
 
 ```yaml
 spec:
@@ -311,6 +332,10 @@ CronJob) gets a token, counts the users and reads the directory's attribute
 schema along the sync's own path and credentials; its result (never user
 records) is the container's termination message.
 
+Layer 47 runs the sync once at install, and layer 45 runs it again right
+after deploying the broker, whose accounts are in memory, so the broker has
+its users before anyone signs in.
+
 The sync runs as ServiceAccount `continuity-sync`: `get` on its instance,
 `patch` on its status, and `get` on its own Secret and the directories'
 Secrets by name (Role `continuity-sync-secrets`). It reaches the broker and
@@ -318,6 +343,12 @@ the directories under the same mesh policy as the controller; directory
 hosts get ServiceEntries on the IdP's egress path.
 
 ### Groups
+
+Every sign-in updates the broker's profile from the IdP's token, just in
+time: each upstream is configured with sync mode *Force*, so the email and
+names the token carries replace what the broker had, and its groups (below)
+replace the user's groups. The directory sync fills in the rest between
+sign-ins.
 
 The shape has groups as well as attributes (`spec.profile.groups`; the lab's
 from `SV_GROUPS` in `config/lab.env`: `advisors`, `platform-engineers`,
@@ -327,7 +358,7 @@ IdP:
 
 - **At sign-in.** Each IdP says which groups the user is in, in its ID token
   (`tiers[].groups.claim`, `<NAME>_GROUPS_CLAIM` in `.env`, `groups` unless
-  set). The controller keeps one of Keycloak's own *Advanced Claim to Group*
+  set): the token is the truth. The controller keeps one of Keycloak's own *Advanced Claim to Group*
   mappers per shape group on that IdP, in sync mode *Force*: every sign-in
   sets the user's groups from the claim, so a group the IdP takes away is
   gone at the next sign-in. A namespaced claim (Auth0's) is read whole.
@@ -471,7 +502,7 @@ kind: WorkloadProfile
 metadata: {name: advisor-workspace, namespace: sv-identity}
 spec:
   continuity: sterling-vance
-  description: Bob's workspace tools behind the sv-mcp waypoint, used by his agents on his behalf
+  description: Bob's workspace tools behind the firm's front door, used by his agents on his behalf
   criticality: Critical
   mode: Enforce
   workloads: [{namespace: sv-mcp, serviceAccount: bob-workspace}]
@@ -518,7 +549,7 @@ Bob's demo has three (`demos/bob/manifests/05-workload-profiles.yaml`):
 
 | Rule | Criticality | Requirements | Enforced at |
 | --- | --- | --- | --- |
-| `advisor-workspace` | Critical | AAL2 | `sv-mcp/bob-workspace-caller` (the waypoint in front of Bob's workspace) |
+| `advisor-workspace` | Critical | AAL2 | `agentgateway-system/bob-workspace-caller` (ai-gateway, in front of Bob's workspace) |
 | `ledgerline-research` | High | AAL2, active IdP only | `agentgateway-system/xaa-ledgerline-caller` (S&V's egress to Ledgerline, before any ID-JAG) |
 | `agent-console` | Standard | break-glass allowed | the kagent console's sign-in is at the edge, which doesn't ask the gate |
 
@@ -606,13 +637,20 @@ whatever it says: the Observatory says so.
 
 **Identity Continuity** tab, one `IdentityContinuity` at a time:
 
-![Connected: Auth0 signing people in, through the S&V egress](images/observatory-continuity-connected.jpg)
+![Connected: Auth0 signing people in](images/observatory-continuity-connected.jpg)
 
 ![Failover: the network to Auth0 cut at the egress, sign-in through the next IdP](images/observatory-continuity-failover.jpg)
 
-- **Map:** every app that signs people in through the broker (found from the
-  edge's SSO configuration), the broker, the egress gateway, and the IdPs in
-  chain order. The live path is green.
+- **Map:** on the left, the resources S&V's gateways admit the broker's
+  tokens to (each gateway policy that verifies the broker's issuer, and
+  where its routes and backends land; another party's, such as Ledgerline,
+  as one tile), and the apps people sign in to (the edge's SSO
+  configuration and the broker's own sign-in clients,
+  `status.broker.signIn`). Then the gateway each comes in through
+  (agentgateway for agents and AI clients, the edge for the consoles), the
+  identity fabric (the broker attached to them, drawn as part of the
+  gateway, not as another IdP), and the IdPs in chain order. The live path is
+  green; an outage is cut at the egress, on the wire to that IdP.
 - **Banner:**
 
 | State | Banner |
@@ -645,8 +683,8 @@ whatever it says: the Observatory says so.
   sync). **Code** edits the same mapping as JSON, each S&V
   attribute and the IdPs' attributes paired with it, in chain order
   (`"department": ["auth0.user_metadata.department", "keycloak.department"]`);
-  **Schedule** sets the sync's cron, pauses it, shows the last run and runs
-  it now. Directory credentials are write-only and readable by the sync
+  **Schedule** sets the sync's cron, pauses it, switches `removeMissing`,
+  shows the last run and runs it now. Directory credentials are write-only and readable by the sync
   alone.
 
   ![Directory sync canvas: Auth0's detected attributes wired to S&V's profile, S&V's own Keycloak written from it](images/observatory-directory-sync-canvas.jpg)

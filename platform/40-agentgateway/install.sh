@@ -30,13 +30,19 @@ helm_up "$AGW_RELEASE" "$AGW_CHART" "$AGW_VERSION" agentgateway-system ${VALS[@]
 step "AI gateway (agentgateway-system/ai-gateway)"
 K apply -f "$D/llm/costs.yaml" >/dev/null
 apply_tmpl "$D/ai-gateway.yaml"
+# Enterprise: the STS that mints the tokens MCP servers accept (values-enterprise.yaml)
+if [ "$ED" = enterprise ]; then
+  apply_tmpl "$D/sts.yaml"   # its keys, for MCP servers
+  ok "STS: $MCP_TOKEN_ISSUER (tokens for MCP servers, $MCP_TOKEN_LIFETIME)"
+fi
+K delete referencegrant gateways-to-sts -n agentgateway-system --ignore-not-found >/dev/null   # earlier labs
 wait_for "ai-gateway Programmed" 60 3 \
   K wait -n agentgateway-system gateway/ai-gateway --for=condition=Programmed --timeout=2s
 ok "ai-gateway programmed — in-cluster: http://ai-gateway.agentgateway-system"
-# ai-gateway itself reaches the LLM providers. S&V's ID-token exchange
-# (demos/bob) beside it reaches upstream IdPs only through the egress
-# waypoint, so it gets the cluster and nothing else.
-deny_internet_pods agentgateway-system idtoken-exchange
-ok "no direct internet from idtoken-exchange (agentgateway-system)"
+# ai-gateway itself reaches the LLM providers. The services beside it (S&V's
+# ID-token exchange and MCP guardrail, demos/bob) get the cluster and nothing
+# else: the guardrail sees every tool result unmasked.
+deny_internet_pods agentgateway-system idtoken-exchange mcp-guard
+ok "no direct internet from idtoken-exchange, mcp-guard (agentgateway-system)"
 
 "$LAB_ROOT/scripts/llm.sh"

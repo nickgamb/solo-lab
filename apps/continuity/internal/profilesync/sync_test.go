@@ -10,7 +10,9 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	v1 "github.com/nickgamb/solo-lab/apps/continuity/api/v1alpha1"
 	"github.com/nickgamb/solo-lab/apps/continuity/internal/keycloak"
@@ -20,6 +22,7 @@ type fakeBroker struct {
 	users   []keycloak.User
 	links   map[string]map[string]string // user id -> idp -> id there
 	local   map[string]bool
+	deleted []string
 	updated []keycloak.User
 	store   func(keycloak.User) // what the broker does to a user it stores
 	groups  map[string][]string // user id -> group names
@@ -85,6 +88,12 @@ func (f *fakeBroker) CreateUser(_ context.Context, email string, verified bool) 
 	return id, nil
 }
 
+func (f *fakeBroker) DeleteUser(_ context.Context, id string) error {
+	f.users = slices.DeleteFunc(f.users, func(u keycloak.User) bool { return u["id"] == id })
+	f.deleted = append(f.deleted, id)
+	return nil
+}
+
 func (f *fakeBroker) EnsureGroup(_ context.Context, name string) (string, error) {
 	return "g-" + name, nil
 }
@@ -114,11 +123,15 @@ func (f *fakeBroker) SetUserGroups(_ context.Context, id string, want []string, 
 type groupDir struct {
 	fakeDir
 	entries []Entry
+	listErr error
 	groups  map[string][]string
 	set     map[string][]string // id -> the want of the last SetGroups
 }
 
 func (d *groupDir) List(_ context.Context, first, max int) ([]Entry, error) {
+	if d.listErr != nil {
+		return nil, d.listErr
+	}
 	if first >= len(d.entries) {
 		return nil, nil
 	}
@@ -301,7 +314,9 @@ func TestSCIMDirectory(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/scim/v2/Users" && r.URL.Query().Get("filter") == `emails.value eq "bob@sterling.lab"`:
-			w.Write([]byte(`{"totalResults":1,"Resources":[{"id":"inum-bob"}]}`))
+			w.Write([]byte(`{"totalResults":1,"Resources":[{"id":"inum-bob","emails":[{"value":"x@y"},{"value":"bob@sterling.lab","primary":true}]}]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/scim/v2/Users" && r.URL.Query().Get("filter") == `emails.value eq "x@y"`:
+			w.Write([]byte(`{"totalResults":1,"Resources":[{"id":"inum-bob","emails":[{"value":"x@y"},{"value":"bob@sterling.lab","primary":true}]}]}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/scim/v2/Users":
 			w.Write([]byte(`{"totalResults":42,"Resources":[]}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/scim/v2/Users/inum-bob":
@@ -328,6 +343,10 @@ func TestSCIMDirectory(t *testing.T) {
 	id, err := d.Find(ctx, "bob@sterling.lab")
 	if err != nil || id != "inum-bob" {
 		t.Fatalf("find: %q %v", id, err)
+	}
+	// a record that only lists an address beside its primary isn't that user's
+	if other, err := d.Find(ctx, "x@y"); !errors.Is(err, ErrNoUser) {
+		t.Fatalf("find by a secondary email: %q %v, want ErrNoUser", other, err)
 	}
 	rec, _ := d.User(ctx, id)
 	for path, want := range map[string]string{"name.givenName": "Bob", "emails[primary eq true].value": "bob@sterling.lab",
@@ -600,5 +619,143 @@ func TestSCIMList(t *testing.T) {
 	}
 	if e := page[1]; e.Email != "eve@sterling.lab" || e.Verified != nil {
 		t.Fatalf("eve: %+v (want her only email, verification unknown)", e)
+	}
+}
+
+func TestRateLimitIsRetried(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			tokenOK(w)
+			return
+		}
+		if atomic.AddInt32(&calls, 1) < 3 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Write([]byte(`{"id":"inum-bob"}`))
+	}))
+	defer srv.Close()
+	d, _ := New("scim", srv.URL+"/scim/v2", Credentials{TokenURL: srv.URL + "/token", ClientID: "c", ClientSecret: "s"}, srv.Client())
+	if _, err := d.User(context.Background(), "inum-bob"); err != nil || calls != 3 {
+		t.Fatalf("got %v after %d calls, want the third to answer", err, calls)
+	}
+	// a limit that never lifts gives up
+	atomic.StoreInt32(&calls, -100)
+	if _, err := d.User(context.Background(), "inum-bob"); err == nil || !strings.Contains(err.Error(), "429") {
+		t.Fatalf("got %v, want the 429 after %d tries", err, rateLimitTries)
+	}
+}
+
+func TestRetryAfter(t *testing.T) {
+	now := time.Unix(1000, 0)
+	for _, c := range []struct {
+		h    http.Header
+		want time.Duration
+	}{
+		{http.Header{"Retry-After": {"3"}}, 3 * time.Second},
+		{http.Header{"X-Ratelimit-Reset": {"1002"}}, 2 * time.Second},
+		{http.Header{}, time.Second},
+		{http.Header{"Retry-After": {"600"}}, maxRateLimitWait},
+	} {
+		if got := retryAfter(c.h, now); got != c.want {
+			t.Errorf("%v: %v, want %v", c.h, got, c.want)
+		}
+	}
+}
+
+func TestSCIMListFollowsShortPages(t *testing.T) {
+	// a server whose own page size (1) is below what was asked for
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			tokenOK(w)
+			return
+		}
+		switch r.URL.Query().Get("startIndex") {
+		case "1":
+			w.Write([]byte(`{"totalResults":2,"Resources":[{"id":"a","emails":[{"value":"a@sterling.lab"}]}]}`))
+		case "2":
+			w.Write([]byte(`{"totalResults":2,"Resources":[{"id":"b","emails":[{"value":"b@sterling.lab"}]}]}`))
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+	d, _ := New("scim", srv.URL+"/scim/v2", Credentials{TokenURL: srv.URL + "/token", ClientID: "c", ClientSecret: "s"}, srv.Client())
+	page, err := d.(Lister).List(context.Background(), 0, 100)
+	if err != nil || len(page) != 2 || page[1].ID != "b" {
+		t.Fatalf("list: %+v %v (want both users)", page, err)
+	}
+}
+
+func TestSCIMEmailVerifiedIsThePrimarys(t *testing.T) {
+	// the first email is verified, the primary isn't said: unknown, never the first's
+	_, v := scimEmail(map[string]any{"emails": []any{
+		map[string]any{"value": "old@x", "verified": true},
+		map[string]any{"value": "bob@sterling.lab", "primary": true}}})
+	if v != nil {
+		t.Fatalf("verified = %v, want unknown", *v)
+	}
+	// the update path reads a SCIM record the same way (Gluu's extension)
+	if v := emailVerified(map[string]any{"emails": []any{map[string]any{"value": "bob@sterling.lab"}},
+		"urn:ietf:params:scim:schemas:extension:gluu:2.0:User": map[string]any{"emailVerified": false}}); v == nil || *v {
+		t.Fatalf("emailVerified = %v, want false from the extension", v)
+	}
+}
+
+// removable is a failover directory that can delete its users
+type removable struct {
+	fakeDir
+	removed []string
+}
+
+func (d *removable) Remove(_ context.Context, id string) error {
+	delete(d.recs, id)
+	d.removed = append(d.removed, id)
+	return nil
+}
+
+func TestRemovesWhoThePrimaryNoLongerHas(t *testing.T) {
+	carol := keycloak.User{"id": "carol", "email": "carol@sterling.lab"}
+	ops := keycloak.User{"id": "ops", "email": "ops@sterling.lab"}
+	svc := keycloak.User{"id": "svc", "email": "svc@sterling.lab", "serviceAccountClientId": "x"}
+	partner := keycloak.User{"id": "pat", "email": "pat@partner.example"}
+	dana := keycloak.User{"id": "dana", "email": "dana@sterling.lab"}
+	users := func() []keycloak.User { return []keycloak.User{bob(), carol, ops, svc, partner, dana} }
+	primary := func(entries ...Entry) *IdP {
+		return &IdP{Name: "auth0", Attributes: mappings, Dir: &groupDir{fakeDir: fakeDir{recs: map[string]map[string]any{}}, entries: entries}}
+	}
+	has := []Entry{
+		{ID: "a-bob", Email: "bob@sterling.lab", Verified: yes()},
+		{ID: "a-dana", Email: "dana@sterling.lab", Verified: yes(), Disabled: true}, // disabled: as good as gone
+	}
+	shape := Shape{Domains: []string{"sterling.lab"}, RemoveMissing: true}
+
+	b := &fakeBroker{users: users(), local: map[string]bool{"ops": true}}
+	fo := &removable{fakeDir: fakeDir{recs: map[string]map[string]any{"k-carol": {"email": "carol@sterling.lab"}, "k-bob": {"email": "bob@sterling.lab"}}}}
+	res := Run(context.Background(), b, primary(has...), []IdP{{Name: "contingency", Attributes: mappings, Dir: fo}}, writable, nil, shape, nop)
+	slices.Sort(b.deleted)
+	// carol (gone) and dana (disabled) go, with carol's failover account; bob
+	// stays; break-glass, service accounts and other domains are never touched
+	if res.Removed != 2 || !slices.Equal(b.deleted, []string{"carol", "dana"}) || !slices.Equal(fo.removed, []string{"k-carol"}) {
+		t.Fatalf("removed %d: broker %v, failover %v (errors %v)", res.Removed, b.deleted, fo.removed, res.Errors)
+	}
+
+	// off: nobody goes
+	b = &fakeBroker{users: users()}
+	if res := Run(context.Background(), b, primary(has...), nil, writable, nil, Shape{Domains: shape.Domains}, nop); res.Removed != 0 || len(b.deleted) != 0 {
+		t.Fatalf("removed %v with removeMissing off", b.deleted)
+	}
+	// a primary that lists no one, or can't be read: nobody goes
+	b = &fakeBroker{users: users()}
+	if res := Run(context.Background(), b, primary(), nil, writable, nil, shape, nop); len(b.deleted) != 0 {
+		t.Fatalf("removed %v on an empty listing (result %+v)", b.deleted, res)
+	}
+	b = &fakeBroker{users: users()}
+	broken := primary(has...)
+	broken.Dir.(*groupDir).listErr = errors.New("down")
+	if res := Run(context.Background(), b, broken, nil, writable, nil, shape, nop); len(b.deleted) != 0 {
+		t.Fatalf("removed %v while the primary can't be listed (result %+v)", b.deleted, res)
 	}
 }
