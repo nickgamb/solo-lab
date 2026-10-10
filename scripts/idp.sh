@@ -7,7 +7,8 @@
 #                   Keycloak (the broker), each configured by its NAME_*
 #                   settings (config/lab.env, docs/IDPS.md).
 #   ID-JAG          S&V's broker vouches for every S&V user (one issuer for
-#                   partners), whichever IdP signed them in.
+#                   the apps they reach by Cross App Access), whichever of
+#                   S&V's IdPs signed them in.
 #   RESOURCE_AS     Ledgerline's authorization server, by its LEDGERLINE_NAME_*
 #                   settings: Ledgerline's own Keycloak (in the lab) or another.
 SV_ISSUER="https://idp.$SV_DOMAIN/realms/sterling-vance"

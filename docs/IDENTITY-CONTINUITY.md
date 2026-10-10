@@ -7,9 +7,10 @@ its password-only contingency IdP) and maps each into one profile. The broker is
 it holds no employee passwords, only break-glass accounts for platform admins.
 S&V's own services trust only the broker. When an IdP goes down, new sign-ins
 move to the next healthy one and nothing downstream changes: same issuer,
-same `sub`, same groups. The broker also vouches for S&V's users to other
-companies (Cross App Access), whichever IdP signed them in, so partners
-trust one issuer and never see the chain or its failover
+same `sub`, same groups. The broker also vouches for S&V's users to the apps
+they reach through Cross App Access (Ledgerline), whichever of S&V's IdPs
+signed them in, so those apps trust one issuer and never see the chain or
+its failover
 ([IDENTITY-FLOWS.md](IDENTITY-FLOWS.md#2-cross-app-access-id-jag-to-a-saas)).
 
 Failover keeps people signed in; it must not lower what a sign-in proves.
