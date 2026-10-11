@@ -410,14 +410,21 @@ func intersect(have, shape []string) []string {
 	return out
 }
 
-// locate is the user's id at an IdP: the broker's link to it, else the one
-// user there with the same email.
+// locate is the user's id at an IdP: the broker's link to it when the
+// directory knows that id, else the one user there with the same email. An
+// IdP's sub needn't be its directory's id (Gluu's isn't the user's inum).
 func locate(ctx context.Context, b Broker, userID, mail string, p IdP) (string, error) {
 	sub, err := b.FederatedIdentity(ctx, userID, p.Name)
-	if err == nil {
-		return sub, nil
-	}
-	if !errors.Is(err, keycloak.ErrNotFound) {
+	switch {
+	case err == nil:
+		_, uerr := p.Dir.User(ctx, sub)
+		if uerr == nil {
+			return sub, nil
+		}
+		if !errors.Is(uerr, ErrNoUser) {
+			return "", uerr
+		}
+	case !errors.Is(err, keycloak.ErrNotFound):
 		return "", err
 	}
 	if mail == "" {
