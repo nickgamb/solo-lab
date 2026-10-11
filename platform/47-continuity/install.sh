@@ -48,6 +48,8 @@ secret_apply sv-identity continuity-controller \
 # the scheduled profile sync's realm client (users' profile attributes only)
 secret_apply sv-identity continuity-sync \
   client-id=continuity-sync client-secret="$(lab_secret SV_CONTINUITY_SYNC_CLIENT_SECRET)"
+# the controller's key to S&V's OpenFGA (layer 48), where it keeps relationships
+secret_apply sv-identity openfga-client token="$(lab_secret SV_OPENFGA_KEY)"
 for n in $CHAIN; do
   N=$(echo "$n" | tr '[:lower:]' '[:upper:]')
   # the directory sync's client at the IdP's directory
@@ -77,20 +79,29 @@ ok "external upstreams leave through sv-egress/egress-waypoint"
 
 step "IdentityContinuity and WorkloadProfile CRDs + controller (sv-identity)"
 K apply --server-side -f "$APP/config/crd" >/dev/null
-K wait crd/identitycontinuities.continuity.lab.solo.io crd/workloadprofiles.continuity.lab.solo.io --for=condition=Established --timeout=60s >/dev/null
+K wait crd/identitycontinuities.continuity.lab.solo.io crd/workloadprofiles.continuity.lab.solo.io crd/relationshipmodels.continuity.lab.solo.io crd/relationships.continuity.lab.solo.io --for=condition=Established --timeout=60s >/dev/null
 # each IdP's client and directory Secrets, by name: the controller reads the
 # first, the sync the second
 CONTINUITY_UPSTREAM_SECRETS=$(for n in $CHAIN; do printf ', upstream-%s' "$n"; done)
 CONTINUITY_DIRECTORY_SECRETS=$(for n in $CHAIN; do printf ', directory-%s' "$n"; done)
 export CONTINUITY_UPSTREAM_SECRETS CONTINUITY_DIRECTORY_SECRETS
 apply_tmpl "$D/controller.yaml"
+# The decision logic, ConfigMap assurance-policy (key policy.rego): the repo's
+# assurance.rego, which admins edit live from the Observatory. The gate
+# decides with it; on Enterprise it sits beside Solo's ext-auth service,
+# which loads it too. A re-install puts the repo's module back.
+export ASSURANCE_POLICY_NS=${ASSURANCE_EXTAUTH_NS:-sv-identity}
+K create configmap assurance-policy -n "$ASSURANCE_POLICY_NS" --from-file=policy.rego="$APP/internal/assurance/assurance.rego" \
+  --dry-run=client -o json | jq '.metadata.labels["continuity.lab.solo.io/assurance-policy"] = "true"' | K apply -f - >/dev/null
+# the other edition's copy, if this lab had one
+for pns in sv-identity agentgateway-system; do
+  [ "$pns" = "$ASSURANCE_POLICY_NS" ] || K delete configmap assurance-policy -n "$pns" --ignore-not-found >/dev/null
+done
 # the assurance gate: the same image, its gate command
 apply_tmpl "$D/assurance-gate.yaml"
 # Enterprise: Solo's ext-auth service enforces the assurance rules, with the
 # same Rego the gate runs (extauth.yaml); OSS: the gate does
 if [ -n "$ASSURANCE_EXTAUTH_NS" ]; then
-  K create configmap assurance-policy -n "$ASSURANCE_EXTAUTH_NS" --from-file=policy.rego="$APP/internal/assurance/assurance.rego" \
-    --dry-run=client -o yaml | K apply -f - >/dev/null
   apply_tmpl "$D/extauth.yaml"
   ok "assurance rules: Solo's ext-auth service ($ASSURANCE_EXTAUTH_NS), the gate's Rego"
 else

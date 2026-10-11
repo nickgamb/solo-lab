@@ -5,7 +5,7 @@ import { monacoTheme } from '../monaco'
 export type Marker = { line: number; col: number; message: string }
 
 // A Code tab's editor: the directory sync's and assurance rules' YAML, the
-// gate's Rego (read-only), the routing rules' CEL.
+// assurance decision logic's Rego, the routing rules' CEL.
 // Monaco is large, so each window loads this the first time its Code tab
 // opens. Markers are the document's errors, by position.
 export default function CodeEditor({ value, onChange, language = 'yaml', markers, readOnly }: {

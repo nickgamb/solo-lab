@@ -54,6 +54,14 @@ metadata:
   labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
   annotations: {observatory.solo.io/party-name: "Sterling & Vance"}
 ---
+# S&V's entitlements: OpenFGA and its database (layer 48). Only the gateway's
+# relationship guard and the continuity controller call it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sv-authz
+  labels: {lab.solo.io/party: sterling-vance, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
+---
 # S&V's own workforce IdP (the keycloak in ENTERPRISE_IDP), apart from the
 # broker in sv-identity. The tier label is where the Observatory cuts it.
 apiVersion: v1

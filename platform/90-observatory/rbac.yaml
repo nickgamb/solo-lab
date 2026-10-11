@@ -43,8 +43,9 @@ subjects: [{kind: ServiceAccount, name: observatory, namespace: observatory}]
 # Platform admins (group observatory-admins in the ops realm) govern traffic
 # and identity from the Observatory: they read what it shows and change
 # policy, routing and identity continuity. What runs (workloads, agents,
-# gateway parameters, ConfigMaps), RBAC, admission, Secrets and exec are not
-# theirs to change here; the lab's installers own those.
+# gateway parameters, ConfigMaps but the assurance decision logic's), RBAC,
+# admission, Secrets and exec are not theirs to change here; the lab's
+# installers own those.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata: {name: observatory-admin}
@@ -84,6 +85,12 @@ rules:
 - apiGroups: [continuity.lab.solo.io]   # assurance rules: a resource's are added, changed and removed
   resources: [workloadprofiles]
   verbs: [create, update, patch, delete]
+- apiGroups: [continuity.lab.solo.io]   # entitlements: a model's relationships are added and removed
+  resources: [relationships]
+  verbs: [create, delete]
+- apiGroups: [continuity.lab.solo.io]   # and the model itself is edited (status stays the controller's)
+  resources: [relationshipmodels]
+  verbs: [update, patch]
 - apiGroups: [authorization.k8s.io]   # "may I?", for the editor's read-only mode
   resources: [selfsubjectaccessreviews]
   verbs: [create]
@@ -130,6 +137,39 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata: {name: observatory-models, namespace: agentgateway-system}
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: observatory-models}
+subjects: [{apiGroup: rbac.authorization.k8s.io, kind: Group, name: "observatory:observatory-admins"}]
+---
+# The assurance decision logic, edited live: one ConfigMap, by name, in
+# sv-identity (OSS, the gate's) or agentgateway-system (Enterprise, beside
+# Solo's ext-auth service). The Observatory compiles it before it writes.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: observatory-assurance-policy, namespace: sv-identity}
+rules:
+- apiGroups: [""]
+  resources: [configmaps]
+  resourceNames: [assurance-policy]
+  verbs: [update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: observatory-assurance-policy, namespace: sv-identity}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: observatory-assurance-policy}
+subjects: [{apiGroup: rbac.authorization.k8s.io, kind: Group, name: "observatory:observatory-admins"}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: observatory-assurance-policy, namespace: agentgateway-system}
+rules:
+- apiGroups: [""]
+  resources: [configmaps]
+  resourceNames: [assurance-policy]
+  verbs: [update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: observatory-assurance-policy, namespace: agentgateway-system}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: observatory-assurance-policy}
 subjects: [{apiGroup: rbac.authorization.k8s.io, kind: Group, name: "observatory:observatory-admins"}]
 ---
 # A directory's credentials written from the Observatory are also granted to

@@ -1,0 +1,113 @@
+# relationship-guard: the front door's entitlements check
+# (apps/relationship-guard). Before a tools/call reaches an MCP server, it
+# asks S&V's OpenFGA whether the agent acts for the user, whether the user may
+# call the server, and which clients the user may see; the server is handed
+# that list (x-relationship-clients, set by the gateway). The ai-gateway calls
+# it first in each MCP backend's guardrails (bob-workspace-tools,
+# alice-vault-tools; FailClosed: no answer, no call). The Observatory asks its
+# evaluate port for the what-if.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: relationship-guard, namespace: agentgateway-system}
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: relationship-guard, namespace: agentgateway-system}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: relationship-guard}}
+  template:
+    metadata:
+      labels: {app: relationship-guard}
+    spec:
+      serviceAccountName: relationship-guard
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector: {matchLabels: {app: relationship-guard}}
+      containers:
+      - name: relationship-guard
+        image: ${RELATIONSHIP_GUARD_IMAGE}
+        env:
+        - {name: OPENFGA_URL, value: "http://openfga.sv-authz.svc:8080"}
+        - {name: OPENFGA_STORE, value: sv-identity/sterling-vance}
+        - name: OPENFGA_TOKEN
+          valueFrom: {secretKeyRef: {name: openfga-guard, key: token}}
+        ports:
+        - {name: grpc, containerPort: 4445}
+        - {name: evaluate, containerPort: 9002}
+        # a busy node answers slowly; only a guard that stops answering is restarted
+        readinessProbe: {grpc: {port: 4445}, timeoutSeconds: 3}
+        livenessProbe: {httpGet: {path: /healthz, port: evaluate}, timeoutSeconds: 3, periodSeconds: 10, failureThreshold: 6}
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {memory: 128Mi}
+        securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: relationship-guard, namespace: agentgateway-system}
+spec:
+  minAvailable: 1
+  selector: {matchLabels: {app: relationship-guard}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: relationship-guard
+  namespace: agentgateway-system
+  labels: {continuity.lab.solo.io/relationship-guard: "true"}
+spec:
+  selector: {app: relationship-guard}
+  ports:
+  - {name: grpc, port: 4445, targetPort: grpc, appProtocol: kubernetes.io/h2c}
+  - {name: evaluate, port: 9002, targetPort: evaluate}
+---
+# the guardrail port: the ai-gateway; the evaluate port: the Observatory
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: relationship-guard-callers, namespace: agentgateway-system}
+spec:
+  selector: {matchLabels: {app: relationship-guard}}
+  action: ALLOW
+  rules:
+  - from: [{source: {principals: [cluster.local/ns/agentgateway-system/sa/ai-gateway]}}]
+    to: [{operation: {ports: ["4445"]}}]
+  - from: [{source: {principals: [cluster.local/ns/observatory/sa/observatory]}}]
+    to: [{operation: {ports: ["9002"]}}]
+---
+# a deadline for the callout, as for mcp-guard (25-mcp-guard.yaml): a backend
+# policy on the Service, attached through a placeholder route that refuses
+# anything sent to it
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: relationship-guard, namespace: agentgateway-system}
+spec:
+  parentRefs: [{name: ai-gateway, sectionName: http}]
+  hostnames: [relationship-guard.internal]
+  rules:
+  - backendRefs: [{name: relationship-guard, port: 4445}]
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: relationship-guard-timeout, namespace: agentgateway-system}
+spec:
+  targetRefs: [{group: "", kind: Service, name: relationship-guard}]
+  backend:
+    http:
+      requestTimeout: 5s
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: relationship-guard-route, namespace: agentgateway-system}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: relationship-guard}]
+  traffic:
+    authorization:
+      action: Deny
+      policy:
+        matchExpressions: ['true']

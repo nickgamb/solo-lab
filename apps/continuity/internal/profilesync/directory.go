@@ -583,7 +583,8 @@ func (d *keycloakDir) Schema(ctx context.Context) ([]string, error) {
 // Lookup reads path in a record: a dot path ("user_metadata.department"), a
 // SCIM extension attribute by its schema URN
 // ("urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:department"),
-// or a SCIM filtered value ("emails[primary eq true].value").
+// a SCIM filtered value ("emails[primary eq true].value"), or a value in
+// each object of a list ("groups.display": every group's name).
 func Lookup(r map[string]any, path string) any {
 	if strings.HasPrefix(path, "urn:") {
 		i := strings.LastIndex(path, ":")
@@ -594,24 +595,47 @@ func Lookup(r map[string]any, path string) any {
 	}
 	var cur any = r
 	for _, seg := range strings.Split(path, ".") {
-		name, key, val, filtered := filterOf(seg)
-		m, ok := cur.(map[string]any)
-		if !ok {
+		if cur = step(cur, seg); cur == nil {
 			return nil
-		}
-		cur = m[name]
-		if filtered {
-			l, _ := cur.([]any)
-			cur = nil
-			for _, x := range l {
-				if e, ok := x.(map[string]any); ok && fmt.Sprint(e[key]) == val {
-					cur = e
-					break
-				}
-			}
 		}
 	}
 	return cur
+}
+
+// step: one segment of a path, in an object, or in each object of a list
+// (their values, one list).
+func step(cur any, seg string) any {
+	if l, ok := cur.([]any); ok {
+		var out []any
+		for _, x := range l {
+			switch v := step(x, seg).(type) {
+			case nil:
+			case []any:
+				out = append(out, v...)
+			default:
+				out = append(out, v)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	m, ok := cur.(map[string]any)
+	if !ok {
+		return nil
+	}
+	name, key, val, filtered := filterOf(seg)
+	if !filtered {
+		return m[name]
+	}
+	l, _ := m[name].([]any)
+	for _, x := range l {
+		if e, ok := x.(map[string]any); ok && fmt.Sprint(e[key]) == val {
+			return e
+		}
+	}
+	return nil
 }
 
 // filterOf splits `emails[primary eq true]` into emails, primary, true.

@@ -8,8 +8,12 @@ that token itself (signature against the issuer's keys, issuer, audience,
 expiry): no check trusts the one before it.
 
 Bob's own sign-in token (audience ai-gateway) is refused here, so an agent
-that skipped the gateway and replayed Bob's token would get nothing. Each tool
-also acts as the user in the token: an advisor sees their own book, not Bob's.
+that skipped the gateway and replayed Bob's token would get nothing.
+
+Which clients the user may see isn't decided here either: the gateway asks
+S&V's relationships (OpenFGA) on every call and hands the answer over in
+x-relationship-clients. The workspace answers for those clients alone, and
+for none when the gateway sent no decision.
 """
 import contextvars
 import copy
@@ -30,6 +34,8 @@ BOOK = json.loads((pathlib.Path(__file__).parent / "book.json").read_text())
 FOLLOWUPS: list[dict] = []
 
 _auth = contextvars.ContextVar("authorization", default="")
+# the clients the gateway says this call's user may see (None: no decision)
+_permitted: contextvars.ContextVar = contextvars.ContextVar("permitted", default=None)
 
 
 def _claims() -> dict:
@@ -49,17 +55,15 @@ def _claims() -> dict:
         raise ToolError(f"refused: {e}")
 
 
-# whose book the fixture is: the advisor's email at the firm (the deployment's
-# WORKSPACE_BOOK_OWNER), matched against the token's email
-OWNER = os.environ.get("WORKSPACE_BOOK_OWNER", BOOK["owner"]).lower()
-
-
 def _book_for(claims: dict) -> dict:
-    """The acting user's own book. Only Bob has one in this fixture."""
+    """The clients the gateway's relationship check allows this user."""
+    permitted = _permitted.get()
+    if permitted is None:
+        raise ToolError("refused: no relationship decision from the firm's gateway on this call")
     who = (claims.get("email") or claims.get("preferred_username") or "").lower()
-    if who != OWNER:
-        return {"owner": who, "clients": [], "notes": {}}
-    return {**BOOK, "owner": OWNER}
+    clients = [c for c in BOOK["clients"] if c["id"] in permitted]
+    notes = {k: v for k, v in BOOK["notes"].items() if k in permitted}
+    return {"owner": who, "clients": clients, "notes": notes}
 
 
 def _find(book: dict, name: str) -> dict:
@@ -133,9 +137,13 @@ def _with_auth(app):
         if scope["type"] == "http":
             h = dict((k.decode().lower(), v.decode()) for k, v in scope.get("headers", []))
             token = _auth.set(h.get("authorization", ""))
+            # exactly one decision, the gateway's; two copies is no decision
+            rel = [v.decode() for k, v in scope.get("headers", []) if k.decode().lower() == "x-relationship-clients"]
+            perm = _permitted.set({c.strip() for c in rel[0].split(",") if c.strip()} if len(rel) == 1 else None)
             try:
                 return await app(scope, receive, send)
             finally:
+                _permitted.reset(perm)
                 _auth.reset(token)
         return await app(scope, receive, send)
     return wrapped

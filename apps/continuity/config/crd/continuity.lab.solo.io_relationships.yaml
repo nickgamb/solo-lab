@@ -1,0 +1,95 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: relationships.continuity.lab.solo.io
+spec:
+  group: continuity.lab.solo.io
+  names:
+    kind: Relationship
+    listKind: RelationshipList
+    plural: relationships
+    shortNames:
+    - rel
+    singular: relationship
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.user
+      name: USER
+      type: string
+    - jsonPath: .spec.relation
+      name: RELATION
+      type: string
+    - jsonPath: .spec.object
+      name: OBJECT
+      type: string
+    - jsonPath: .spec.model
+      name: MODEL
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          Relationship is one fact in a RelationshipModel's store, as OpenFGA writes
+          it: a user (or a set of users) has a relation to an object. "Bob advises
+          book sv-bob" is user user:bob@sterling.lab, relation advisor, object
+          book:sv-bob. Group membership is not declared here: the gateway takes it
+          from the verified token, so the IdP stays its source.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              model:
+                description: The RelationshipModel (in this namespace) whose store
+                  holds it.
+                minLength: 1
+                type: string
+              object:
+                description: 'What: type:id.'
+                maxLength: 256
+                pattern: ^[a-z_][a-z0-9_]*:[^\s#:]+$
+                type: string
+              relation:
+                description: The relation, as the model defines it on the object's
+                  type.
+                maxLength: 50
+                pattern: ^[a-z_][a-z0-9_]*$
+                type: string
+              user:
+                description: |-
+                  Who: type:id, or a set of users as type:id#relation
+                  (group:advisors#member).
+                maxLength: 256
+                pattern: ^[a-z_][a-z0-9_]*:[^\s#:]+(#[a-z_][a-z0-9_]*)?$
+                type: string
+            required:
+            - model
+            - object
+            - relation
+            - user
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources: {}

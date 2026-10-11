@@ -53,21 +53,7 @@ img agent-adapter   "$D/adapter/Dockerfile"                      "$U4A_CTX" "$U4
 ok "uma-as uma-pep alice-vault-mcp portal agent-adapter"
 
 step "CloudNativePG operator (Alice's database)"
-K create namespace cnpg-system --dry-run=client -o yaml | K apply -f - >/dev/null
-K label namespace cnpg-system istio.io/dataplane-mode=ambient lab.solo.io/party=platform --overwrite >/dev/null
-# mutual TLS mesh-wide (layer 80), but the API server calls the operator's
-# admission webhook from outside the mesh
-K apply -f - >/dev/null <<'YAML'
-apiVersion: security.istio.io/v1
-kind: PeerAuthentication
-metadata: {name: webhook, namespace: cnpg-system}
-spec:
-  selector: {matchLabels: {app.kubernetes.io/name: cloudnative-pg}}
-  mtls: {mode: STRICT}
-  portLevelMtls: {"9443": {mode: PERMISSIVE}}
-YAML
-helm_up cnpg cloudnative-pg "$CNPG_VERSION" cnpg-system --repo https://cloudnative-pg.github.io/charts
-deny_internet cnpg-system
+install_cnpg
 
 step "Alice's IdP (alice-identity)"
 secret_apply alice-identity kc-secrets \
@@ -100,7 +86,7 @@ if [ "$(K get gateway waypoint -n alice -o jsonpath='{.spec.gatewayClassName}' 2
   K delete gateway waypoint -n alice --wait >/dev/null
 fi
 K delete authorizationpolicy uma-as-grant-surface -n alice --ignore-not-found >/dev/null
-apply_tmpl "$D/alice.yaml" "$D/meridian.yaml" "$D/sv-u4a.yaml"
+apply_tmpl "$D/alice.yaml" "$D/meridian.yaml" "$D/sv-u4a.yaml" "$D/relationships.yaml"
 # Alice's waypoint and the route its rules attach to (one listener and the
 # Service's route on Enterprise; an internal listener on OSS)
 apply_tmpl "$D/alice-waypoint-$AGW_EDITION.yaml"

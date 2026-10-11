@@ -90,6 +90,18 @@ expect 'connection failed|http": 0' "Bob's agent's adapter, skipping the firm's 
 o=$(probe_exec sv-agents http://ai-gateway.agentgateway-system/mcp/alice-vault list 2>&1 | tail -1) || true
 probe_ran "$o" || o="probe did not run: $o"
 expect 'http": 40[13]' "another S&V workload can't use Bob's agent's adapter at the gateway" "$o"
+# S&V's own rule, before Alice is ever asked: only her advisor's agent may
+# call her vault (relationships.yaml; OpenFGA, checked at the gateway)
+probe_pod sv-agents bob-assistant
+RELS="$LAB_ROOT/demos/bob-to-alice/relationships.yaml"; on_exit "apply_tmpl $RELS"
+BOB=$(sso_token bob bob-demo | jq -r '.access_token // empty') || BOB=""
+K delete rel alice-vault-holds-c-1001 -n sv-identity >/dev/null
+for _ in $(seq 1 15); do
+  o=$(probe_exec sv-agents/probe-bob-assistant http://ai-gateway.agentgateway-system/mcp/alice-vault call get_positions '{}' --token "$BOB" 2>&1 | tail -1) || true
+  echo "$o" | grep -q "may not call alice-vault" && break; sleep 2
+done
+expect "refused by S&V's relationships: .*may not call alice-vault" "her vault no longer holds an S&V client: Bob's agent refused at S&V's gateway, before Alice is asked" "$o"
+apply_tmpl "$RELS"
 probe_pod kagent kagent-controller
 o=$(probe_exec kagent/probe-kagent-controller http://ai-gateway.agentgateway-system/mcp/alice-vault call get_positions '{}' 2>&1 | tail -1) || true
 probe_ran "$o" || o="probe did not run: $o"

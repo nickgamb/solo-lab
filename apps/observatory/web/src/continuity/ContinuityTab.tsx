@@ -189,6 +189,8 @@ function Continuity({ lab, ic, items, setPick }: {
   const profiles = useMemo(() => (lab.continuity?.profiles ?? []).filter(p => p.namespace === ic.metadata.namespace && p.continuity === ic.metadata.name),
     [lab.continuity?.profiles, ic.metadata.namespace, ic.metadata.name])
   const closed = profiles.filter(p => p.phase === 'FailedClosed' && enforced(p)).map(p => p.name)
+  const models = useMemo(() => (lab.continuity?.relationshipModels ?? []).filter(m => m.namespace === ic.metadata.namespace),
+    [lab.continuity?.relationshipModels, ic.metadata.namespace])
 
   return (
     <div className="cont">
@@ -230,7 +232,7 @@ function Continuity({ lab, ic, items, setPick }: {
           </ReactFlow>
           <TierHealth tiers={tiers} status={status} />
         </div>
-        <RuleBuilder key={key} ic={ic} broker="the identity fabric" profiles={profiles} />
+        <RuleBuilder key={key} ic={ic} broker="the identity fabric" profiles={profiles} models={models} />
       </div>
       <div className="cont-foot">
         <div className="cont-col">

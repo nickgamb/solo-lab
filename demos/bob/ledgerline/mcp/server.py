@@ -41,11 +41,12 @@ NOTES = {
 
 
 def _scopes(v) -> list:
-    """The scope claim: a space-separated string (RFC 8693, RFC 9068), or the
-    list some authorization servers issue instead."""
+    """The scope claim: a space-separated string (RFC 8693, RFC 9068), the
+    list some authorization servers issue instead (Gluu), or that list
+    written as a string ("[a, b]")."""
     if isinstance(v, list):
         return [str(s) for s in v]
-    return str(v or "").split()
+    return str(v or "").strip().removeprefix("[").removesuffix("]").replace(",", " ").split()
 
 
 def _claims() -> dict:

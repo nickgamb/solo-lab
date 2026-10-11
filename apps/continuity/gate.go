@@ -27,8 +27,11 @@ import (
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/protobuf/types/known/structpb"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	toolscache "k8s.io/client-go/tools/cache"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -70,14 +73,29 @@ func runGate(args []string) int {
 
 	scheme := runtime.NewScheme()
 	_ = v1.AddToScheme(scheme)
-	c, err := cache.New(ctrl.GetConfigOrDie(), cache.Options{Scheme: scheme, DefaultNamespaces: map[string]cache.Config{*ns: {}}})
+	cfg := ctrl.GetConfigOrDie()
+	c, err := cache.New(cfg, cache.Options{Scheme: scheme, DefaultNamespaces: map[string]cache.Config{*ns: {}}})
 	if err != nil {
 		slog.Error("kube cache", "err", err)
 		return 1
 	}
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		slog.Error("kube client", "err", err)
+		return 1
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	g := &gate{r: c, ns: *ns, stale: *stale, now: time.Now, extAuthNS: *extAuthNS}
+	// the decision logic's ConfigMap: beside Solo's ext-auth service when it
+	// enforces the rules (it loads the same one), else here
+	pw := &policyWatch{ns: *ns, name: policyConfigMap}
+	if *extAuthNS != "" {
+		pw.ns = *extAuthNS
+	}
+	pw.get = func(ctx context.Context) (*corev1.ConfigMap, error) {
+		return cs.CoreV1().ConfigMaps(pw.ns).Get(ctx, pw.name, metav1.GetOptions{})
+	}
+	g := &gate{r: c, ns: *ns, stale: *stale, now: time.Now, extAuthNS: *extAuthNS, policy: pw}
 	// every word from the chain (the controller's status writes) is a heartbeat
 	inf, err := c.GetInformer(ctx, &v1.IdentityContinuity{})
 	if err != nil {
@@ -102,6 +120,8 @@ func runGate(args []string) int {
 	hs.SetServingStatus("", healthpb.HealthCheckResponse_NOT_SERVING)
 	go func() {
 		if c.WaitForCacheSync(ctx) {
+			pw.poll(ctx) // decide with the ConfigMap's module from the first request
+			go pw.run(ctx)
 			g.synced.Store(true)
 			hs.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 		}
@@ -159,6 +179,7 @@ type gate struct {
 	heard  atomic.Int64 // unix nanos of the chain's last status write seen
 	// Solo's ext-auth service's namespace, when it enforces the rules
 	extAuthNS string
+	policy    *policyWatch // the decision logic's ConfigMap
 }
 
 func (g *gate) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.CheckResponse, error) {

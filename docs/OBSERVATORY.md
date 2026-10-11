@@ -58,8 +58,8 @@ Interactions:
   you. If the object changed since loading, or another manager (a controller,
   Helm) owns a changed field, Apply stops and says so; **Apply anyway** takes
   the fields over. Policy, routing and identity continuity are editable;
-  workloads, agents, gateway parameters, ConfigMaps, RBAC and Secrets are
-  read-only.
+  workloads, agents, gateway parameters, ConfigMaps (but the assurance
+  decision logic's), RBAC and Secrets are read-only.
 
   ![Details for ai-gateway: its configuration objects and its traffic](images/observatory-details-ai-gateway.jpg)
 
@@ -146,8 +146,10 @@ builder, and the directory sync window. See
     outside the chain is a warning and is skipped until it joins. Below: each
     rule's current IdP, and the active IdP for the rest. Save writes
     `spec.routing.rules` as the signed-in admin.
-  - **Gateway policy:** the agentgateway policy the continuity controller
-    wrote from the rules and the chain's health, read-only.
+  - **Gateway policy:** the live agentgateway policy, edited and applied
+    as you (dry run, diff, apply). The continuity controller owns its
+    `:path` transformation, written from the rules and the chain's health;
+    the rest is yours.
 
   ![Routing policy: each rule's CEL and IdPs, and where each sign-in goes now](images/observatory-routing-policy.jpg)
 - **Assurance rules** (rule builder button): what a sign-in must prove,
@@ -182,11 +184,16 @@ builder, and the directory sync window. See
     `policy_points`, each gateway policy taking the broker's tokens and the
     rule it asks for (a rule, `default` or `null`). Errors are marked at line
     and column; leaving the tab applies it. Beside it, **Decision logic
-    (Rego, read-only)** shows the Rego deciding every request, run by Solo's
-    ext-auth service on Enterprise and the assurance gate on OSS
-    (`/api/assurance/{ns}/{name}/policy`).
+    (Rego)** edits the module deciding every request, ConfigMap
+    `assurance-policy`: Solo's ext-auth service runs it on Enterprise, the
+    assurance gate on OSS (`/api/assurance-logic/{ns}/{name}`). **Save
+    logic** compiles it first: errors are marked at line and column, and a
+    module that isn't package `assurance` with rules `decision` and
+    `extauth` isn't saved. A save made since it was read is a conflict:
+    **Reload**. The window names the version the gate runs, and any it
+    refused.
 
-    ![The decision logic: the Rego module, read-only](images/observatory-assurance-rego.jpg)
+    ![The decision logic: the Rego module](images/observatory-assurance-rego.jpg)
 
     ```yaml
     default:
@@ -217,6 +224,15 @@ builder, and the directory sync window. See
     and an AuthorizationPolicy beside the gate, labelled
     `continuity.lab.solo.io/assurance-gate-caller`). The gate applies all of
     it to the next request.
+- **Relationships** (rule builder button): the entitlements the gateway
+  checks on every tool call, a RelationshipModel and its Relationships, kept
+  in OpenFGA by the continuity controller. **Model:** the OpenFGA DSL,
+  saved as you once OpenFGA's parser reads it (errors marked on their
+  line), and whether the store is synced. **Relationships:** by object
+  type, each removable, and one add row; written as you, each named after it
+  (`bob-sterling-lab-advisor-sv-bob`). **What if:** a user, their groups, an
+  agent and an MCP server, as the relationship guard decides it: acts for,
+  may call, the clients they see, and why.
 - Each IdP's card shows a **trust** badge (every check on hover). The banner
   names enforced rules failing closed while the active IdP can't meet them.
 
@@ -269,8 +285,9 @@ chain from `.env`.
 
 | Data | Source |
 | --- | --- |
-| Nodes and declared edges | dynamic informers over workloads, Services, Gateway API routes, agentgateway backends and policies (either edition), kagent Agents, SandboxAgents, MCP servers, ModelConfigs, Substrate WorkerPools, Istio policies, CNPG clusters, IdentityContinuity, WorkloadProfile; rediscovered periodically |
-| Assurance rules | the IdentityContinuity, its WorkloadProfiles, the agentgateway policies that take the broker's tokens or ask the assurance gate, the edge's SSO and the continuity CRDs (`/api/assurance/{ns}/{name}`); outcomes from the assurance gate's evaluate API (`/api/assurance/{ns}/{name}/evaluate`) |
+| Nodes and declared edges | dynamic informers over workloads, Services, Gateway API routes, agentgateway backends and policies (either edition), kagent Agents, SandboxAgents, MCP servers, ModelConfigs, Substrate WorkerPools, Istio policies, CNPG clusters, IdentityContinuity, WorkloadProfile, RelationshipModel, Relationship; rediscovered periodically |
+| Assurance rules | the IdentityContinuity, its WorkloadProfiles, the agentgateway policies that take the broker's tokens or ask the assurance gate, the edge's SSO and the continuity CRDs (`/api/assurance/{ns}/{name}`); outcomes from the assurance gate's evaluate API (`/api/assurance/{ns}/{name}/evaluate`); the decision logic from the ConfigMap labelled `continuity.lab.solo.io/assurance-policy` (`GET`, `PUT /api/assurance-logic/{ns}/{name}`) |
+| Relationships | the RelationshipModel and its Relationships (`/api/relationships/{ns}/{name}`; add `POST …/relationships`, remove `DELETE …/relationships/{rel}`); outcomes from the relationship guard's evaluate API (`/api/relationships/{ns}/{name}/evaluate`) |
 | Observed edges, L4 rates | Prometheus: `istio_tcp_connections_opened_total{reporter="destination"}` from ztunnel |
 | Requests, token claims | OTLP/HTTP logs on port 4318, from the platform collector |
 | Substrate workers and actors | kagent's `/api/substrate/status` (actor state changes also go to Traffic) |
@@ -289,8 +306,9 @@ How the graph is built:
 
 The browser gets everything over one Server-Sent Events stream (`/api/stream`:
 `graph`, `stats`, `traffic`, `continuity`, `substrate`), except the model
-chain (`/api/models`, read as the signed-in admin) and the assurance rules
-(`/api/assurance/{ns}/{name}`).
+chain (`/api/models`, read as the signed-in admin), the assurance rules
+(`/api/assurance/{ns}/{name}`) and the relationships
+(`/api/relationships/{ns}/{name}`).
 
 ## Access model
 
@@ -316,10 +334,13 @@ chain (`/api/models`, read as the signed-in admin) and the assurance rules
 - The group's ClusterRole `observatory-admin` reads what the Observatory
   shows (no Secrets). It changes Gateway API, kgateway and agentgateway
   policies and backends, Istio security and networking, IdentityContinuity
-  specs, and WorkloadProfiles (create, change, remove; status stays the
-  controller's). Not workloads, agents, gateway parameters, ConfigMaps, RBAC,
-  admission or `exec`. Admission keeps every policy that asks the assurance
+  specs, WorkloadProfiles (create, change, remove; status stays the
+  controller's) and Relationships (create, remove). Not workloads, agents,
+  gateway parameters, ConfigMaps, RBAC, admission or `exec`. Admission keeps every policy that asks the assurance
   gate failing closed, theirs included.
+- In `sv-identity` and `agentgateway-system` the group may update one
+  ConfigMap, by name: `assurance-policy`, the decision logic. The
+  Observatory compiles a module before it writes it.
 - In `sv-identity` the group may also write Secrets and create Jobs.
   Admission (`platform/90-observatory/admission.yaml`) limits these to Opaque
   Secrets labelled `continuity.lab.solo.io/credentials` (IdP and directory

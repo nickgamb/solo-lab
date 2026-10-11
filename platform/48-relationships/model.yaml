@@ -1,0 +1,46 @@
+# S&V's entitlements, as an OpenFGA model the continuity controller keeps in
+# OpenFGA (store sv-identity/sterling-vance). The relationships themselves
+# are Relationship resources beside it (demos/bob, demos/bob-to-alice).
+#
+# Group membership is never stored: the gateway holds the token's groups as
+# contextual tuples for each call, so the IdP stays their source.
+apiVersion: continuity.lab.solo.io/v1alpha1
+kind: RelationshipModel
+metadata: {name: sterling-vance, namespace: sv-identity}
+spec:
+  description: Who advises which clients, which agents act for whom, and who may call each MCP server.
+  model: |
+    model
+      schema 1.1
+
+    type user
+
+    # a group from the IdP (the token's groups claim)
+    type group
+      relations
+        define member: [user]
+
+    # an agent: a workload in the mesh (agent:<namespace>.<serviceaccount>)
+    # or an AI client outside it (agent:client.<client_id>); the people it
+    # may act for
+    type agent
+      relations
+        define acts_for: [user, group#member]
+
+    # an advisor's book of business
+    type book
+      relations
+        define advisor: [user]
+
+    type client
+      relations
+        define book: [book]
+        define can_view: advisor from book
+
+    # an MCP server behind the gateway: who may call it, and the client whose
+    # data it holds (their advisor may call it too)
+    type mcp_server
+      relations
+        define caller: [user, group#member]
+        define holds: [client]
+        define can_call: caller or can_view from holds

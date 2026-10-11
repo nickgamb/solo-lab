@@ -1,0 +1,68 @@
+# OpenFGA's database (CloudNativePG, three instances across zones), its
+# disruption budget, and who may call it. Nothing in sv-authz takes a
+# connection unless a policy below names the caller.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata: {name: openfga-db, namespace: sv-authz}
+spec:
+  instances: 3
+  postgresql:
+    synchronous: {method: any, number: 1}
+  bootstrap:
+    initdb: {database: openfga, owner: openfga}
+  storage: {size: 1Gi}
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 512Mi}
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: topology.kubernetes.io/zone
+    podAntiAffinityType: preferred
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: openfga, namespace: sv-authz}
+spec:
+  minAvailable: 2
+  selector: {matchLabels: {app.kubernetes.io/name: openfga, app.kubernetes.io/instance: openfga}}
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: strict, namespace: sv-authz}
+spec: {mtls: {mode: STRICT}}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: default-deny, namespace: sv-authz}
+spec: {}
+---
+# OpenFGA: the gateway's relationship guard asks it on every tool call; the
+# continuity controller writes the model and the relationships.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: openfga-callers, namespace: sv-authz}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: openfga}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/agentgateway-system/sa/relationship-guard
+        - cluster.local/ns/sv-identity/sa/continuity-controller
+---
+# Its database: OpenFGA (and its migrations), the instances replicating, and
+# the operator managing them.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: openfga-db-callers, namespace: sv-authz}
+spec:
+  selector: {matchLabels: {cnpg.io/cluster: openfga-db}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/sv-authz/sa/openfga
+        - cluster.local/ns/sv-authz/sa/openfga-db
+        - cluster.local/ns/cnpg-system/sa/cnpg-cloudnative-pg

@@ -55,7 +55,7 @@ ok "ai-gateway programmed — in-cluster: http://ai-gateway.agentgateway-system"
 # ai-gateway itself reaches the LLM providers. The services beside it (S&V's
 # ID-token exchange and MCP guardrail, demos/bob) get the cluster and nothing
 # else: the guardrail sees every tool result unmasked.
-deny_internet_pods agentgateway-system idtoken-exchange mcp-guard
-ok "no direct internet from idtoken-exchange, mcp-guard (agentgateway-system)"
+deny_internet_pods agentgateway-system idtoken-exchange mcp-guard relationship-guard
+ok "no direct internet from idtoken-exchange, mcp-guard, relationship-guard (agentgateway-system)"
 
 "$LAB_ROOT/scripts/llm.sh"

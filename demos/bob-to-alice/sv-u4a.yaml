@@ -120,6 +120,21 @@ spec:
         policy:
           matchExpressions:
           - 'mcp.tool.name in ["get_positions", "get_transactions", "execute_trade"]'
+      # S&V's side, before Alice is ever asked: only her own advisor's agent
+      # may call her vault (mcp_server:alice-vault holds client:c-1001;
+      # relationships.yaml). Her terms are hers, at Meridian (UMA).
+      guardrails:
+        processors:
+        - remote:
+            backendRef: {name: relationship-guard, port: 4445}
+            failureMode: FailClosed   # no answer, no call
+            metadata:
+              server: '"alice-vault"'          # its name in S&V's relationships
+              user: 'jwt.email'
+              groups: 'has(jwt.groups) ? jwt.groups : []'
+              workload: 'source.identity.namespace == "kgateway-system" ? "" : source.identity.namespace + "/" + source.identity.serviceAccount'
+              client: 'jwt.azp'
+          methods: {"tools/call": Request}
 ---
 apiVersion: ${AGW_POLICY_API}
 kind: ${AGW_POLICY_KIND}

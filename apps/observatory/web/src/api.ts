@@ -98,7 +98,10 @@ export type ContinuityView = {
   resources?: ResourcePath[]
   // each resource's assurance rules on its chain: met, or failed closed
   profiles?: { namespace: string; name: string; continuity: string; phase?: string; mode?: string }[]
+  // each RelationshipModel: its Relationships, and whether OpenFGA holds them
+  relationshipModels?: RelationshipModelPhase[]
 }
+export type RelationshipModelPhase = { namespace: string; name: string; relationships: number; synced?: string }
 export type Me = { name: string; email?: string; groups: string[] }
 // Mirrors server/models.go: the AI gateway's model chain.
 // ollama (or another custom provider's override), openai, anthropic; other: a kind the editor doesn't write
@@ -308,8 +311,24 @@ export type EvalDraft = { policy?: AssurancePolicy; tiers?: Record<string, TierA
 export type EvalSession = { idp: string; acr?: string; amr?: string[]; authTime?: number }
 export const evaluate = (ns: string, name: string, draft?: EvalDraft, session?: EvalSession) =>
   api<Evaluation>(`/api/assurance/${ns}/${name}/evaluate`, { method: 'POST', body: JSON.stringify({ draft, session }) })
-// The gate's decision logic: the Rego it decides every request with.
-export const getAssuranceLogic = (ns: string, name: string) => api<string>(`/api/assurance/${ns}/${name}/policy`)
+// The decision logic: the Rego module both runtimes decide with, from its
+// ConfigMap (server/assurance_policy.go). No name: the gate's own module,
+// read only. running/refused: the version the gate decides with, and why it
+// refused a newer one.
+export type AssuranceLogic = {
+  namespace?: string; name?: string; resourceVersion?: string; text: string; running?: string; refused?: string; note?: string
+}
+export type LogicError = { line: number; col: number; message: string }
+export const getAssuranceLogic = (ns: string, name: string) => api<AssuranceLogic>(`/api/assurance-logic/${ns}/${name}`)
+// Saves it at the resourceVersion it was read at (409 if changed since);
+// a module that doesn't compile comes back as its errors, by position.
+export async function putAssuranceLogic(ns: string, name: string, resourceVersion: string, text: string): Promise<{ resourceVersion: string } | { errors: LogicError[] }> {
+  const r = await fetch(`/api/assurance-logic/${ns}/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, resourceVersion }) })
+  const body = await r.text()
+  if (r.status === 400 && (r.headers.get('content-type') ?? '').includes('json')) return JSON.parse(body) as { errors: LogicError[] }
+  if (!r.ok) throw new ApiError(body.trim() || r.statusText, r.status)
+  return JSON.parse(body) as { resourceVersion: string }
+}
 
 // A rule: an update at the resourceVersion it was read at (409 if changed
 // since), or a new rule without one.
@@ -321,3 +340,38 @@ export const deleteProfile = (ns: string, name: string) => api(`/api/assurance/$
 export const putPolicyPoint = (ns: string, name: string, p: PolicyPoint, rule: string | null) =>
   api<{ resourceVersion: string }>(`/api/assurance/${ns}/${name}/policy-points/${p.namespace}/${p.name}`, { method: 'PUT', body: JSON.stringify({ kind: p.kind, resourceVersion: p.resourceVersion, rule }) })
 export const checkTrust = (ns: string, name: string) => api(`/api/continuity/${ns}/${name}/check-trust`, { method: 'POST', body: '{}' })
+
+// Mirrors server/relationships.go: the Relationships window. The model is a
+// RelationshipModel (OpenFGA's DSL), each relationship a Relationship
+// naming it (apps/continuity); the continuity controller keeps OpenFGA
+// matching them.
+export type RelationshipItem = { name: string; user: string; relation: string; object: string; resourceVersion: string }
+export type RelationshipsView = {
+  namespace: string; name: string; resourceVersion: string; description?: string; model: string
+  status?: { storeID?: string; modelID?: string; relationships?: number; syncedAt?: string; conditions?: { type: string; status: string; message?: string }[] }
+  relationships: RelationshipItem[]; guard?: { namespace: string; name: string }
+}
+export const getRelationships = (ns: string, name: string) => api<RelationshipsView>(`/api/relationships/${ns}/${name}`)
+// Saves the model's DSL. OpenFGA's parser reads it first: where it can't,
+// the result is the errors, by position, rather than a save.
+export type CodeMarker = { line: number; col: number; message: string }
+export async function saveRelationshipModel(ns: string, name: string, model: string, resourceVersion: string):
+  Promise<{ resourceVersion: string } | { errors: CodeMarker[] }> {
+  try {
+    return await api<{ resourceVersion: string }>(`/api/relationships/${ns}/${name}/model`, { method: 'PUT', body: JSON.stringify({ model, resourceVersion }) })
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 400) {
+      try { const b = JSON.parse(e.message) as { errors?: CodeMarker[] }; if (b.errors) return { errors: b.errors } } catch { /* not the parser's */ }
+    }
+    throw e
+  }
+}
+export const addRelationship = (ns: string, name: string, r: { user: string; relation: string; object: string }) =>
+  api<RelationshipItem>(`/api/relationships/${ns}/${name}/relationships`, { method: 'POST', body: JSON.stringify(r) })
+// at the resourceVersion it was read at (409 if it changed since)
+export const removeRelationship = (ns: string, name: string, r: RelationshipItem) =>
+  api(`/api/relationships/${ns}/${name}/relationships/${r.name}`, { method: 'DELETE', body: JSON.stringify({ resourceVersion: r.resourceVersion }) })
+// The relationship guard's own answer (apps/relationship-guard), read only.
+export type GuardDecision = { agent: string; decision: { allow: boolean; reason: string; actsFor: boolean; canCall: boolean; clients: string[] } }
+export const evaluateRelationships = (ns: string, name: string, q: { user: string; groups: string[]; agent: string; server: string }) =>
+  api<GuardDecision>(`/api/relationships/${ns}/${name}/evaluate`, { method: 'POST', body: JSON.stringify(q) })

@@ -4,6 +4,8 @@
 #              (the owners row is the seed marker: defaults re-seed on restart), on the
 #              current CNPG primary
 #   Bob's side a fresh agent key (a new, unknown agent) and an empty follow-up list
+#   Relationships  exactly the ones the stories declare (any added or removed since
+#              are put back)
 . "$(dirname "$0")/lib.sh"
 need_cluster
 if K get cluster.postgresql.cnpg.io uma-as-db -n alice >/dev/null 2>&1; then
@@ -22,4 +24,11 @@ if K get deploy bob-workspace -n sv-mcp >/dev/null 2>&1; then
   step "Bob: workspace follow-ups"
   K rollout restart deploy/bob-workspace -n sv-mcp >/dev/null; rollout sv-mcp deploy/bob-workspace
   ok "cleared"
+fi
+if K get relm sterling-vance -n sv-identity >/dev/null 2>&1; then
+  step "Relationships: as the stories declare them"
+  K delete rel --all -n sv-identity --wait >/dev/null
+  apply_tmpl "$LAB_ROOT/demos/bob/manifests/06-relationships.yaml"
+  K get ns alice >/dev/null 2>&1 && apply_tmpl "$LAB_ROOT/demos/bob-to-alice/relationships.yaml"
+  ok "$(K get rel -n sv-identity --no-headers | wc -l | tr -d ' ') relationships"
 fi

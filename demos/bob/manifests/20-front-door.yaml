@@ -149,6 +149,22 @@ spec:
       # compete with this one.
       guardrails:
         processors:
+        # S&V's entitlements first (26-relationship-guard.yaml): the agent
+        # acts for the user, the user may call this server, and the clients
+        # the user may see go to it in x-relationship-clients. Only what the
+        # gateway verified: the token's email, groups and client, the
+        # caller's mesh identity (through the edge: an AI client, named by
+        # its OAuth client).
+        - remote:
+            backendRef: {name: relationship-guard, port: 4445}
+            failureMode: FailClosed   # no answer, no call
+            metadata:
+              server: '"bob-workspace"'          # its name in S&V's relationships
+              user: 'jwt.email'
+              groups: 'has(jwt.groups) ? jwt.groups : []'
+              workload: 'source.identity.namespace == "kgateway-system" ? "" : source.identity.namespace + "/" + source.identity.serviceAccount'
+              client: 'jwt.azp'
+          methods: {"tools/call": Request}
         - remote:
             backendRef: {name: mcp-guard, port: 4445}
             failureMode: FailClosed   # no answer from the guard, no result

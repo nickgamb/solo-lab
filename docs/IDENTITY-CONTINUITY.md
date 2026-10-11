@@ -586,6 +586,15 @@ Observatory's what-if and any AuthZEN client agree:
 | Enterprise | Solo's ext-auth service (`agentgateway-system`), its OPA running the module | `entExtAuth`, naming the rule's AuthConfig |
 | OSS | the assurance gate (`sv-identity`), the continuity image's `gate` command, running the module through OPA's Go library | `extAuth` (Envoy external authorization, gRPC), failing closed |
 
+The module lives in ConfigMap `assurance-policy` (key `policy.rego`, labelled
+`continuity.lab.solo.io/assurance-policy`): in `agentgateway-system` on
+Enterprise, `sv-identity` on OSS. The install writes it from the repo's file,
+and a re-install puts that back. Admins edit it live from the Observatory,
+which compiles it first. The gate reads it every 5 s and decides with each
+version that compiles and defines `data.assurance.decision`. It refuses any
+other, keeps deciding with the last good one, and logs why. Until it has
+read the ConfigMap, it uses the module built into its image.
+
 The gate runs on both editions. It answers the Observatory and AuthZEN
 clients, and tells whatever writes a policy point what the edition's decision
 service reads (`GET /v1/policy-point?rule=&continuity=` on its evaluate port).
@@ -665,7 +674,10 @@ from the same module:
   default included, it returns the phase, the IdPs that can meet it, each
   IdP's outcome and reason (`Admit`; `Conditional`, when the IdP asserts
   the value named; `Refuse`), and the session's decision;
-- `GET /v1/policy` returns the module itself;
+- `GET /v1/policy` returns the module the gate decides with.
+  `X-Assurance-Policy` names its ConfigMap version
+  (`namespace/name@resourceVersion`, or `built-in`);
+  `X-Assurance-Policy-Error`, a newer version it refused and why;
 - AuthZEN (OpenID AuthZEN Authorization API 1.0): `POST
   /access/v1/evaluation`, `POST /access/v1/evaluations` and `GET
   /.well-known/authzen-configuration`. The subject's properties are a
@@ -710,6 +722,90 @@ closed (each labelled Service is one of its parameters).
 A rule change applies to the next decision without touching any gateway
 policy. A rule no gateway policy asks for isn't enforced, and the Observatory
 says so.
+
+### Another decision point, over AuthZEN
+
+The gateway stays the enforcement point whatever decides. Because the
+assurance question is also asked and answered over AuthZEN, another AuthZEN
+decision point can take it over: Cedar, for one, behind any AuthZEN-speaking
+PDP.
+
+1. Write the rules in Cedar against the same inputs: the principal from the
+   verified token's claims (`idp`, `acr`, `amr`, `auth_time`), the resource
+   an assurance rule, and the context the rule's requirements.
+2. Serve them from an AuthZEN PDP (`/access/v1/evaluation`), answering
+   allow, or deny with the reason and, for a step-up, `acr_values` and
+   `max_age` in the context, as the gate does.
+3. Point the gateway's policy at an adapter that turns its external
+   authorization call into an AuthZEN evaluation, in place of the gate or
+   the AuthConfig: the gate's own AuthZEN handler (`apps/continuity`) shows
+   the mapping.
+
+The gateway's behavior doesn't change: a deny is refused at the gateway,
+with the RFC 9470 challenge when the PDP asks for a step-up.
+
+## Relationships
+
+The firm's entitlements live in OpenFGA: who advises which book, which
+clients are in it, which agents act for whom, and who may call each MCP
+server. The gateway checks them on every tool call. They are declared as
+Kubernetes resources, never written to OpenFGA by hand:
+
+```yaml
+apiVersion: continuity.lab.solo.io/v1alpha1
+kind: Relationship
+metadata: {name: bob-advises-sv-bob, namespace: sv-identity}
+spec: {model: sterling-vance, user: "user:bob@sterling.lab", relation: advisor, object: book:sv-bob}
+```
+
+- **The model** is a `RelationshipModel` (`platform/48-relationships/model.yaml`),
+  in OpenFGA's DSL: `agent#acts_for`, `book#advisor`, `client#can_view`
+  (the advisor of the client's book), `mcp_server#can_call` (a caller, or
+  the advisor of the client whose data it holds).
+- **The relationships** are `Relationship` resources beside it: Bob's agents
+  act for advisors, Bob advises book `sv-bob` and its four clients are in it
+  (`demos/bob/manifests/06-relationships.yaml`), and Alice's vault holds
+  client `c-1001` (`demos/bob-to-alice/relationships.yaml`).
+- **Group membership is the IdP's.** It is never stored in OpenFGA: the
+  gateway passes the verified token's groups as contextual tuples on each
+  check.
+- **The continuity controller** keeps one OpenFGA store per model
+  (`sv-identity/sterling-vance`). It writes the model when it changes, and
+  makes the store hold exactly the declared relationships, deleting what
+  none declares; it matches again every 5 minutes, so a direct write to the
+  store is undone. The model's status gives the store, the model ID, the
+  count, and `Synced` or what OpenFGA refused, by name. Deleting the model
+  deletes its store.
+- **The gateway** asks before each `tools/call` reaches the workspace or
+  Alice's vault, through its MCP guardrail (`relationship-guard`,
+  `FailClosed`), from what it verified: the token's email and groups and
+  the caller's workload (an AI client through the edge is its OAuth client,
+  `agent:client.sv-mcp-client`), and the server's name in the model, set
+  by each backend's policy (`mcp_server:bob-workspace`). Three questions,
+  OpenFGA's own API:
+  1. does the agent act for the user (Check `acts_for`)?
+  2. may the user call this server (Check `can_call`)?
+  3. which clients may the user see (ListObjects `can_view`)?
+
+  A no to either check refuses the call with the reason, as the tool's
+  error. The clients go to the server in `x-relationship-clients`, set by the
+  gateway (a copy the caller sent is replaced); the workspace answers for
+  those alone, and refuses a call that carries no decision.
+
+| | |
+| --- | --- |
+| OpenFGA | `sv-authz`: 3 replicas, a PodDisruptionBudget of 2, Postgres on CloudNativePG (3 instances), a pre-shared key; only the guard and the controller may call it |
+| Relationship guard | `agentgateway-system`: 2 replicas; the guardrail port takes the ai-gateway alone, the read-only what-if port (`POST /v1/evaluate`) the Observatory alone |
+
+Alice's consent isn't here. OpenFGA holds the firm's entitlements; what Alice
+shares, and at what tier, is hers, decided by her own authorization server
+and enforced at Meridian (UMA). The relationship check only keeps every
+other advisor's agent from asking her
+([ARCHITECTURE.md](ARCHITECTURE.md#enforcement-layers)).
+
+```bash
+kubectl --context kind-solo-lab get relm,rel -n sv-identity
+```
 
 ## In the Observatory
 
@@ -763,9 +859,9 @@ says so.
   ![Schedule: cron presets, next runs, the last run and Run now](images/observatory-directory-sync-schedule.jpg)
 
 - **Routing policy** (from the rule builder, beside Directory sync): edits
-  the [routing rules](#routing), shows each rule's IdP now, and shows the
-  gateway policy the controller wrote, read-only. Save writes the rules to
-  the chain as you. On the map, an IdP a rule sends sign-ins to is live too,
+  the [routing rules](#routing), shows each rule's IdP now, and edits the
+  gateway policy itself (the controller owns its `:path` transformation).
+  Save writes the rules to the chain as you. On the map, an IdP a rule sends sign-ins to is live too,
   its wire labelled with the rules.
 - **Transitions** and **Identity traffic** (bottom): failovers, cuts and
   restores, and OIDC calls.

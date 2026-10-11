@@ -129,8 +129,20 @@
             <span class="lede">Bob's book. It comes back only because both identities checked out.</span>
           </td>
         </tr>
-        <tr class="port">
+        <tr class="term">
           <td class="num">4</td>
+          <td class="act">
+            <span class="where">Terminal</span>
+            <div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab delete rel c-1004-in-sv-bob -n sv-identity</code></div>
+            <span class="click">Then ask kagent again: <strong>List my clients.</strong> (<code>make reset</code> puts them back)</span>
+          </td>
+          <td class="say">
+            <span class="chip refused">Relationships</span>
+            <span class="lede">The Okafors left his book. OpenFGA, checked at the gateway, hides them on the next call.</span>
+          </td>
+        </tr>
+        <tr class="port">
+          <td class="num">5</td>
           <td class="act">
             <span class="where">kagent</span>
             <div class="cmdwrap"><code class="cmd">Log a follow-up for Marcus Webb: schedule his annual review.</code></div>
@@ -142,7 +154,7 @@
           </td>
         </tr>
         <tr class="port">
-          <td class="num">5</td>
+          <td class="num">6</td>
           <td class="act">
             <span class="where">kagent</span>
             <div class="cmdwrap"><code class="cmd">Export my whole book, with identifiers.</code></div>
@@ -153,7 +165,7 @@
           </td>
         </tr>
         <tr class="port">
-          <td class="num">6</td>
+          <td class="num">7</td>
           <td class="act">
             <span class="where">kagent</span>
             <div class="cmdwrap"><code class="cmd">What is Ledgerline's view on technology, and which Ledgerline account am I using?</code></div>
@@ -164,7 +176,7 @@
           </td>
         </tr>
         <tr class="term">
-          <td class="num">7</td>
+          <td class="num">8</td>
           <td class="act">
             <span class="where">Terminal</span>
             <div class="cmdwrap"><code class="cmd">make bob-verify</code></div>
@@ -175,7 +187,7 @@
           </td>
         </tr>
         <tr class="port">
-          <td class="num">8</td>
+          <td class="num">9</td>
           <td class="act">
             <span class="where">Browser</span>
             <span class="click">Open <strong>https://kiali.ops.lab</strong>, then the Traffic Graph</span>

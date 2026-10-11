@@ -23,7 +23,7 @@ import editorWorker from 'monaco-editor/editor/editor.worker?worker'
 // Monaco from the bundle, not a CDN: the observatory works offline and
 // under a strict CSP. Only the editor core, the editing features it uses,
 // and the languages tokenized in the page: YAML (the resource editor, the
-// directory sync's and assurance rules' Code tabs), and the two below.
+// directory sync's and assurance rules' Code tabs), and the three below.
 self.MonacoEnvironment = { getWorker: () => new editorWorker() }
 loader.config({ monaco })
 monaco.editor.defineTheme('solo-dark', {
@@ -64,6 +64,23 @@ monaco.languages.setMonarchTokensProvider('rego', {
       [/[A-Za-z_][A-Za-z0-9_]*/, { cases: { '@keywords': 'keyword', '@default': 'identifier' } }],
       [/\d+(\.\d+)?([eE][-+]?\d+)?/, 'number'],
       [/:=|==|!=|<=|>=|[=<>|&+\-*/%]/, 'operator'],
+    ],
+  },
+})
+
+// OpenFGA's DSL, read-only in the Relationships window: the entitlements
+// model. Monaco has none of its own.
+monaco.languages.register({ id: 'openfga' })
+monaco.languages.setMonarchTokensProvider('openfga', {
+  keywords: ['model', 'schema', 'type', 'relations', 'define', 'or', 'and', 'but', 'not', 'from'],
+  tokenizer: {
+    root: [
+      // group#member (a set of users) first, so any # left starts a comment
+      [/([A-Za-z_][A-Za-z0-9_-]*)(#)([A-Za-z_][A-Za-z0-9_-]*)/, ['identifier', 'delimiter', 'identifier']],
+      [/#.*$/, 'comment'],
+      [/[A-Za-z_][A-Za-z0-9_-]*/, { cases: { '@keywords': 'keyword', '@default': 'identifier' } }],
+      [/\d+(\.\d+)?/, 'number'],
+      [/[[\]:,#]/, 'delimiter'],
     ],
   },
 })

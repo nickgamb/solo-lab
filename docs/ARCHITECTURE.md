@@ -45,6 +45,7 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | `sv-identity` | `continuity-controller` (2 replicas, leader-elected) | `continuity-controller` | S&V | nobody (calls out only) |
 | `sv-identity` | `sterling-vance-profile-sync` (CronJob: the directory sync) | `continuity-sync` | S&V | nobody (calls out only) |
 | `sv-identity` | `assurance-gate` (3 replicas: on OSS, decides each request a gateway policy asks it about; on both, answers what the rules decide) | `assurance-gate` | S&V | the gateways whose policies ask it, on its gRPC port; the Observatory, on its evaluate port |
+| `sv-authz` | OpenFGA (3 replicas) and its Postgres (CloudNativePG, 3 instances): S&V's entitlements | `openfga`, `openfga-db` | S&V | `relationship-guard`, the continuity controller (OpenFGA); OpenFGA and the operator (its database) |
 | `sv-workforce` | Keycloak `workforce` (S&V's own IdP, `login.sterling.lab`; password and a one-time code) | `keycloak` | S&V | edge (browsers, and in-lab callers of `login.sterling.lab`); continuity-sync (admin API) |
 | `sv-contingency` | Keycloak `contingency` (S&V's contingency IdP, `login-dr.sterling.lab`; password only) | `keycloak` | S&V | edge only |
 | `sv-egress` | `egress-waypoint` (Istio waypoint for external upstream IdPs) | `egress-waypoint` | S&V | the broker's Keycloak, continuity-controller, continuity-sync, observatory |
@@ -55,6 +56,7 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | `agentgateway-system` | agentgateway controller (xDS; on Enterprise the STS on port 7777, which mints the tokens MCP servers accept) | `agentgateway` (`enterprise-agentgateway` on Enterprise) | S&V | xDS (9978): the agentgateway proxies; STS: ai-gateway only, and MCP servers read its keys through the ai-gateway (`/sts/jwks.json`, GET, from `sv-mcp`); metrics (9092): Prometheus |
 | `agentgateway-system` | Enterprise shared services: ext-auth, rate limiter, WAF, their cache | the chart's | S&V | `agentgateway-system`'s workloads, Alice's waypoint, Ledgerline's `mcp-gateway`, Meridian's gateway, Prometheus |
 | `agentgateway-system` | `mcp-guard` (ai-gateway's MCP guardrail: masks account numbers and SSNs in tool results) | `mcp-guard` | S&V | ai-gateway only |
+| `agentgateway-system` | `relationship-guard` (ai-gateway's MCP guardrail: S&V's entitlements in OpenFGA, before each tool call) | `relationship-guard` | S&V | ai-gateway (guardrail port); the Observatory (what-if port) |
 | `agentgateway-system` | `idtoken-exchange` (ai-gateway's ext-auth for Cross App Access: Bob's ID token from S&V's broker) | `idtoken-exchange` | S&V | ai-gateway only |
 | `agentregistry` | agentregistry | `agentregistry` | S&V | edge only (after S&V sign-in, kgateway OAuth2); its database: agentregistry only |
 | `sv-agents` | `bob-assistant`: SandboxAgent on pool `bob-assistant` | `bob-assistant` | S&V / Bob | atenet-router only (kagent controller → ate-api → router) |
@@ -86,7 +88,7 @@ atenet-router → worker, each hop mTLS.
    ALLOW rules name SPIFFE principals from the table above; a workload no
    ALLOW names takes no connections. Every namespace that holds an IdP, a
    session store or a signing key also carries an explicit `default-deny`
-   (`sv-identity`, `sv-workforce`, `sv-contingency`, `kagent`,
+   (`sv-identity`, `sv-authz`, `sv-workforce`, `sv-contingency`, `kagent`,
    `agentgateway-system`, `sv-u4a`, `alice`, `alice-identity`, `meridian`,
    `ledgerline-identity`, `ops-identity`, `observatory`, `kiali`, and on
    Enterprise `solo-enterprise`), so a workload added there later starts
@@ -130,6 +132,13 @@ atenet-router → worker, each hop mTLS.
      verified claims with no call to an IdP, refuses what can't meet the
      rule, and fails closed
      (IDENTITY-CONTINUITY.md#where-the-rules-are-decided).
+   - Relationships, at the same gateway: before a tool call reaches an MCP
+     server, the gateway's MCP guardrail (`relationship-guard`) asks S&V's
+     OpenFGA whether the agent acts for the user, whether the user may call
+     that server, and which clients the user may see. The server answers for
+     those clients alone. Group membership comes from the verified token;
+     OpenFGA holds only S&V's own entitlements, declared as `Relationship`
+     resources (IDENTITY-CONTINUITY.md#relationships).
    - ai-gateway ([agentgateway](https://docs.solo.io/agentgateway/), S&V): the front door for every MCP
      server, a path each (`/mcp/bob-workspace`, `/mcp/kagent-tools`,
      `/mcp/alice-vault`, `/xaa/ledgerline/mcp`). AI clients outside the mesh
@@ -167,7 +176,8 @@ atenet-router → worker, each hop mTLS.
    run as `continuity-sync`, with no Secret, projected or host volume and no
    Secret in its environment. The sync may change only `status.sync` on the
    IdentityContinuity; the active IdP stays the controller's. Two more keep
-   assurance rules honest: only the controller writes a rule's status, no
+   assurance rules and relationships honest: only the controller writes a
+   rule's or a relationship model's status, no
    policy that asks the assurance gate may fail open, and in
    `agentgateway-system` the controller writes only its assurance state
    modules and AuthConfigs.
@@ -177,12 +187,26 @@ atenet-router → worker, each hop mTLS.
    `realm-management` roles its scope mapping names (`clientScopeMappings`
    in the realm file).
 
+**Which engine decides what.** Each policy question at the gateway has one
+owner, chosen for what it's best at:
+
+| Question | Decided by | Where |
+| --- | --- | --- |
+| Who is calling, which workload, which tool, which route, which IdP a sign-in goes to | CEL | agentgateway policies, evaluated in the gateway itself |
+| Is this sign-in strong enough here (NIST 800-63B AAL, recency, which IdP) | Rego (OPA) | Solo's ext-auth service on Enterprise, the assurance gate on OSS |
+| Which records may this person, through this agent, reach (advisor, book, client) | OpenFGA | the gateway's MCP guardrail, asking S&V's OpenFGA |
+| What has the client agreed to share, at what tier | UMA | Alice's own authorization server, enforced at Meridian |
+
+The first three are the firm's: its own policy, its own entitlements. The
+last is the client's consent, across organizations, and stays hers. OpenFGA
+never holds what UMA decides, and the firm never decides for Alice.
+
 **Egress.** Every party namespace, and the platform's (`observability`,
-`kiali`, `kgateway-system`, `cnpg-system`, `observatory`, `ops-identity`, and
+`kiali`, `kgateway-system`, `cnpg-system`, `sv-authz`, `observatory`, `ops-identity`, and
 on Enterprise `solo-enterprise`), has NetworkPolicy `no-internet`: its pods
 reach the cluster and nothing else (Prometheus also reaches the nodes'
 metrics ports). In `agentgateway-system`, where the ai-gateway reaches the
-model providers, `mcp-guard` and `idtoken-exchange` have their own
+model providers, `mcp-guard`, `relationship-guard` and `idtoken-exchange` have their own
 (`no-internet-<app>`). The ways out are the gateways built for it:
 ai-gateway (models, Cross App Access), `sv-egress/egress-waypoint` (S&V's
 upstream IdPs) and `ledgerline-egress/egress-waypoint` (the keys of

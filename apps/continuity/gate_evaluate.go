@@ -22,16 +22,23 @@ import (
 //	                       optionally one session's decision (what if)
 //	GET  /v1/policy-point  the extAuth a gateway policy needs to ask the gate
 //	                       for a rule
-//	GET  /v1/policy        the decision logic (Rego), as both runtimes run it
+//	GET  /v1/policy        the decision logic (Rego) the gate decides with;
+//	                       X-Assurance-Policy names its ConfigMap version,
+//	                       X-Assurance-Policy-Error why a newer one was refused
 //	AuthZEN                access evaluation (gate_authzen.go)
 func (g *gate) evaluateHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/evaluate", g.serveEvaluate)
 	mux.HandleFunc("GET /v1/policy-point", g.servePolicyPoint)
-	// the decision logic itself, the Rego module both runtimes evaluate
+	// the decision logic itself, the Rego module deciding now
 	mux.HandleFunc("GET /v1/policy", func(w http.ResponseWriter, _ *http.Request) {
+		source, refused := g.policy.status()
+		w.Header().Set(policyHeader, source)
+		if refused != "" {
+			w.Header().Set(policyErrorHeader, quote(refused))
+		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = io.WriteString(w, assurance.Policy)
+		_, _ = io.WriteString(w, assurance.Active().Text)
 	})
 	g.authzenRoutes(mux)
 	return mux

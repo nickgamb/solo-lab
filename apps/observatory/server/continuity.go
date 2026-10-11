@@ -110,6 +110,16 @@ type ContinuityView struct {
 	// each WorkloadProfile's phase on its chain (its assurance rules met,
 	// or failed closed)
 	Profiles []ProfilePhase `json:"profiles"`
+	// each RelationshipModel: how many Relationships name it, and whether
+	// OpenFGA holds them (its Synced condition)
+	RelationshipModels []RelationshipModelPhase `json:"relationshipModels"`
+}
+
+type RelationshipModelPhase struct {
+	Namespace     string `json:"namespace"`
+	Name          string `json:"name"`
+	Relationships int    `json:"relationships"`
+	Synced        string `json:"synced,omitempty"`
 }
 
 type ProfilePhase struct {
@@ -152,10 +162,24 @@ type Partition struct {
 }
 
 func (c *Continuity) View(ix *Index) ContinuityView {
-	v := ContinuityView{Items: []map[string]any{}, Partitions: []Partition{}, Paths: []SignInPath{}, Resources: []ResourcePath{}, Profiles: []ProfilePhase{}}
+	v := ContinuityView{Items: []map[string]any{}, Partitions: []Partition{}, Paths: []SignInPath{}, Resources: []ResourcePath{}, Profiles: []ProfilePhase{},
+		RelationshipModels: []RelationshipModelPhase{}}
 	for _, p := range c.k.List("workloadprofiles") {
 		v.Profiles = append(v.Profiles, ProfilePhase{Namespace: p.GetNamespace(), Name: p.GetName(),
 			Continuity: str(p.Object, "spec", "continuity"), Phase: str(p.Object, "status", "phase"), Mode: str(p.Object, "spec", "mode")})
+	}
+	declared := map[string]int{}
+	for _, r := range c.k.List("relationships") {
+		declared[r.GetNamespace()+"/"+str(r.Object, "spec", "model")]++
+	}
+	for _, m := range c.k.List("relationshipmodels") {
+		mp := RelationshipModelPhase{Namespace: m.GetNamespace(), Name: m.GetName(), Relationships: declared[key(m)]}
+		for _, cd := range slice(m.Object, "status", "conditions") {
+			if cm, _ := cd.(map[string]any); str(cm, "type") == "Synced" {
+				mp.Synced = str(cm, "status")
+			}
+		}
+		v.RelationshipModels = append(v.RelationshipModels, mp)
 	}
 	for _, o := range c.k.List("identitycontinuities") {
 		v.Items = append(v.Items, clean(o).Object)

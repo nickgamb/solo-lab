@@ -4,32 +4,88 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/open-policy-agent/opa/v1/ast"
 	"github.com/open-policy-agent/opa/v1/rego"
 
 	v1 "github.com/nickgamb/solo-lab/apps/continuity/api/v1alpha1"
 )
 
-// Policy is the assurance decision in Rego: the module the gate evaluates
-// here, and Solo's ext-auth service loads as is (data.assurance.extauth).
+// Policy is the assurance decision in Rego as the repo ships it: the module
+// the install puts in ConfigMap assurance-policy, which the gate evaluates
+// here and Solo's ext-auth service loads as is (data.assurance.extauth).
+// The gate decides with it until it has read that ConfigMap.
 //
 //go:embed assurance.rego
 var Policy string
 
-// the module, compiled on first use (the controller imports this package
-// but never decides)
-var decision = sync.OnceValue(func() rego.PreparedEvalQuery {
-	q, err := rego.New(rego.Query("data.assurance.decision"), rego.Module("assurance.rego", Policy)).PrepareForEval(context.Background())
-	if err != nil {
-		panic(fmt.Sprintf("assurance.rego: %v", err))
-	}
-	return q
-})
+// Module is a compiled assurance module: its text and its decision query.
+type Module struct {
+	Text string
+	q    rego.PreparedEvalQuery
+}
 
-// Decide whether the rules admit the session: the Rego module's answer.
+// Compile: the module, if it parses, compiles and defines
+// data.assurance.decision.
+func Compile(text string) (*Module, error) {
+	m, err := ast.ParseModuleWithOpts("assurance.rego", text, ast.ParserOptions{RegoVersion: ast.RegoV1})
+	if err != nil {
+		return nil, err
+	}
+	if p := m.Package.Path.String(); p != "data.assurance" {
+		return nil, fmt.Errorf("package %s: the decision logic is package assurance", strings.TrimPrefix(p, "data."))
+	}
+	if !Defines(m, "decision") {
+		return nil, errors.New("no rule decision: the gate asks data.assurance.decision")
+	}
+	q, err := rego.New(rego.Query("data.assurance.decision"), rego.ParsedModule(m)).PrepareForEval(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return &Module{Text: text, q: q}, nil
+}
+
+// Defines: the module has a rule by that name.
+func Defines(m *ast.Module, name string) bool {
+	for _, r := range m.Rules {
+		if ref := r.Head.Ref(); len(ref) > 0 && ref[0].Value.Compare(ast.Var(name)) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+var (
+	// Policy, compiled on first use (the controller imports this package
+	// but never decides)
+	builtin = sync.OnceValue(func() *Module {
+		m, err := Compile(Policy)
+		if err != nil {
+			panic(fmt.Sprintf("assurance.rego: %v", err))
+		}
+		return m
+	})
+	live atomic.Pointer[Module]
+)
+
+// Use: decide with m from the next decision on (nil: Policy again).
+func Use(m *Module) { live.Store(m) }
+
+// Active: the module deciding now.
+func Active() *Module {
+	if m := live.Load(); m != nil {
+		return m
+	}
+	return builtin()
+}
+
+// Decide whether the rules admit the session: the active Rego module's answer.
 // chain and cur are the IdentityContinuity's tiers and the IdPs signing
 // people in now; now is the request's time. A policy that can't be
 // evaluated refuses (fail closed).
@@ -49,7 +105,7 @@ func Decide(r Rules, chain []v1.Tier, cur Current, s Session, now time.Time) Dec
 		"session": map[string]any{"idp": s.IdP, "acr": s.ACR, "amr": amr, "auth_time": authTime},
 		"now":     now.Unix(),
 	}
-	rs, err := decision().Eval(context.Background(), rego.EvalInput(in))
+	rs, err := Active().q.Eval(context.Background(), rego.EvalInput(in))
 	if err != nil || len(rs) == 0 || len(rs[0].Expressions) == 0 {
 		return Decision{Reason: fmt.Sprintf("the assurance policy couldn't decide: %v", err)}
 	}

@@ -25,6 +25,24 @@ metadata: {name: assurance-gate, namespace: sv-identity}
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: assurance-gate}
 subjects: [{kind: ServiceAccount, name: assurance-gate, namespace: sv-identity}]
 ---
+# the decision logic (ConfigMap assurance-policy, key policy.rego), read
+# every few seconds: here on OSS, beside Solo's ext-auth service on
+# Enterprise
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: assurance-gate-policy, namespace: ${ASSURANCE_POLICY_NS}}
+rules:
+- apiGroups: [""]
+  resources: [configmaps]
+  resourceNames: [assurance-policy]
+  verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: assurance-gate-policy, namespace: ${ASSURANCE_POLICY_NS}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: assurance-gate-policy}
+subjects: [{kind: ServiceAccount, name: assurance-gate, namespace: sv-identity}]
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

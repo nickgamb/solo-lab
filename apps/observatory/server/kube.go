@@ -48,6 +48,8 @@ var watched = []schema.GroupVersionResource{
 	{Group: "postgresql.cnpg.io", Version: "v1", Resource: "clusters"},
 	{Group: "continuity.lab.solo.io", Version: "v1alpha1", Resource: "identitycontinuities"},
 	{Group: "continuity.lab.solo.io", Version: "v1alpha1", Resource: "workloadprofiles"},
+	{Group: "continuity.lab.solo.io", Version: "v1alpha1", Resource: "relationshipmodels"},
+	{Group: "continuity.lab.solo.io", Version: "v1alpha1", Resource: "relationships"},
 }
 
 type Kube struct {
