@@ -245,6 +245,21 @@ func TestPrimaryIntoBrokerThenOutToFailovers(t *testing.T) {
 	}
 }
 
+// A link whose sub isn't the directory's id (an IdP whose sub is pairwise or
+// opaque): the user is found by email, never missed.
+func TestLinkedSubNotTheDirectoryID(t *testing.T) {
+	b := &fakeBroker{users: []keycloak.User{bob()}, links: map[string]map[string]string{"bob": {"gluu": "pairwise-9HX4"}}}
+	primary := &IdP{Name: "gluu", Attributes: mappings, Dir: &fakeDir{recs: map[string]map[string]any{
+		"inum-5342": {"email": "bob@sterling.lab", "department": "Advisory"}}}}
+	res := Run(context.Background(), b, primary, nil, writable, nil, Shape{}, nop)
+	if res.Failed != 0 || res.Updated != 1 {
+		t.Fatalf("result %+v", res)
+	}
+	if got := Values(b.updated[0]["attributes"].(map[string]any)["department"]); !slices.Equal(got, []string{"Advisory"}) {
+		t.Fatalf("department %v, want the primary's", got)
+	}
+}
+
 func TestCreatedAtFailoverOnlyIfInPrimary(t *testing.T) {
 	carol := keycloak.User{"id": "carol", "email": "carol@sterling.lab", "attributes": map[string]any{"department": []any{"Ops"}}}
 	dave := keycloak.User{"id": "dave", "email": "dave@sterling.lab"}
