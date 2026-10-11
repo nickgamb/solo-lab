@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1330" width="1800" height="1330" role="img" aria-labelledby="t d">
+<title id="t">solo-lab architecture</title>
+<desc id="d">People, AI clients and agents call through Solo gateways: kgateway at the edge and agentgateway for every agent, tool and model call. agentgateway routes each sign-in to an IdP, checks who and which workload is calling and what their sign-in proves, and mints each tool or SaaS a token for that one call. Behind it, the identity fabric: S&amp;V's broker and its IdPs in failover order. Istio ambient gives every workload mTLS and a SPIFFE identity.</desc>
+<defs><style>@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap");</style>
+<marker id="arr-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4a4e57"/></marker>
+<marker id="arr-k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#bcdb2c"/></marker>
+</defs>
+<rect width="1800" height="1330" fill="#0a0b0d"/>
+<text x="40" y="64" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="34" font-weight="700" fill="#ffffff" text-anchor="start" letter-spacing="-0.4">An identity fabric built with Solo</text>
+<text x="40" y="100" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="16.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">Every IdP a firm owns, through one gateway, to every agent, tool, SaaS and model it uses. People and agents sign in once; every call is checked and gets a token for that call alone.</text>
+<rect x="40" y="134" width="12" height="12" rx="2" fill="#bcdb2c"/>
+<text x="60" y="145" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="600" fill="#a9aeb6" text-anchor="start" letter-spacing="1.2">SOLO</text>
+<rect x="112.4" y="134" width="12" height="12" rx="2" fill="#b7bcc5"/>
+<text x="132.4" y="145" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="600" fill="#a9aeb6" text-anchor="start" letter-spacing="1.2">IDENTITY</text>
+<rect x="223.2" y="134" width="12" height="12" rx="2" fill="#8cc2d4"/>
+<text x="243.2" y="145" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="600" fill="#a9aeb6" text-anchor="start" letter-spacing="1.2">CALLERS</text>
+<rect x="324.4" y="134" width="12" height="12" rx="2" fill="#f2b955"/>
+<text x="344.4" y="145" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="600" fill="#a9aeb6" text-anchor="start" letter-spacing="1.2">RESOURCES</text>
+<rect x="40" y="176" width="330" height="680" rx="16" fill="#0e1013" stroke="#2a2d34"/>
+<text x="60" y="206" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12.5" font-weight="600" fill="#757b83" text-anchor="start" letter-spacing="1.6">WHO CALLS</text>
+<rect x="400" y="176" width="640" height="680" rx="16" fill="#0e1013" stroke="#2a2d34"/>
+<text x="420" y="206" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12.5" font-weight="600" fill="#757b83" text-anchor="start" letter-spacing="1.6">SOLO GATEWAYS</text>
+<rect x="1070" y="176" width="690" height="680" rx="16" fill="#0e1013" stroke="#2a2d34"/>
+<text x="1090" y="206" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12.5" font-weight="600" fill="#757b83" text-anchor="start" letter-spacing="1.6">WHAT THEY REACH</text>
+<rect x="40" y="886" width="1720" height="230" rx="16" fill="#0e1013" stroke="#2a2d34"/>
+<text x="60" y="916" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12.5" font-weight="600" fill="#757b83" text-anchor="start" letter-spacing="1.6">IDENTITY FABRIC · ATTACHED TO THE GATEWAY</text>
+<rect x="60" y="236" width="290" height="120" rx="12" fill="#14161b" stroke="#2a2d34"/>
+<rect x="60" y="248" width="4" height="96" rx="2" fill="#8cc2d4"/>
+<text x="82" y="266" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11.5" font-weight="600" fill="#8cc2d4" text-anchor="start" letter-spacing="1.2">PEOPLE</text>
+<text x="82" y="292" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="19" font-weight="600" fill="#ffffff" text-anchor="start" letter-spacing="0">Advisors in a browser</text>
+<text x="82" y="320" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">kagent, the registry, the</text>
+<text x="82" y="341" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">Observatory, behind the edge</text>
+<rect x="60" y="386" width="290" height="120" rx="12" fill="#14161b" stroke="#2a2d34"/>
+<rect x="60" y="398" width="4" height="96" rx="2" fill="#8cc2d4"/>
+<text x="82" y="416" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11.5" font-weight="600" fill="#8cc2d4" text-anchor="start" letter-spacing="1.2">AI CLIENTS</text>
+<text x="82" y="442" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="19" font-weight="600" fill="#ffffff" text-anchor="start" letter-spacing="0">Claude Code, IDEs</text>
+<text x="82" y="470" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">sign in at the MCP front door</text>
+<text x="82" y="491" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">(agentgateway MCP auth)</text>
+<rect x="60" y="536" width="290" height="140" rx="12" fill="#14161b" stroke="#2a2d34"/>
+<rect x="60" y="548" width="4" height="116" rx="2" fill="#8cc2d4"/>
+<text x="82" y="566" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11.5" font-weight="600" fill="#8cc2d4" text-anchor="start" letter-spacing="1.2">AGENTS · KAGENT</text>
+<text x="82" y="592" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="19" font-weight="600" fill="#ffffff" text-anchor="start" letter-spacing="0">Bob's agents</text>
+<text x="82" y="620" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">on Agent Substrate worker</text>
+<text x="82" y="641" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">pools; never hold a token</text>
+<text x="82" y="662" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">an MCP server accepts</text>
+<rect x="420" y="236" width="600" height="110" rx="12" fill="#14161b" stroke="#2a2d34"/>
+<rect x="420" y="248" width="4" height="86" rx="2" fill="#bcdb2c"/>
+<text x="442" y="266" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11.5" font-weight="600" fill="#bcdb2c" text-anchor="start" letter-spacing="1.2">KGATEWAY · THE EDGE</text>
+<text x="442" y="292" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="19" font-weight="600" fill="#ffffff" text-anchor="start" letter-spacing="0">TLS, one listener per party</text>
+<text x="442" y="320" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">per-party hostnames, SSO for every UI, WAF on Enterprise</text>
+<rect x="420" y="376" width="600" height="300" rx="12" fill="#14161b" stroke="#2a2d34"/>
+<rect x="420" y="388" width="4" height="276" rx="2" fill="#bcdb2c"/>
+<text x="442" y="406" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11.5" font-weight="600" fill="#bcdb2c" text-anchor="start" letter-spacing="1.2">AGENTGATEWAY · AI-GATEWAY</text>
+<text x="442" y="432" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="20" font-weight="600" fill="#ffffff" text-anchor="start" letter-spacing="0">The control plane for every agent call</text>
+<text x="442" y="460" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">routes each sign-in to the right IdP (rules in CEL)</text>
+<text x="442" y="481" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">verifies the user's token and the caller's workload</text>
+<text x="442" y="502" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">assurance rules: what the sign-in must prove (Rego)</text>
+<text x="442" y="523" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">mints each MCP server a 5-second token for this call</text>
+<text x="442" y="544" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">Cross App Access: a fresh ID-JAG for each SaaS call</text>
+<text x="442" y="565" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">per-tool policy, guardrails, model failover, cost</text>
+<rect x="420" y="706" width="600" height="120" rx="12" fill="#14161b" stroke="#2a2d34"/>
+<rect x="420" y="718" width="4" height="96" rx="2" fill="#bcdb2c"/>
+<text x="442" y="736" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11.5" font-weight="600" fill="#bcdb2c" text-anchor="start" letter-spacing="1.2">SOLO EXT-AUTH · OPA</text>
+<text x="442" y="762" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="19" font-weight="600" fill="#ffffff" text-anchor="start" letter-spacing="0">Decides the assurance rules</text>
+<text x="442" y="790" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">one Rego module; fails closed; replicated</text>
+<text x="442" y="811" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">(the lab's assurance gate on OSS)</text>
+<rect x="1090" y="236" width="650" height="120" rx="12" fill="#14161b" stroke="#2a2d34"/>
+<rect x="1090" y="248" width="4" height="96" rx="2" fill="#f2b955"/>
+<text x="1112" y="266" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11.5" font-weight="600" fill="#f2b955" text-anchor="start" letter-spacing="1.2">S&amp;V MCP SERVERS</text>
+<text x="1112" y="292" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="19" font-weight="600" fill="#ffffff" text-anchor="start" letter-spacing="0">The firm's own tools</text>
+<text x="1112" y="320" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">Bob's workspace, kagent-tools: accept only a token</text>
+<text x="1112" y="341" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">the gateway minted for that one call</text>
+<rect x="1090" y="386" width="650" height="120" rx="12" fill="#14161b" stroke="#2a2d34"/>
+<rect x="1090" y="398" width="4" height="96" rx="2" fill="#f2b955"/>
+<text x="1112" y="416" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11.5" font-weight="600" fill="#f2b955" text-anchor="start" letter-spacing="1.2">LEDGERLINE · SAAS</text>
+<text x="1112" y="442" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="19" font-weight="600" fill="#ffffff" text-anchor="start" letter-spacing="0">Research, as Ledgerline's own Bob</text>
+<text x="1112" y="470" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">its own authorization server redeems S&amp;V's ID-JAG</text>
+<text x="1112" y="491" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">(Cross App Access); no shared secret, no consent screen</text>
+<rect x="1090" y="536" width="650" height="120" rx="12" fill="#14161b" stroke="#2a2d34"/>
+<rect x="1090" y="548" width="4" height="96" rx="2" fill="#f2b955"/>
+<text x="1112" y="566" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11.5" font-weight="600" fill="#f2b955" text-anchor="start" letter-spacing="1.2">MERIDIAN · ALICE</text>
+<text x="1112" y="592" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="19" font-weight="600" fill="#ffffff" text-anchor="start" letter-spacing="0">A client's data, on her terms</text>
+<text x="1112" y="620" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">UMA for agents: Alice approves each new tier of</text>
+<text x="1112" y="641" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">access, and can deny a trade outright</text>
+<rect x="1090" y="686" width="650" height="140" rx="12" fill="#14161b" stroke="#2a2d34"/>
+<rect x="1090" y="698" width="4" height="116" rx="2" fill="#f2b955"/>
+<text x="1112" y="716" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11.5" font-weight="600" fill="#f2b955" text-anchor="start" letter-spacing="1.2">MODELS</text>
+<text x="1112" y="742" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="19" font-weight="600" fill="#ffffff" text-anchor="start" letter-spacing="0">Ollama, Anthropic, OpenAI</text>
+<text x="1112" y="770" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">provider failover at the gateway; prompt guards,</text>
+<text x="1112" y="791" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">masking of card numbers and SSNs; budgets and</text>
+<text x="1112" y="812" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">per-call cost</text>
+<rect x="60" y="946" width="540" height="150" rx="12" fill="#14161b" stroke="#2a2d34"/>
+<rect x="60" y="958" width="4" height="126" rx="2" fill="#b7bcc5"/>
+<text x="82" y="976" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11.5" font-weight="600" fill="#b7bcc5" text-anchor="start" letter-spacing="1.2">KEYCLOAK · S&amp;V'S BROKER</text>
+<text x="82" y="1002" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="19" font-weight="600" fill="#ffffff" text-anchor="start" letter-spacing="0">One issuer for the firm</text>
+<text x="82" y="1030" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">never an IdP itself: holds profiles, issues S&amp;V's</text>
+<text x="82" y="1051" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">tokens, vouches for its users (ID-JAG)</text>
+<rect x="620" y="946" width="560" height="150" rx="12" fill="#14161b" stroke="#2a2d34"/>
+<rect x="620" y="958" width="4" height="126" rx="2" fill="#b7bcc5"/>
+<text x="642" y="976" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11.5" font-weight="600" fill="#b7bcc5" text-anchor="start" letter-spacing="1.2">S&amp;V'S IDPS · IN FAILOVER ORDER</text>
+<text x="642" y="1002" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="19" font-weight="600" fill="#ffffff" text-anchor="start" letter-spacing="0">Who signs people in</text>
+<text x="642" y="1030" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">an enterprise IdP (Auth0, Gluu, Okta, Ping, any OIDC),</text>
+<text x="642" y="1051" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">S&amp;V's own Keycloak (MFA), a contingency IdP,</text>
+<text x="642" y="1072" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">break-glass platform admins</text>
+<rect x="1200" y="946" width="540" height="150" rx="12" fill="#14161b" stroke="#2a2d34"/>
+<rect x="1200" y="958" width="4" height="126" rx="2" fill="#b7bcc5"/>
+<text x="1222" y="976" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11.5" font-weight="600" fill="#b7bcc5" text-anchor="start" letter-spacing="1.2">CONTINUITY CONTROLLER</text>
+<text x="1222" y="1002" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="19" font-weight="600" fill="#ffffff" text-anchor="start" letter-spacing="0">Keeps the fabric whole</text>
+<text x="1222" y="1030" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">health, failover and failback; trust checks at</text>
+<text x="1222" y="1051" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">every IdP; directory sync; the gateway's routing</text>
+<text x="1222" y="1072" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="14.5" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">CEL and ext-auth's assurance state</text>
+<path d="M350,296 C385.0,296 385.0,291 420,291" fill="none" stroke="#4a4e57" stroke-width="1.6" marker-end="url(#arr-a)"/>
+<path d="M350,446 C385.0,446 385.0,470 420,470" fill="none" stroke="#4a4e57" stroke-width="1.6" marker-end="url(#arr-a)"/>
+<path d="M350,606 C385.0,606 385.0,560 420,560" fill="none" stroke="#bcdb2c" stroke-width="2.2" marker-end="url(#arr-k)"/>
+<path d="M1020,430 C1055.0,430 1055.0,296 1090,296" fill="none" stroke="#bcdb2c" stroke-width="2.2" marker-end="url(#arr-k)"/>
+<path d="M1020,490 C1055.0,490 1055.0,446 1090,446" fill="none" stroke="#bcdb2c" stroke-width="2.2" marker-end="url(#arr-k)"/>
+<path d="M1020,550 C1055.0,550 1055.0,596 1090,596" fill="none" stroke="#bcdb2c" stroke-width="2.2" marker-end="url(#arr-k)"/>
+<path d="M1020,610 C1055.0,610 1055.0,756 1090,756" fill="none" stroke="#bcdb2c" stroke-width="2.2" marker-end="url(#arr-k)"/>
+<path d="M720,676 C720.0,676 720.0,706 720,706" fill="none" stroke="#4a4e57" stroke-width="1.6" marker-end="url(#arr-a)"/>
+<path d="M720,826 L720,940" fill="none" stroke="#4a4e57" stroke-width="1.6" marker-end="url(#arr-a)"/>
+<text x="732" y="870" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" font-weight="500" fill="#757b83" text-anchor="start" letter-spacing="0">sign-in routing · broker tokens · assurance state</text>
+<rect x="40" y="1146" width="1720" height="140" rx="16" fill="#0e1013" stroke="#2a2d34"/>
+<rect x="40" y="1158" width="4" height="116" rx="2" fill="#bcdb2c"/>
+<text x="64" y="1184" font-family="'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12.5" font-weight="600" fill="#bcdb2c" text-anchor="start" letter-spacing="1.6">ISTIO AMBIENT · UNDER EVERYTHING</text>
+<text x="64" y="1216" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="16.5" font-weight="500" fill="#ffffff" text-anchor="start" letter-spacing="0">mTLS and a SPIFFE identity for every workload; waypoints; default-deny per party; egress through S&amp;V's waypoint, where an IdP outage is a real network cut.</text>
+<text x="64" y="1248" font-family="'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="15" font-weight="400" fill="#a9aeb6" text-anchor="start" letter-spacing="0">Watched in the Observatory (topology, traffic with each hop's verified claims, identity and model continuity) and in the Solo UI (agents, traces, gateways, cost, the mesh graph).</text>
+</svg>

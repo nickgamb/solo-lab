@@ -1,305 +1,155 @@
 # solo-lab
 
-[![Kubernetes 1.37 on kind](https://img.shields.io/badge/runs%20on-kind%20%C2%B7%20k8s%201.37-326ce5?logo=kubernetes&logoColor=white)](docs/ARCHITECTURE.md#install-order)
-[![Mesh Istio ambient 1.31](https://img.shields.io/badge/mesh-Istio%20ambient%201.31-466bb0?logo=istio&logoColor=white)](docs/ARCHITECTURE.md#enforcement-layers)
-[![Gateways](https://img.shields.io/badge/gateways-kgateway%20%C2%B7%20agentgateway-5e8fa3)](docs/ARCHITECTURE.md#enforcement-layers)
-[![Agents](https://img.shields.io/badge/agents-kagent%20%C2%B7%20Agent%20Substrate-5e8fa3)](docs/ARCHITECTURE.md#workloads-and-identities)
-[![Identity](https://img.shields.io/badge/identity-RFC%208693%20%C2%B7%20ID--JAG%20%C2%B7%20UMA%202.0-8cc2d4)](docs/IDENTITY-FLOWS.md)
-[![Editions](https://img.shields.io/badge/editions-OSS%20%7C%20Solo%20Enterprise-8cc2d4)](docs/ENTERPRISE.md)
-[![Companion u4a.ai](https://img.shields.io/badge/companion-u4a.ai-bcdb2c)](https://u4a.ai)
-[![Solo.io](https://img.shields.io/badge/Solo.io-AI%20platform-7b33ea)](https://www.solo.io)
-[![Docs](https://img.shields.io/badge/docs-docs.solo.io-7b33ea)](https://docs.solo.io)
+[![Runs on kind](https://img.shields.io/badge/runs%20on-kind%20%C2%B7%20k8s%201.37-326ce5?logo=kubernetes&logoColor=white)](docs/SETUP.md#requirements)
+[![Editions](https://img.shields.io/badge/editions-OSS%20%7C%20Solo%20Enterprise-7b33ea)](docs/ENTERPRISE.md)
+[![CI](https://github.com/nickgamb/solo-lab/actions/workflows/ci.yaml/badge.svg)](https://github.com/nickgamb/solo-lab/actions/workflows/ci.yaml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-8cc2d4)](LICENSE)
 
-A local, production-shaped lab for the [Solo.io](https://www.solo.io) AI platform on kind: Istio
-ambient, kgateway, agentgateway, kagent + kmcp, Agent Substrate,
-agentregistry and Keycloak, plus two lab apps: the **Observatory** (a live
-control-plane UI) and an **identity continuity** controller (IdP failover).
+**An identity fabric built with [Solo.io](https://www.solo.io): every IdP a firm owns, through one
+gateway, to every agent, tool, SaaS and model it uses.**
 
-It is an **identity fabric built with Solo**: every IdP a firm owns,
-connected through one gateway to every resource and MCP server it runs, so
-people and agents sign in once and work easily and securely. agentgateway
-decides which IdP each sign-in goes to (routing rules in CEL), fails over
-across IdPs without anything downstream noticing, verifies who and which
-workload is calling on every request, and mints each tool or SaaS a
-short-lived token for that one call.
+A production-shaped lab you run on your laptop. People and agents sign in once;
+agentgateway routes each sign-in to the right IdP, fails over between IdPs
+without anything downstream noticing, checks who and which workload is
+calling on every request, and mints each tool or SaaS a token for that one
+call. Everything is a real Solo product doing a real job, watched live in the
+Solo UI.
 
-![The whole lab in the Observatory: the edge on the left, one lane per party, external services on the right](docs/images/observatory-export-topology-all.jpg)
+| [![Solo UI, kagent: a trace of Bob's agent calling get_positions on Alice's terms](docs/images/solo-ui-kagent-trace.jpg)](docs/images/solo-ui-kagent-trace.jpg) | [![Solo UI, agentgateway: requests, tokens by model and tool requests across the lab](docs/images/solo-ui-agentgateway-dashboard.jpg)](docs/images/solo-ui-agentgateway-dashboard.jpg) | [![Solo UI, Istio: the ambient mesh by namespace, with live traffic](docs/images/solo-ui-mesh-graph.jpg)](docs/images/solo-ui-mesh-graph.jpg) |
+| :---: | :---: | :---: |
+| **kagent**: every agent run, traced to the tool | **agentgateway**: every call, model token and tool request | **Istio ambient**: the mesh, live |
 
-The lab models four parties on a shared platform (an advisory firm, its SaaS
-vendor, a client and her brokerage), each with its own namespaces, SPIFFE
-identities, IdP and hostnames. They meet only at the edge. See
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+And in the lab's own Observatory, the identity fabric: agents and apps through
+agentgateway to every IdP the firm owns, in failover order.
 
-## Products
+![The identity fabric in the Observatory: agents and apps through agentgateway, the fabric, and S&V's IdPs in failover order](docs/images/observatory-continuity-connected.jpg)
 
-| Product | In this lab | Product page | Docs |
-| --- | --- | --- | --- |
-| kgateway | the edge: TLS, one listener per party, SSO for every UI | [solo.io](https://www.solo.io/products/kgateway) | [docs.solo.io/kgateway](https://docs.solo.io/kgateway/) |
-| agentgateway | the firm's AI gateway: models, the front door for every MCP server (a short-lived token minted for each), Cross App Access; Meridian's gateway | [solo.io](https://www.solo.io/products/agentgateway) | [docs.solo.io/agentgateway](https://docs.solo.io/agentgateway/) |
-| kagent + kmcp | agents, their controller and UI; MCP servers as Kubernetes resources | [solo.io](https://www.solo.io/products/kagent) | [docs.solo.io/kagent](https://docs.solo.io/kagent/) |
-| Agent Substrate | every agent runs in a snapshot-backed sandbox on a worker pool | [solo.io](https://www.solo.io/products/kagent) | [docs.solo.io/kagent](https://docs.solo.io/kagent/) |
-| agentregistry | the firm's catalog of agents, MCP servers and skills | [solo.io](https://www.solo.io/products/agentregistry) | [docs.solo.io/agentregistry](https://docs.solo.io/agentregistry/) |
-| Istio ambient | mTLS and a SPIFFE identity for every workload, waypoints, default-deny per party | [solo.io](https://www.solo.io/products/istio) | [docs.solo.io/istio](https://docs.solo.io/istio/) |
+## What it shows
 
-Enterprise editions, trial licences and support: [solo.io/get-started](https://www.solo.io/get-started).
+- **Sign-in routing at the gateway.** Rules in CEL send each sign-in to the
+  right IdP and fall back when it's down. [Identity fabric card](docs/cards/identity-fabric.html)
+- **IdP failover, for real.** Cut the active IdP's network and sign-in moves
+  to the next one; same issuer, same user, nothing downstream changes.
+  [Identity continuity card](docs/cards/identity-continuity.html)
+- **Assurance that survives failover.** Each workload says what a sign-in
+  must prove; fail over to an IdP that proves less and its requests are
+  refused (RFC 9470 step-up), decided by Solo's ext-auth service.
+  [Assurance rules card](docs/cards/assurance.html)
+- **Agents acting for people.** Bob's agent never holds a token an MCP server
+  accepts: the gateway mints one per call, enforces per-tool policy, and
+  reaches a SaaS with Cross App Access (ID-JAG). [Bob card](docs/cards/bob.html)
+- **A client's data on her terms.** The same agent asks Alice; she approves
+  each new tier and can deny a trade ([UMA for agents](https://u4a.ai)). [Bob to Alice card](docs/cards/bob-to-alice.html)
+- **Models behind the same gateway.** Provider failover, prompt guards,
+  masking, budgets and per-call cost. [Observatory: Model Continuity](docs/OBSERVATORY.md#model-continuity)
 
-## Requirements
+Cards are two-screen demo scripts: open them in a browser (`open docs/cards/<card>.html`).
 
-- macOS, Linux or Windows with WSL2 (developed on macOS on Apple silicon; x86_64 and arm64 images throughout)
-- Docker Desktop, OrbStack or Colima on macOS, or Docker Engine with buildx on Linux, with 24 GB or more for Docker (`make preflight` refuses under 16 GB; the full lab uses about 17 GB)
-- kind v0.32 or newer, kubectl, helm, jq, [yq v4](https://github.com/mikefarah/yq), envsubst (gettext), openssl, python3, git, curl
-  - macOS: `brew install kind kubectl helm jq yq gettext openssl`
-  - Debian/Ubuntu: `sudo apt-get install jq gettext-base openssl python3 git curl docker-buildx-plugin libnss3-tools`, then kind, kubectl, helm and yq from their release pages
-  - Fedora: `sudo dnf install jq gettext openssl python3 git curl nss-tools`, same for the rest
-- Ports 80 and 443 free on 127.0.0.1, or set `LAB_HTTP_PORT`/`LAB_HTTPS_PORT` in `.env`
-- A model: [Ollama](https://ollama.com) on the host (`ollama pull qwen3.8:27b`), or an Anthropic or OpenAI key
+## Architecture
 
-`make preflight` checks all of this, and `make up` runs it first. On a
-Docker VM (Docker Desktop, OrbStack, Colima) it also raises the inotify
-limits inside the VM, which reset whenever the VM restarts. With Docker
-Engine they are the host's own, and preflight says what to run if they're
-too low.
+![Callers, the Solo gateways every call goes through, what they reach, the identity fabric beneath, and Istio ambient under everything](docs/images/architecture.svg)
 
-`make machine-setup` makes `*.lab` resolve to 127.0.0.1 and trusts the lab CA:
-`/etc/resolver` and the System keychain on macOS; systemd-resolved (or a
-marked block in `/etc/hosts`) and the distro's trust store on Linux, plus the
-NSS databases Chrome and Firefox read. On WSL2 it sets up the distro and
-prints the two commands for a browser on Windows.
+| Product | In this lab |
+| --- | --- |
+| [agentgateway](https://www.solo.io/products/agentgateway) | the firm's AI gateway: sign-in routing, the front door for every MCP server, a short-lived token per call, Cross App Access, models; Meridian's gateway |
+| [kgateway](https://www.solo.io/products/kgateway) | the edge: TLS, one listener per party, SSO for every UI |
+| [kagent + kmcp](https://www.solo.io/products/kagent) | agents, their controller and UI; MCP servers as Kubernetes resources |
+| [Agent Substrate](https://www.solo.io/products/kagent) | every agent runs in a snapshot-backed sandbox on a worker pool |
+| [agentregistry](https://www.solo.io/products/agentregistry) | the firm's catalog of agents, MCP servers and skills |
+| [Istio ambient](https://www.solo.io/products/istio) | mTLS and a SPIFFE identity for every workload, waypoints, default-deny per party |
+
+Four parties share the platform (an advisory firm, its SaaS vendor, a client
+and her brokerage), each with its own namespaces, identities, IdP and
+hostnames, meeting only at the edge. Every product runs OSS by default and
+switches to Solo Enterprise on its own ([ENTERPRISE.md](docs/ENTERPRISE.md)).
+Details: [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Quick start
 
+You need Docker with 24 GB or more, kind, kubectl, helm, jq, yq and a model
+(Ollama on the host, or an Anthropic or OpenAI key). The full list, per OS:
+[SETUP.md](docs/SETUP.md#requirements).
+
 ```bash
-cp .env.example .env          # optional: model provider, keys, Auth0, enterprise
-make machine-setup            # once per machine, sudo: *.lab DNS and the lab CA
-make up                       # cluster, platform and every demo (~30 min cold)
-make verify                   # rewinds the demos, then every enforcement check
-make status                   # pods, active IdP, URLs and sign-ins
+git clone https://github.com/nickgamb/solo-lab && cd solo-lab
+cp .env.example .env      # optional: model provider, keys, IdPs, Solo Enterprise
+make machine-setup        # once per machine, sudo: *.lab DNS and the lab CA
+make up                   # cluster, platform and every demo: ~30 min cold, ~17 GB
+make status               # pods, the active IdP, URLs and sign-ins
 ```
 
-Story 2 builds Alice's and Meridian's services from
-[uma4agents](https://github.com/nickgamb/uma4agents): a checkout beside this
-repo (`../uma4agents`) or `U4A_SRC` if you have one, otherwise the install
-clones the pinned commit into `.lab/uma4agents`.
+Then open the Observatory at https://observatory.ops.lab (`ops` / `ops-demo`)
+and run every check:
 
-`make up` is idempotent. Image caches and the lab CA outlive the cluster, so
-a rebuild after `make down` is much faster than the first.
+```bash
+make verify               # rewinds the demos, then every enforcement check
+```
 
-**Updating an existing lab.** After pulling, `make platform` re-applies every
-layer and demo. A lab from before S&V's own Keycloak needs at least
-`make layer-45 layer-47 layer-95`: the `workforce` realm, and the chain
-ending in `break-glass`.
-
-What it leaves running in Docker: pull-through mirrors for each upstream
-registry (`lab-mirror-*`), a push registry for lab-built images
-(`lab-registry`, `localhost:5001` unless `LAB_REGISTRY_PORT` says otherwise), `lab-dns` (answers `*.lab` on port
-15353), `cloud-provider-kind`, and the kind nodes (one control plane, three
-workers in zones a, b and c). The full lab uses about 17 GB of memory.
-
-![Docker Desktop with the lab running](docs/images/docker-desktop-lab-containers.jpg)
+`make down` deletes the cluster and keeps the image caches and the CA, so the
+next `make up` is much faster; `make nuke` removes those too.
 
 ## What you can open
 
 | URL | What | Sign in |
 | --- | --- | --- |
-| https://observatory.ops.lab | Observatory: topology, traffic, identity and model continuity | `ops` / `ops-demo` |
-| https://kagent.sterling.lab | kagent, where Bob's agents run: on Enterprise the Solo UI (agents and chats, and for platform admins the gateways and the mesh) | Bob at S&V's active IdP: Auth0 (`bob@sterling.lab`, your password) or S&V's own Keycloak (`bob` / `bob-demo`) |
-| https://registry.sterling.lab | agentregistry: on Enterprise, a catalog of the lab's agents, their instructions and MCP servers, the kagent runtime and what runs there | S&V sign-in, as for kagent |
-| https://portal.alice.lab | Alice's portal (her grants and terms) | `alice` / `alice-demo` |
-| https://grafana.ops.lab | Grafana | `ops` / `ops-demo` |
-| https://kiali.ops.lab | Kiali mesh graph (view-only) | `ops` / `ops-demo` |
-| https://idp.sterling.lab/realms/sterling-vance/account | S&V broker account: sign-in through S&V's active IdP | S&V sign-in, as for kagent |
-| https://login.sterling.lab/realms/workforce/account | S&V's own Keycloak (an IdP in `ENTERPRISE_IDP`): a user's own account | `bob` / `bob-demo`, then the code from `make totp` |
-| https://login-dr.sterling.lab/realms/contingency/account | S&V's contingency IdP (password only, after S&V's own Keycloak in `ENTERPRISE_IDP`) | `bob` / `bob-demo` |
-| https://mcp.sterling.lab/mcp/bob-workspace, https://mcp.sterling.lab/mcp/ledgerline | the firm's MCP front door for AI clients (Claude Code, an IDE): add the URL as a remote MCP server and sign in when asked | Bob at S&V's active IdP, as for kagent |
-| https://llm.sterling.lab/v1 | the firm's model route for developers: OpenAI chat completions or Anthropic messages | API key `LLM_API_KEY` in `.lab/secrets.env` (docs/COMMANDS.md) |
+| https://observatory.ops.lab | **Observatory**: topology, traffic with each hop's verified claims, identity and model continuity | `ops` / `ops-demo` |
+| https://kagent.sterling.lab/ke/ | **Solo UI · kagent** (Enterprise): agents, chats, traces, tools, models. On OSS, https://kagent.sterling.lab is kagent's own UI | S&V sign-in: `bob` (advisor) or `dana` (admin) |
+| https://kagent.sterling.lab/age/ | **Solo UI · agentgateway** (Enterprise): gateways, routes, policies, traces, cost, playground | `dana` |
+| https://kagent.sterling.lab/ie/graph | **Solo UI · Istio** (Enterprise): the mesh graph, global services, resources | `dana` |
+| https://registry.sterling.lab | **agentregistry**: the firm's catalog, and the kagent runtime | S&V sign-in |
+| https://portal.alice.lab | Alice's portal: her grants and terms | `alice` / `alice-demo` |
+| https://grafana.ops.lab, https://kiali.ops.lab | Grafana; the Kiali mesh graph (view-only) | `ops` / `ops-demo` |
+| https://idp.sterling.lab/realms/sterling-vance/account | S&V's broker: your account, signed in through the active IdP | S&V sign-in |
+| https://mcp.sterling.lab/mcp/bob-workspace | the firm's MCP front door for AI clients (Claude Code, an IDE): add it as a remote MCP server | S&V sign-in |
+| https://llm.sterling.lab/v1 | the firm's model route: OpenAI chat completions or Anthropic messages | API key `LLM_API_KEY` in `.lab/secrets.env` |
 
-APIs on the edge, for agents and the checks rather than browsers:
-`https://as.alice.lab` (Alice's authorization server), `https://gateway.meridian.lab/mcp`
-(Meridian's MCP gateway; UMA-protected), `https://mcp.ledgerline.lab/mcp`
-(Ledgerline Research; needs a Ledgerline token, which S&V's users get only through S&V's gateway), and each party's issuer,
-`https://idp.<party>.lab/realms/<realm>` (`sterling-vance`, `alice`,
-`ledgerline`, `ops`).
+S&V sign-in goes to the active IdP: S&V's own Keycloak unless you add an
+enterprise IdP such as Auth0 in `.env`, with `bob` / `bob-demo` and a one-time
+code from `make totp`
+(`make totp EMPLOYEE=dana` for Dana). Every account, and the APIs on the edge:
+[SETUP.md](docs/SETUP.md#accounts) and [COMMANDS.md](docs/COMMANDS.md).
 
-Demo accounts: S&V's employees live at its IdPs (the broker gets an account
-for each from the primary): `bob` (`bob-demo`, group `advisors`); `carol`
-(`carol-demo`): another S&V employee; `dana` (`dana-demo`, group
-`platform-engineers`): an S&V platform engineer, an admin in the Solo UI on
-Enterprise. Those passwords are S&V's own Keycloak's; at Auth0 they are the
-ones you set (docs/IDPS.md#auth0-auth0); `ops` (`ops-demo`,
-groups `platform-admins` / `observatory-admins`): realm `ops` for the
-Observatory, Grafana and Kiali, and S&V's break-glass platform admin at the
-broker, the only sign-in when every IdP is down; `alice` (`alice-demo`, her
-own realm). No user is in S&V's `compliance` group, which the `export_book`
-tool needs; add one to group `compliance` at the broker (realm
-`sterling-vance`) to try it.
+## See it
 
-Generated secrets (Keycloak admin passwords, client secrets) are in
-`.lab/secrets.env`, created on first install and gitignored. The edge publishes
-only each party's realm, not Keycloak's admin console; reach that with a
-port-forward ([COMMANDS.md](docs/COMMANDS.md#identity)).
+**The Solo UI** ([all of it](docs/ENTERPRISE.md#the-solo-ui)):
 
-## Demos
-
-Each demo has a card: a two-screen script of what to do and what to say.
-Open it in a browser (`open docs/cards/<card>.html` on macOS, `xdg-open` on Linux).
-
-| Card | Shows | Checks |
-| --- | --- | --- |
-| [Bob](docs/cards/bob.html) | Bob's agent acts for Bob: the firm's gateway mints each tool a token of its own, per-tool policy, human approval for writes, Cross App Access (ID-JAG) to a SaaS | `make bob-verify` |
-| [Bob to Alice](docs/cards/bob-to-alice.html) | the same agent asks Alice for her data on her terms (UMA for agents) | `make alice-verify` |
-| [Observatory tour](docs/cards/observatory.html) | every story end to end from one command, watched live: the agent waking, verified tokens per hop, refusals, Alice's terms, an IdP outage | `make tour` |
-| [Identity fabric](docs/cards/identity-fabric.html) | every IdP to every resource and MCP server through one gateway: routing rules in CEL send each sign-in to the right IdP, edited live, falling back when an IdP is down | `make routes` |
-| [Identity continuity](docs/cards/identity-continuity.html) | a real network outage of the active IdP, automatic failover to the next one, and failback, live in the Observatory | `make continuity-verify` |
-| [Assurance rules](docs/cards/assurance.html) | what each workload needs a sign-in to prove, through failover to an IdP that proves less: the rules, what-if, report-only, and failing closed | `make bob-verify` |
-| [Commands](docs/cards/commands.html) | kubectl, istioctl and curl commands for the running lab, grouped by Observatory screen | `make status` |
-| [Gluu](docs/cards/gluu.html) (experimental) | Bob signs in with a passkey at Gluu, his agent reaches Ledgerline as him: S&V's broker vouches (ID-JAG), Ledgerline's Gluu redeems it, every hop checked and logged | `make bob-verify` |
-
-`make reset` rewinds every demo without a rebuild. The identity continuity
-demo runs on S&V's own two IdPs; to add Auth0, Gluu, Okta, Ping or another
-OIDC provider: [docs/IDPS.md](docs/IDPS.md).
-
-## Observatory
-
-A live view of the running lab (topology, traffic with the tokens each hop
-verified, identity continuity), built from the cluster at runtime, so a
-different lab renders the same way.
-
-- **Topology:** every workload by zone and call stage, live traffic on the
-  wires, a details panel per node with its live YAML (edit and apply), four
-  views (All, Identity, Agents & tools, Cross-party), and PNG export.
-- **Traffic:** every gateway's access log, with the verified token claims on
-  each request.
-- **Identity Continuity:** the identity fabric: the sign-in chain, the
-  outage button, the rule builder, the routing policy, the directory sync,
-  and the assurance rules.
-
-![Identity Continuity: Auth0 signing people in through the S&V egress, S&V's own Keycloak as the failover, the rule builder on the right](docs/images/observatory-continuity-connected.jpg)
-
-S&V's broker (Keycloak at `idp.sterling.lab`) routes sign-in to the firm's
-IdPs in failover order: here Auth0, then the Keycloak S&V runs itself at
-`login.sterling.lab`. Routing rules at the gateway send some sign-ins
-elsewhere (AI clients to S&V's own Keycloak, with MFA), and fall back down
-their own list when an IdP is down (`make routes` shows where each goes). The directory sync keeps those IdPs in step so
-whichever one is active signs each employee in with the same profile: it
-reads the primary IdP's user attributes into S&V's profile on the broker,
-then writes that profile to every failover IdP, creating the users the
-primary has. Each IdP's attributes are detected from its directory and wired
-to S&V's on a canvas; the same mapping is editable as JSON, and the sync runs
-on a schedule or on demand.
-
-Failing over must not lower what a sign-in proves. The broker carries how
-each IdP authenticated the user (its `acr`, `amr` and `auth_time`), and
-assurance rules say what each resource requires: here Bob's
-workspace and Ledgerline need a second factor (AAL2), which S&V's own
-Keycloak asks for and its contingency IdP doesn't. Fail over to the
-contingency IdP and those requests are refused at their gateways (fail
-closed), while the kagent console keeps working. The broker never steps
-anyone up itself.
-
-![Directory sync: each IdP's detected attributes wired to S&V's profile; the primary is read, the failovers are written](docs/images/observatory-directory-sync-canvas.jpg)
-
-[![Observatory walkthrough at 4x speed: topology views, hover, details and live YAML, traffic with token claims, and an IdP outage with failover and failback](docs/videos/observatory.gif)](https://youtu.be/Y3P4a7HRvVs)
-
-The full walkthrough at normal speed, on YouTube: [solo-lab Observatory](https://youtu.be/Y3P4a7HRvVs) (3 min).
-
-See [docs/OBSERVATORY.md](docs/OBSERVATORY.md).
-
-## Configuration
-
-`.env` (copy `.env.example`, gitignored) holds everything personal:
-
-| Key | Used for |
+| | |
 | --- | --- |
-| `LLM_PROVIDER` | `ollama` (default), `anthropic` or `openai`; apply with `make llm` |
-| `LLM_FALLBACK`, `LLM_FALLBACK_MODEL` | a second provider (and model) the gateway fails over to; apply with `make llm` |
-| `OLLAMA_MODEL`, `OLLAMA_URL` | the local model and where the cluster reaches it |
-| `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL` | hosted models (held by agentgateway only) |
-| `ENTERPRISE_IDP` | S&V's IdPs in failover order, by name (default `auth0,keycloak,contingency`; an IdP without an issuer is left out): who signs Bob in. S&V's broker vouches for him to Ledgerline, whichever IdP signed him in |
-| `<NAME>_ISSUER`, `<NAME>_CLIENT_ID`, `<NAME>_CLIENT_SECRET` | each IdP in the chain (`auth0`, `gluu`, `okta`, `ping`, any other); without a secret S&V authenticates with its keys (`make xaa-keys`). `keycloak` and `contingency` default to S&V's own at `login.sterling.lab` and `login-dr.sterling.lab` |
-| `<NAME>_DIRECTORY_*`, `<NAME>_GROUPS_CLAIM`, `<NAME>_ASSURANCE`, ... | the rest of an IdP's settings ([IDPS.md](docs/IDPS.md#settings)) |
-| `RESOURCE_AS`, `LEDGERLINE_<NAME>_ISSUER`, `LEDGERLINE_<NAME>_CLIENT_ID` | Ledgerline's authorization server, by name: `keycloak` (default, its own) or any other ([IDPS.md](docs/IDPS.md#ledgerlines-authorization-server)) |
-| `config/continuity.local.yaml` | this lab's own S&V profile attributes and IdP mappings, kept across rebuilds (format: `config/continuity.example.yaml`) |
-| `EDITION`, `<PRODUCT>_EDITION`, `SOLO_LICENSE_KEY` | Solo Enterprise, all products or one at a time |
-| `SOLO_<PRODUCT>_LICENSE_KEY` | a licence for one product, in place of `SOLO_LICENSE_KEY` |
-| `LAB_PASSWORD_GRANT` | (`config/lab.env`) the password grant on Alice's portal client |
+| ![Solo UI, kagent: agents, runs, tokens per model, the cluster](docs/images/solo-ui-kagent-dashboard.jpg) | ![Solo UI, kagent: every agent, its model and its tools](docs/images/solo-ui-kagent-agents.jpg) |
+| **kagent**: agents, runs and tokens | **kagent**: every agent, its model and tools |
+| ![Solo UI, agentgateway: every route, its match, destination and latency](docs/images/solo-ui-agentgateway-routes.jpg) | ![Solo UI, agentgateway: cost management, spend by provider and over time](docs/images/solo-ui-agentgateway-cost.jpg) |
+| **agentgateway**: every route behind the AI gateway | **agentgateway**: cost per call, by provider |
 
-`config/lab.env` holds the lab's shape: cluster name, node image, worker
-count, host ports, party domains, registry port; `config/oss.env` and
-`config/enterprise.env` pin every version. Any of them can be overridden in
-`.env`, and the command line wins over both (`make llm LLM_PROVIDER=anthropic`,
-`KAGENT_VERSION=... make layer-60`).
+**The Observatory**, the lab's own view of identity and model continuity:
 
-## Make targets
-
-| Target | Does |
+| | |
 | --- | --- |
-| `machine-setup` | once per machine, sudo: `*.lab` DNS and trust in the lab CA (macOS, Linux, WSL2) |
-| `up` | `cluster` then `platform` |
-| `cluster` | kind cluster, registry caches, cloud-provider-kind, lab DNS |
-| `platform` | every layer under `platform/` in order |
-| `layer-NN` | one layer, e.g. `make layer-90` (Observatory) |
-| `verify` | `reset`, then `bob-verify`, `alice-verify`, `continuity-verify`, `observatory-verify` |
-| `bob-verify` | story 1 checks only (delegation, per-tool policy, Cross App Access) |
-| `alice-verify` | story 2 checks only (Bob to Alice, UMA for agents), after a `reset` |
-| `continuity-verify` | identity continuity checks only (failover, kill switch, live rules, routing, directory sync) |
-| `observatory-verify` | what the Observatory's admins may and may not change (RBAC, admission) |
-| `tour` | drive every story end to end, paced, to watch in the Observatory |
-| `reset` | rewind the demos (grants, terms, agent key, follow-ups) |
-| `llm` | switch the model: `make llm LLM_PROVIDER=anthropic` |
-| `xaa-logs` | the Cross App Access trail (both token requests, claims, checks), tokens redacted: `make xaa-logs SINCE=2h` |
-| `routes` | where sign-ins go now: each routing rule's IdP, and where a browser app, an AI client and an AI client for Ledgerline land |
-| `xaa-keys` | the public keys other parties register, in `.lab/xaa/keys/`: S&V's clients at upstream IdPs and at Ledgerline, S&V's broker (`sv-idp.jwks.json`, for an AS outside the lab), Ledgerline's SSO client at S&V's broker |
-| `status` | pods, the active IdP, URLs |
-| `preflight` | tools, Docker resources, free ports, `*.lab` DNS, Ollama and its model |
-| `help` | every target, with its one-line description |
-| `down` | delete the cluster (keeps caches and the CA) |
-| `nuke` | delete the cluster and every `lab-*` container and volume: registry caches, the local registry with every image built into it, lab DNS (`make up` recreates them) |
+| ![IdP failover: S&V's Keycloak cut at the egress, the contingency IdP signing people in](docs/images/observatory-continuity-failover.jpg) | ![What if: a contingency sign-in (AAL1) refused where the rule needs AAL2, with the reason](docs/images/observatory-assurance-whatif.jpg) |
+| **IdP failover**: a real network cut, the next IdP takes over | **Assurance what-if**: refused below AAL2, and why |
+| ![Model failover: the primary model down, the fallback serving every agent](docs/images/observatory-model-failover.jpg) | ![Routing policy: which IdP each sign-in goes to, as rules in CEL](docs/images/observatory-routing-policy.jpg) |
+| **Model failover** at the gateway | **Routing policy**: rules in CEL, decided at the gateway |
 
-## Layout
-
-```
-config/          lab shape (lab.env) and edition pins (oss.env, enterprise.env)
-cluster/         kind config template
-scripts/         cluster lifecycle, DNS, CA, machine setup, preflight, helpers (lib.sh),
-                 status, reset, llm, tour
-platform/NN-*/   one install.sh per layer, applied in order by make platform
-demos/           each story: install.sh, verify.sh, manifests, agents, tools
-apps/observatory Observatory: Go server (server/) and React UI (web/)
-apps/continuity  IdentityContinuity and WorkloadProfile CRDs, controller, directory sync, the assurance rules (Rego) and gate
-apps/idtoken-exchange
-                 Cross App Access at S&V's egress: the user's ID token from S&V's broker
-tools/           patched upstream builds (kagent, Substrate, Keycloak), the probe
-                 toolbox image and mcp-probe.py (MCP calls from a pod, for the checks)
-docs/            architecture, per-app docs, commands, demo cards, images and videos
-```
-
-Layers:
-
-| Layer | Installs |
-| --- | --- |
-| `00-foundation` | Gateway API, metrics-server, cert-manager, trust-manager, lab CA, namespaces, CoreDNS `*.lab` → edge |
-| `10-istio` | Istio ambient: base, istiod, istio-cni, ztunnel |
-| `20-observability` | kube-prometheus-stack, Tempo, OTel collector, Kiali |
-| `30-kgateway` | the edge: per-party TLS listeners on NodePorts 30080/30443 |
-| `40-agentgateway` | ai-gateway: LLM backend, MCP; on Enterprise the STS for MCP servers' tokens |
-| `45-identity` | S&V's mesh baseline, S&V's broker (Keycloak, `idp.sterling.lab`), S&V's own Keycloak (`login.sterling.lab`, realm `workforce`), its contingency IdP (`login-dr.sterling.lab`), client secrets for S&V components |
-| `47-continuity` | IdentityContinuity and WorkloadProfile CRDs and controller, the directory sync, the assurance rules (Solo's ext-auth service on Enterprise, the assurance gate on OSS), S&V egress waypoint |
-| `50-substrate` | Agent Substrate (patched), in the mesh |
-| `60-kagent` | kagent + kmcp (patched), ops agents on Substrate, their tools (kagent-tools, its own release) behind ai-gateway, edge SSO (OSS) |
-| `70-agentregistry` | agentregistry behind S&V SSO |
-| `80-mesh-policy` | S&V's mesh baseline, re-applied, STRICT mTLS mesh-wide, and S&V's egress fences |
-| `90-observatory` | Observatory, its Keycloak (realm `ops`), Grafana and Kiali on the edge behind it, gateway access logs |
-| `95-demos` | every story: `demos/bob`, then `demos/bob-to-alice` |
+More in [OBSERVATORY.md](docs/OBSERVATORY.md), and the
+[3-minute walkthrough](https://youtu.be/Y3P4a7HRvVs).
 
 ## Docs
 
 | Doc | Covers |
 | --- | --- |
+| [SETUP.md](docs/SETUP.md) | requirements, machine setup, accounts, configuration, every `make` target, layout and layers |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | parties, workloads and identities, enforcement layers, DNS and TLS, patches |
-| [COMMANDS.md](docs/COMMANDS.md) | terminal commands for every part of the running lab: cluster, mesh, gateways, identity, agents, observability |
-| [IDENTITY-FLOWS.md](docs/IDENTITY-FLOWS.md) | acting for a user (RFC 8693 token exchange), Cross App Access (ID-JAG), UMA for agents: every hop, policy and check |
-| [OBSERVATORY.md](docs/OBSERVATORY.md) | using the Observatory, how it derives the map, access model, local development |
-| [IDENTITY-CONTINUITY.md](docs/IDENTITY-CONTINUITY.md) | the IdP chain and break-glass, the IdentityContinuity API and controller, the directory sync, assurance, trust across IdPs, assurance rules and the gate, the kill switch |
+| [IDENTITY-FLOWS.md](docs/IDENTITY-FLOWS.md) | acting for a user (RFC 8693), Cross App Access (ID-JAG), UMA for agents: every hop, policy and check |
+| [IDENTITY-CONTINUITY.md](docs/IDENTITY-CONTINUITY.md) | the IdP chain, the IdentityContinuity API, directory sync, trust across IdPs, assurance rules, the kill switch |
+| [OBSERVATORY.md](docs/OBSERVATORY.md) | the Observatory's tabs, how it builds its map, its access model |
+| [COMMANDS.md](docs/COMMANDS.md) | terminal commands for every part of the running lab |
 | [ENTERPRISE.md](docs/ENTERPRISE.md) | switching products to Solo Enterprise |
-| [IDPS.md](docs/IDPS.md) | S&V's IdPs and Ledgerline's authorization server: settings, registration, Auth0, Gluu, Okta, Ping, any other |
-| [GLUU.md](docs/GLUU.md) | Gluu (experimental) as S&V's enterprise IdP and Ledgerline's authorization server: settings, registration, logs, roadmap |
+| [IDPS.md](docs/IDPS.md) | adding Auth0, Gluu, Okta, Ping or any OIDC IdP; Ledgerline's authorization server |
+| [GLUU.md](docs/GLUU.md) | Gluu (experimental) as S&V's IdP and Ledgerline's authorization server |
+
+Solo Enterprise editions, trial licences and support: [solo.io/get-started](https://www.solo.io/get-started).
+
+## License
+
+This repository's own code and docs: [Apache-2.0](LICENSE). The Solo products
+it installs, and the upstream projects patched in `tools/`, remain under their
+own terms: see [NOTICE](NOTICE).

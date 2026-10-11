@@ -69,6 +69,28 @@ Solo Enterprise also offers, per Solo's pages, and this lab doesn't show yet:
 - Istio: FIPS and long-term-support builds, multicluster peering, the Solo
   UI ([enterprise features](https://docs.solo.io/istio/latest/about/images/enterprise/)).
 
+## The Solo UI
+
+On Enterprise, https://kagent.sterling.lab is the Solo UI: one console for
+every Solo Enterprise product the lab runs, each a section of its own.
+Everyone signs in as themselves through S&V's IdP; advisors read and chat,
+platform engineers (`dana`) administer, and only they see the gateway and
+mesh sections.
+
+| Section | URL | What it shows here |
+| --- | --- | --- |
+| kagent | https://kagent.sterling.lab/ke/ | Bob's and the ops agents, chats, every run as a trace, tools and tool servers, models |
+| agentgateway | https://kagent.sterling.lab/age/ | ai-gateway and every other gateway, routes, destinations, policies, MCP and model traces, cost management, the playground |
+| Istio | https://kagent.sterling.lab/ie/graph | the ambient mesh graph by cluster, namespace or workload, with live traffic |
+
+| | |
+| --- | --- |
+| ![kagent: agents, runs, tokens per model and the cluster](images/solo-ui-kagent-dashboard.jpg) | ![kagent: every agent, its model and its tools](images/solo-ui-kagent-agents.jpg) |
+| ![kagent: a trace of Bob's agent calling get_positions on Alice's terms](images/solo-ui-kagent-trace.jpg) | ![kagent: the tool servers: Bob's workspace, Ledgerline, Alice's vault, kagent-tools](images/solo-ui-kagent-tool-servers.jpg) |
+| ![agentgateway: requests, tokens by model and tool requests](images/solo-ui-agentgateway-dashboard.jpg) | ![agentgateway: the lab's gateways, their routes and destinations](images/solo-ui-agentgateway-gateways.jpg) |
+| ![agentgateway: every route, its match, destination and latency](images/solo-ui-agentgateway-routes.jpg) | ![agentgateway: MCP and model calls as traces](images/solo-ui-agentgateway-tracing.jpg) |
+| ![agentgateway: cost management, spend by provider and over time](images/solo-ui-agentgateway-cost.jpg) | ![Istio: the ambient mesh by namespace, with live traffic](images/solo-ui-mesh-graph.jpg) |
+
 ## Licences
 
 Trial keys are scoped to a product (`product` in the key). What each product

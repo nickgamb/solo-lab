@@ -760,9 +760,9 @@ whatever it says: the Observatory says so.
 
 **Identity Continuity** tab, one `IdentityContinuity` at a time:
 
-![Connected: Auth0 signing people in](images/observatory-continuity-connected.jpg)
+![Connected: S&V's own Keycloak signing people in, through agentgateway and the identity fabric](images/observatory-continuity-connected.jpg)
 
-![Failover: the network to Auth0 cut at the egress, sign-in through the next IdP](images/observatory-continuity-failover.jpg)
+![Failover: S&V's Keycloak cut off the network, its contingency IdP signing people in, the rules that need more failing closed](images/observatory-continuity-failover.jpg)
 
 - **Map:** on the left, the resources S&V's gateways admit the broker's
   tokens to (each gateway policy that verifies the broker's issuer, and
@@ -810,7 +810,7 @@ whatever it says: the Observatory says so.
   shows the last run and runs it now. Directory credentials are write-only and readable by the sync
   alone.
 
-  ![Directory sync canvas: Auth0's detected attributes wired to S&V's profile, S&V's own Keycloak written from it](images/observatory-directory-sync-canvas.jpg)
+  ![Directory sync canvas: the primary's detected attributes wired to S&V's profile, the failover written from it](images/observatory-directory-sync-canvas.jpg)
 
   ![The same mapping as code](images/observatory-directory-sync-code.jpg)
 
