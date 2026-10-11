@@ -1,0 +1,30 @@
+solo-lab
+Copyright 2026 Nick Gamb
+
+This repository's own code, configuration and documentation are licensed
+under the Apache License, Version 2.0 (LICENSE).
+
+Not covered by that licence:
+
+- Solo.io products. The lab installs kgateway, agentgateway, kagent, kmcp,
+  agentregistry and Solo's Istio distribution, and on request their Solo
+  Enterprise editions, as container images and Helm charts pulled at install
+  time. None of their code is in this repository. Each is available under
+  its own terms: the open-source projects under their licences, the Solo
+  Enterprise editions under Solo.io's licence agreements and licence keys.
+
+- Upstream material in tools/, which keeps its owners' copyright and
+  licence:
+  - tools/kagent/patches: changes to kagent (Apache License 2.0).
+  - tools/substrate-mesh: patches to, and CRDs from, Agent Substrate
+    (Copyright Google LLC, Apache License 2.0).
+  - tools/keycloak-idjag: a backport of Keycloak changes (Apache License
+    2.0).
+
+- Third-party services and software the lab connects to or runs, including
+  Keycloak, Istio, Auth0, Gluu (Janssen), Okta, Ping, Ollama, Anthropic and
+  OpenAI, which remain under their own terms.
+
+Solo.io, kgateway, agentgateway, kagent and agentregistry are trademarks of
+their respective owners. Their use here describes what the lab runs and
+implies no endorsement.
