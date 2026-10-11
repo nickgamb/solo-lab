@@ -196,6 +196,25 @@ var UsernameMapper = Mapper{Name: "username-from-email", Type: "oidc-username-id
 var AssuranceMapper = Mapper{Name: "continuity-assurance", Type: "continuity-session-claims-idp-mapper",
 	Config: map[string]string{"claims": "acr,amr,auth_time", "note.prefix": "continuity.", "syncMode": "FORCE"}}
 
+// EmailVerifiedMapper refuses a sign-in unless the upstream verified the
+// email it sends: email_verified in its ID token or, when the ID token
+// doesn't carry the claim, its userinfo. It takes the place of Keycloak's
+// essential-claim filter, which reads the ID token alone. Its type is the
+// broker image's provider (tools/keycloak-idjag/session-claims).
+var EmailVerifiedMapper = Mapper{Name: "continuity-email-verified", Type: "continuity-email-verified-idp-mapper",
+	Config: map[string]string{"syncMode": "INHERIT"}}
+
+// HasMapperType reports whether the broker offers an IdP mapper type for
+// the IdP (a provider its image may lack).
+func (c *Client) HasMapperType(ctx context.Context, alias, typ string) (bool, error) {
+	var types map[string]any
+	if err := c.do(ctx, http.MethodGet, "/identity-provider/instances/"+url.PathEscape(alias)+"/mapper-types", nil, &types); err != nil {
+		return false, err
+	}
+	_, ok := types[typ]
+	return ok, nil
+}
+
 // EnsureMapper creates the mapper on the IdP, or puts its type and config
 // back if they were changed in Keycloak. Config keys it doesn't set stay.
 func (c *Client) EnsureMapper(ctx context.Context, alias string, m Mapper) error {

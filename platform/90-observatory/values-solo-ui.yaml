@@ -51,7 +51,10 @@ rbac:
     defaultRoles: []
   subjectMapping: {groupsClaim: groups}
 # ClickHouse keeps the chart's credentials: mesh policy lets only this
-# namespace reach it (solo-ui.yaml)
+# namespace reach it (solo-ui.yaml). Two cores at most (the chart allows
+# six): its merges and own logs must not starve the node it shares with the
+# broker and the gateways' extensions.
 clickhouse:
   resources:
     requests: {cpu: 500m, memory: 2Gi}
+    limits: {cpu: "2"}

@@ -200,8 +200,10 @@ Every `health.intervalSeconds`, the leader:
    - one OIDC identity provider per configured `oidc` tier (hidden from the
      login page when not eligible), with PKCE S256, the tier's
      `oidc.clientAuth` (`private_key_jwt` with the broker's PS256 key, or a
-     client secret), and a claim filter that accepts only
-     `email_verified: true`. A setting changed by hand in Keycloak is put
+     client secret), and a check that accepts only `email_verified: true`,
+     from the ID token or, when the ID token doesn't carry it, userinfo
+     (mapper `continuity-email-verified`; until an IdP has it, Keycloak's
+     own filter checks the ID token). A setting changed by hand in Keycloak is put
      back. If a tier's Secret goes missing, its IdP stays (hidden) so users'
      links survive; only removing the tier from the spec deletes it;
    - the `continuity-browser` flow's IdP redirector set to the active tier,
@@ -490,7 +492,7 @@ minutes, on every spec change, and when the instance's
 | `ClientAuth` | the IdP takes the broker's client authentication (and, for `private_key_jwt`, PS256) |
 | `PKCE` | the IdP takes PKCE S256 |
 | `Scopes` | the IdP offers every scope the broker asks for |
-| `Claims` | the IdP issues `sub` and `email` (the broker also requires `email_verified` at sign-in) |
+| `Claims` | the IdP issues `sub` and `email` (the broker also requires `email_verified`, from the ID token or userinfo, at sign-in) |
 | `Assurance` | the acr values the tier maps are ones the IdP asserts, or the IdP issues the `amr` it maps |
 
 Each is `Pass`, `Fail` or `Unknown` (the IdP doesn't publish what the check
@@ -919,7 +921,7 @@ checks:
 | --- | --- |
 | IdP `NotConfigured` | `<NAME>_CLIENT_ID` missing from `.env` (and `<NAME>_CLIENT_SECRET`, for an IdP that uses one), or `make layer-47` not re-run |
 | Auth0: callback URL mismatch | the callback isn't exactly `status.tiers[].redirectURI` |
-| Keycloak: "does not match the configured essential claim" | the user's email isn't verified at the upstream (`email_verified: false`) |
+| Keycloak: "does not match the configured essential claim" | the user's email isn't verified at the upstream: `email_verified` isn't true in its ID token or userinfo |
 | Keycloak: `invalid_client` | `private_key_jwt`: the IdP doesn't have `sv-upstream-client.jwks.json` from `make xaa-keys`; a client secret: the IdP's method isn't Client Secret (Post), or the secret is stale |
 | outage button: "no network path is known" | no ServiceEntry for the IdP (`spec.egress` unset) and no namespace labelled `continuity.lab.solo.io/tier: <idp>`, or the active tier is `break-glass` (`local`) |
 | cut has no effect | the caller isn't in the ambient mesh, or DNS capture is off, so traffic bypasses the ServiceEntry |
