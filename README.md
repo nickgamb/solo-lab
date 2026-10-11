@@ -91,20 +91,21 @@ next `make up` is much faster; `make nuke` removes those too.
 | URL | What | Sign in |
 | --- | --- | --- |
 | https://observatory.ops.lab | **Observatory**: topology, traffic with each hop's verified claims, identity and model continuity | `ops` / `ops-demo` |
-| https://kagent.sterling.lab/ke/ | **Solo UI · kagent** (Enterprise): agents, chats, traces, tools, models. On OSS, https://kagent.sterling.lab is kagent's own UI | S&V sign-in: `bob` (advisor) or `dana` (admin) |
-| https://kagent.sterling.lab/age/ | **Solo UI · agentgateway** (Enterprise): gateways, routes, policies, traces, cost, playground | `dana` |
-| https://kagent.sterling.lab/ie/graph | **Solo UI · Istio** (Enterprise): the mesh graph, global services, resources | `dana` |
-| https://registry.sterling.lab | **agentregistry**: the firm's catalog, and the kagent runtime | S&V sign-in |
+| https://kagent.sterling.lab/ke/ | **Solo UI · kagent** (Enterprise): agents, chats, traces, tools, models. On OSS, https://kagent.sterling.lab is kagent's own UI | `bob` / `bob-demo` or `dana` / `dana-demo` |
+| https://kagent.sterling.lab/age/ | **Solo UI · agentgateway** (Enterprise): gateways, routes, policies, traces, cost, playground | `dana` / `dana-demo` |
+| https://kagent.sterling.lab/ie/graph | **Solo UI · Istio** (Enterprise): the mesh graph, global services, resources | `dana` / `dana-demo` |
+| https://registry.sterling.lab | **agentregistry**: the firm's catalog, and the kagent runtime | `bob` / `bob-demo` |
 | https://portal.alice.lab | Alice's portal: her grants and terms | `alice` / `alice-demo` |
 | https://grafana.ops.lab, https://kiali.ops.lab | Grafana; the Kiali mesh graph (view-only) | `ops` / `ops-demo` |
-| https://idp.sterling.lab/realms/sterling-vance/account | S&V's broker: your account, signed in through the active IdP | S&V sign-in |
-| https://mcp.sterling.lab/mcp/bob-workspace | the firm's MCP front door for AI clients (Claude Code, an IDE): add it as a remote MCP server | S&V sign-in |
+| https://idp.sterling.lab/realms/sterling-vance/account | S&V's broker: your account, signed in through the active IdP | `bob` / `bob-demo` |
+| https://mcp.sterling.lab/mcp/bob-workspace | the firm's MCP front door for AI clients (Claude Code, an IDE): add it as a remote MCP server | `bob` / `bob-demo` |
 | https://llm.sterling.lab/v1 | the firm's model route: OpenAI chat completions or Anthropic messages | API key `LLM_API_KEY` in `.lab/secrets.env` |
 
-S&V sign-in goes to the active IdP. That is S&V's own Keycloak unless you add
-an enterprise IdP such as Auth0 in `.env`. Sign in as `bob` / `bob-demo` with a
-one-time code from `make totp`, or `make totp EMPLOYEE=dana` for Dana. Every
-account is in [SETUP.md](docs/SETUP.md#accounts); the APIs on the edge are in
+`bob` and `dana` sign in at S&V's active IdP, which asks for a one-time code
+too: `make totp` for Bob, `make totp EMPLOYEE=dana` for Dana. That IdP is S&V's
+own Keycloak unless you add an enterprise IdP such as Auth0 in `.env`, where
+the passwords are your own. Every account is in
+[SETUP.md](docs/SETUP.md#accounts); the APIs on the edge are in
 [COMMANDS.md](docs/COMMANDS.md).
 
 ## See it
