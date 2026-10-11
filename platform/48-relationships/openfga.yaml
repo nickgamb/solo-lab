@@ -11,6 +11,13 @@ spec:
   bootstrap:
     initdb: {database: openfga, owner: openfga}
   storage: {size: 1Gi}
+  # a primary counts as isolated when its replicas and the API server don't
+  # answer in 5 s (not 1: a busy node's mesh hop is slower), and a brief blip
+  # is waited out before failing over
+  probes:
+    liveness:
+      isolationCheck: {enabled: true, requestTimeout: 5000, connectionTimeout: 5000}
+  failoverDelay: 15
   resources:
     requests: {cpu: 100m, memory: 256Mi}
     limits: {memory: 512Mi}
