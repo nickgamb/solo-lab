@@ -51,7 +51,7 @@
     </div>
   </section>
   <section class="setup">
-    <h2>Topology: the mesh</h2>
+    <h2>Mesh topology</h2>
     <div class="table-scroll">
       <table>
         <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
@@ -152,7 +152,7 @@
         <tr class="term">
           <td class="num">5</td>
           <td class="act"><div class="cmdwrap"><code class="cmd">kubectl --context kind-solo-lab get authorizationpolicy -A -l continuity.lab.solo.io/tier -o custom-columns='NAMESPACE:.metadata.namespace,POLICY:.metadata.name,IDP:.metadata.labels.continuity\.lab\.solo\.io/tier,CUT BY:.metadata.annotations.continuity\.lab\.solo\.io/cut-by'</code></div></td>
-          <td class="say">Lists the simulated-outage policies, with the IdP and who applied each.</td>
+          <td class="say">Lists the simulated-outage policies, each with its IdP and who applied it.</td>
         </tr>
         <tr class="term">
           <td class="num">6</td>

@@ -66,7 +66,7 @@
     <div class="afters">
       <div class="after">
         <span class="after-label">Running it again</span>
-        <p>Put the rule back in <strong>Routing policy</strong> (Reset, or undo the edit and Save), and <strong>Restore IdP network</strong>.</p>
+        <p>In <strong>Routing policy</strong>, put the rule back (Reset, or undo the edit and Save). Then <strong>Restore IdP network</strong>.</p>
       </div>
     </div>
   </section>
@@ -98,7 +98,7 @@
           </td>
           <td class="say">
             <span class="chip through">Routing is policy</span>
-            <span class="lede">Which IdP a sign-in goes to is a rule at the gateway, in CEL. First match wins; each rule lists IdPs in order.</span>
+            <span class="lede">A CEL rule at the gateway picks each sign-in's IdP. First match wins, and each rule lists its IdPs in order.</span>
           </td>
         </tr>
         <tr class="port">
@@ -109,7 +109,7 @@
           </td>
           <td class="say">
             <span class="chip tier">agentgateway runs it</span>
-            <span class="lede">Written from the rules and every IdP's health, rewritten on every failover. No client can pick its own IdP.</span>
+            <span class="lede">Generated from the rules and each IdP's health, and rewritten on every failover. No client can pick its own IdP.</span>
           </td>
         </tr>
         <tr class="term">
@@ -153,7 +153,7 @@
           </td>
           <td class="say">
             <span class="chip refused">Its IdP is down</span>
-            <span class="lede">The rule falls back down its own list, to S&amp;V's Keycloak, on its own.</span>
+            <span class="lede">The rule falls back to the next IdP on its list, S&amp;V's Keycloak.</span>
           </td>
         </tr>
         <tr class="port">
@@ -175,7 +175,7 @@
           </td>
           <td class="say">
             <span class="chip tier">Identity fabric, by Solo</span>
-            <span class="lede">Every IdP to every resource and MCP server: one door for people and agents, the policy at the gateway.</span>
+            <span class="lede">One door for people and agents, with the policy at the gateway.</span>
           </td>
         </tr>
         </tbody>

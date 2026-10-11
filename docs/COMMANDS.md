@@ -1,16 +1,18 @@
 # Commands
 
-Terminal commands for working with the running lab. Every command targets the
-lab's context explicitly (`--context kind-solo-lab`), so it's safe to run with
-another cluster selected. To skip the flag, select the lab once:
+Terminal commands for the running lab. Each names the lab's context
+(`--context kind-solo-lab`), so it is safe with another cluster selected. To
+skip the flag, select the lab once:
 
 ```bash
 kubectl config use-context kind-solo-lab
 ```
 
-The `make` targets are in the [SETUP.md](SETUP.md#make-targets); the same commands grouped by Observatory screen, as a card, in [cards/commands.html](cards/commands.html). Commands
-that need the lab's helpers (`lab_secret`, `port_forward`) run under bash from
-the repo root: `bash -c '. scripts/lib.sh; ...'`.
+The `make` targets are in [SETUP.md](SETUP.md#make-targets).
+[cards/commands.html](cards/commands.html) has these commands as a card,
+grouped by Observatory screen. Commands that need the lab's helpers
+(`lab_secret`, `port_forward`) run under bash from the repo root:
+`bash -c '. scripts/lib.sh; ...'`.
 
 ## The cluster
 
@@ -42,26 +44,27 @@ the repo root: `bash -c '. scripts/lib.sh; ...'`.
 
 **Try a call as a real workload identity.** `make bob-verify` and `make tour`
 create probe pods. `probe` (in `sv-agents` and `observability`) has its own
-ServiceAccount, so its own SPIFFE ID: some workload, nobody special.
-`probe-<sa>` runs as a workload's ServiceAccount, to call as it:
-`probe-bob-assistant` in `sv-agents` as Bob's agent, and for `make
-bob-verify` `probe-kagent-ops` and `probe-kagent-controller` in `kagent`,
-`probe-bob-workspace` in `sv-mcp`.
+ServiceAccount, so its own SPIFFE ID, an ordinary workload's. `probe-<sa>`
+runs as a workload's ServiceAccount, to call as it. `probe-bob-assistant` in
+`sv-agents` is Bob's agent. `make bob-verify` also creates `probe-kagent-ops`
+and `probe-kagent-controller` in `kagent`, and `probe-bob-workspace` in
+`sv-mcp`.
 
 ```bash
 kubectl --context kind-solo-lab -n sv-agents exec probe -- curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://kps-prometheus.observability:9090/-/ready
 ```
 
-`000` is the mesh refusing it: Prometheus names its callers, and this probe
-isn't one.
+`000` means the mesh refused it. Prometheus names its callers, and this
+probe isn't one.
 
 ```bash
 kubectl --context kind-solo-lab -n sv-agents exec probe-bob-assistant -- python3 /tmp/p.py http://ai-gateway.agentgateway-system/mcp/bob-workspace list --token "$(jq -r .access_token /tmp/bob.json)"
 ```
 
-Bob's tools, as his agent, through the firm's gateway (the token is from [Get Bob's tokens](#identity)).
-`/tmp/p.py` is `tools/mcp-probe.py`: `list`, or `call <tool> '<json args>'`,
-with `--token <jwt>` and `--header name=value`.
+This lists Bob's tools, as his agent, through the firm's gateway (the token
+is from [Get Bob's tokens](#identity)). `/tmp/p.py` is `tools/mcp-probe.py`;
+it takes `list` or `call <tool> '<json args>'`, with `--token <jwt>` and
+`--header name=value`.
 
 ## Gateways
 
@@ -82,9 +85,8 @@ with `--token <jwt>` and `--header name=value`.
 
 **Use the firm's model from your laptop.** `https://llm.sterling.lab/v1` takes
 OpenAI chat completions and Anthropic messages with the key in
-`.lab/secrets.env` (`/v1` only, up to 180 s a call); prompt guards, failover
-and pricing apply as for agents.
-Claude Code, for one:
+`.lab/secrets.env` (`/v1` only, up to 180 s a call). Prompt guards, failover
+and pricing apply as for agents. For Claude Code:
 
 ```bash
 ANTHROPIC_BASE_URL=https://llm.sterling.lab ANTHROPIC_AUTH_TOKEN="$(grep '^LLM_API_KEY=' .lab/secrets.env | cut -d= -f2-)" NODE_EXTRA_CA_CERTS="$HOME/.solo-lab/ca/ca.crt" claude
@@ -100,8 +102,9 @@ ANTHROPIC_BASE_URL=https://llm.sterling.lab ANTHROPIC_AUTH_TOKEN="$(grep '^LLM_A
 | `make xaa-logs SINCE=2h` | the Cross App Access trail: both token requests (S&V's broker, Ledgerline's AS), the ID-JAG's claims and every check, tokens redacted |
 | `kubectl --context kind-solo-lab -n sv-identity logs deploy/keycloak --since=10m \| grep -i -E "claim\|IDENTITY_PROVIDER\|error"` | sign-in and broker errors (it names the claim or step that failed) |
 
-**Get Bob's tokens** (the scripted browser sign-in the checks use: kagent's
-SSO through the broker to S&V's own Keycloak; lab test accounts only):
+**Get Bob's tokens** with the scripted browser sign-in the checks use
+(kagent's SSO through the broker to S&V's own Keycloak; lab test accounts
+only):
 
 ```bash
 bash -c '. scripts/lib.sh; . scripts/idp.sh; prefer_tier keycloak >&2; sso_token bob bob-demo' > /tmp/bob.json
@@ -110,7 +113,7 @@ bash -c '. scripts/lib.sh; . scripts/idp.sh; prefer_tier keycloak >&2; sso_token
 `prefer_tier` drains the IdPs ahead of S&V's own Keycloak for the command and
 restores the chain on exit.
 
-**Decode a token's claims** (no verification; to see what it carries):
+**Decode a token's claims**, without verifying it:
 
 ```bash
 jq -r .access_token /tmp/bob.json | jq -R 'split(".")[1] | gsub("-";"+") | gsub("_";"/") | @base64d | fromjson'
@@ -143,11 +146,11 @@ jq -r .access_token /tmp/bob.json | jq -R 'split(".")[1] | gsub("-";"+") | gsub(
 
 | Command | Shows |
 | --- | --- |
-| `kubectl --context kind-solo-lab get wlp -n sv-identity` | each rule: criticality, mode, minimum (empty: the default rule's), phase, the IdP serving it |
-| `kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o jsonpath='{.spec.assurancePolicy}'` | the default rule: what every rule starts from |
+| `kubectl --context kind-solo-lab get wlp -n sv-identity` | each rule's criticality, mode, minimum (empty means the default rule's), phase and serving IdP |
+| `kubectl --context kind-solo-lab get idc sterling-vance -n sv-identity -o jsonpath='{.spec.assurancePolicy}'` | the default rule, which every rule starts from |
 | `kubectl --context kind-solo-lab get wlp advisor-workspace -n sv-identity -o jsonpath='{.status}' \| jq` | a rule's eligible IdPs, clients as the broker has them, and conditions |
 | `kubectl --context kind-solo-lab get events -n sv-identity --field-selector involvedObject.kind=WorkloadProfile` | rules failing closed and recovering |
-| `kubectl --context kind-solo-lab get "$(kubectl --context kind-solo-lab api-resources -o name \| grep agentgatewaypolicies \| paste -sd, -)" -A -o custom-columns='NAMESPACE:.metadata.namespace,POLICY:.metadata.name,AUTHCONFIG:.spec.traffic.entExtAuth.authConfigRef.name,EXTAUTH:.spec.traffic.extAuth.backendRef.name,RULE:.spec.traffic.extAuth.grpc.contextExtensions.profile,FAILURE:.spec.traffic.extAuth.failureMode'` | every gateway policy and the rule it asks for: on Enterprise the AuthConfig (`assurance-<rule>`), on OSS the gate, the rule and how it fails |
+| `kubectl --context kind-solo-lab get "$(kubectl --context kind-solo-lab api-resources -o name \| grep agentgatewaypolicies \| paste -sd, -)" -A -o custom-columns='NAMESPACE:.metadata.namespace,POLICY:.metadata.name,AUTHCONFIG:.spec.traffic.entExtAuth.authConfigRef.name,EXTAUTH:.spec.traffic.extAuth.backendRef.name,RULE:.spec.traffic.extAuth.grpc.contextExtensions.profile,FAILURE:.spec.traffic.extAuth.failureMode'` | every gateway policy and the rule it asks for (Enterprise: the AuthConfig, `assurance-<rule>`; OSS: the gate, the rule and how it fails) |
 | `kubectl --context kind-solo-lab get authconfig -n agentgateway-system -l continuity.lab.solo.io/instance` | Enterprise: one AuthConfig per rule, written by the continuity controller, and whether Solo's ext-auth service accepted it |
 | `kubectl --context kind-solo-lab get cm assurance-state-sterling-vance -n agentgateway-system -o jsonpath='{.data.state\.rego}' \| tail -n +4 \| sed 's/^state := //' \| jq '{generated_at, current, rules}'` | Enterprise: the state Solo's ext-auth service decides from |
 | `kubectl --context kind-solo-lab get pods,pdb -n agentgateway-system -l app.kubernetes.io/instance=ext-auth-service-enterprise-agentgateway` | Enterprise: Solo's ext-auth service's replicas and how many may be down at once |
@@ -196,7 +199,7 @@ The kill switch itself is in [IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#kil
 | `kubectl --context kind-solo-lab get wlp advisor-workspace -n sv-identity --show-managed-fields -o jsonpath='{range .metadata.managedFields[*]}{.manager}{"\t"}{.time}{"\n"}{end}'` | which clients wrote an object, and when (any kind and name) |
 
 Grafana and Kiali are at https://grafana.ops.lab and https://kiali.ops.lab
-(`ops` / `ops-demo`); on Enterprise the Solo UI is at https://kagent.sterling.lab
+(`ops` / `ops-demo`). On Enterprise the Solo UI is at https://kagent.sterling.lab
 (S&V's sign-in). The Observatory's local development loop is in
 [OBSERVATORY.md](OBSERVATORY.md#local-development).
 
@@ -208,6 +211,6 @@ Grafana and Kiali are at https://grafana.ops.lab and https://kiali.ops.lab
 | `kubectl --context kind-solo-lab logs <pod> -n <ns> --previous` | the logs of a container that crashed |
 | `kubectl --context kind-solo-lab rollout restart deploy/<name> -n <ns>` | restart a workload |
 | `make layer-NN` | re-apply one layer (idempotent); e.g. `make layer-80` restores the S&V mesh policy |
-| `make preflight` | tools, Docker memory and inotify limits (Docker VMs: reset when the VM restarts), free ports, `*.lab` DNS |
+| `make preflight` | tools, Docker memory and inotify limits (on a Docker VM, reset when it restarts), free ports, `*.lab` DNS |
 | `make reset` | rewind the demos without a rebuild |
 | `make down && make up` | rebuild the cluster; caches and the CA survive |

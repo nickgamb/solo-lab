@@ -13,7 +13,7 @@
 <div class="wrap">
   <header class="masthead">
     <h1>Assurance Rules Demo Card</h1>
-    <p class="standfirst">Fail over to an IdP that proves less, and the workloads that need more fail closed, while the rest keep working. What each needs is a rule; the gate that enforces it also answers what it would decide.</p>
+    <p class="standfirst">Fail over to an IdP that proves less. Workloads that need more fail closed; the rest keep working. Each requirement is a rule, and the gate that enforces it can say what it would decide.</p>
   </header>
   <section class="screens">
     <div class="screen left">
@@ -57,7 +57,7 @@
             <span class="where">Left screen</span>
             <span class="click"><strong>https://observatory.ops.lab</strong> as <strong>ops / ops-demo</strong>, then <strong>Identity Continuity</strong></span>
           </td>
-          <td class="say">If an IdP above <strong>Sterling &amp; Vance (Keycloak)</strong> is in the chain, drain it and Save: the firm's own Keycloak signs people in.</td>
+          <td class="say">Drain any IdP above <strong>Sterling &amp; Vance (Keycloak)</strong> and Save, so the firm's own Keycloak signs people in.</td>
         </tr>
         </tbody>
       </table>
@@ -90,7 +90,7 @@
           </td>
           <td class="say">
             <span class="chip tier">Rules</span>
-            <span class="lede">What a sign-in must prove to reach each group of workloads, most critical first, and the default rule every rule starts from.</span>
+            <span class="lede">What a sign-in must prove for each group of workloads, most critical first. Every rule starts from the default.</span>
           </td>
         </tr>
         <tr class="port">
@@ -101,7 +101,7 @@
           </td>
           <td class="say">
             <span class="chip tier">From the gate</span>
-            <span class="lede">AAL2. The firm's Keycloak meets it with a one-time code; the contingency IdP never can. Those answers come from the gate that enforces them.</span>
+            <span class="lede">It needs AAL2. The firm's Keycloak meets it with a one-time code; the contingency IdP never can. The gate that enforces it gives these answers.</span>
           </td>
         </tr>
         <tr class="port">
@@ -123,7 +123,7 @@
           </td>
           <td class="say">
             <span class="chip held">What if</span>
-            <span class="lede">A password-only sign-in: 401 at the workspace and at Ledgerline, with what to ask the IdP for. The console lets it in.</span>
+            <span class="lede">A password-only sign-in gets a 401 at the workspace and at Ledgerline, with what to ask the IdP for. The console lets it in.</span>
           </td>
         </tr>
         <tr class="port">
@@ -134,7 +134,7 @@
           </td>
           <td class="say">
             <span class="chip through">Allowed</span>
-            <span class="lede">A second factor, so AAL2: the workspace answers.</span>
+            <span class="lede">A second factor means AAL2, so the workspace answers.</span>
           </td>
         </tr>
         <tr class="port">
@@ -145,7 +145,7 @@
           </td>
           <td class="say">
             <span class="chip held">Weaker IdP</span>
-            <span class="lede">Sign-in falls to the contingency IdP: a password, nothing more. The banner names the rules now failing closed.</span>
+            <span class="lede">Sign-in falls to the contingency IdP, which checks only a password. The banner names the rules now failing closed.</span>
           </td>
         </tr>
         <tr class="port">
@@ -167,7 +167,7 @@
           </td>
           <td class="say">
             <span class="chip held">Report only</span>
-            <span class="lede">Let through, and Traffic shows <strong>would-deny</strong>: see a rule's effect before you enforce it.</span>
+            <span class="lede">Let through, and Traffic shows <strong>would-deny</strong>. See a rule's effect before enforcing it.</span>
           </td>
         </tr>
         <tr class="port">
@@ -178,7 +178,7 @@
           </td>
           <td class="say">
             <span class="chip tier">As code</span>
-            <span class="lede">The same rules as HCL: the default, each IdP, each rule.</span>
+            <span class="lede">The same rules as HCL, with the default, each IdP and each rule.</span>
           </td>
         </tr>
         <tr class="port">

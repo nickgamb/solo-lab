@@ -30,16 +30,16 @@ too low.
 ## Machine setup
 
 `make machine-setup` (once per machine, sudo) makes `*.lab` resolve to
-127.0.0.1 and trusts the lab CA: `/etc/resolver` and the System keychain on
-macOS; systemd-resolved (or a marked block in `/etc/hosts`) and the distro's
-trust store on Linux, plus the NSS databases Chrome and Firefox read. On
-WSL2 it sets up the distro and prints the two commands for a browser on
-Windows.
+127.0.0.1 and trusts the lab CA. On macOS it uses `/etc/resolver` and the
+System keychain. On Linux it uses systemd-resolved (or a marked block in
+`/etc/hosts`), the distro's trust store and the NSS databases Chrome and
+Firefox read. On WSL2 it sets up the distro and prints the two commands for
+a browser on Windows.
 
 Story 2 builds Alice's and Meridian's services from
-[uma4agents](https://github.com/nickgamb/uma4agents): a checkout beside this
-repo (`../uma4agents`) or `U4A_SRC` if you have one, otherwise the install
-clones the pinned commit into `.lab/uma4agents`.
+[uma4agents](https://github.com/nickgamb/uma4agents), using a checkout beside
+this repo (`../uma4agents`) or at `U4A_SRC`. Without one, the install clones
+the pinned commit into `.lab/uma4agents`.
 
 ## What runs in Docker
 
@@ -57,8 +57,8 @@ a rebuild after `make down` is much faster than the first. It leaves running:
 
 **Updating an existing lab.** After pulling, `make platform` re-applies every
 layer and demo. A lab from before S&V's own Keycloak needs at least
-`make layer-45 layer-47 layer-95`: the `workforce` realm, and the chain
-ending in `break-glass`.
+`make layer-45 layer-47 layer-95` (the `workforce` realm, and the chain
+ending in `break-glass`).
 
 ## Accounts
 
@@ -74,14 +74,14 @@ the primary.
 | `alice` | `alice-demo` | Alice, in her own realm |
 
 Those passwords and one-time codes are S&V's own Keycloak's. At Auth0 the
-passwords are the ones you set ([IDPS.md](IDPS.md#auth0-auth0)). No user is
-in S&V's `compliance` group, which the `export_book` tool needs; add one to
-group `compliance` at the broker (realm `sterling-vance`) to try it.
+passwords are the ones you set ([IDPS.md](IDPS.md#auth0-auth0)). The
+`export_book` tool needs S&V's `compliance` group, which has no users. To try
+it, add one to `compliance` at the broker (realm `sterling-vance`).
 
 Generated secrets (Keycloak admin passwords, client secrets) are in
-`.lab/secrets.env`, created on first install and gitignored. The edge
-publishes only each party's realm, not Keycloak's admin console; reach that
-with a port-forward ([COMMANDS.md](COMMANDS.md#identity)).
+`.lab/secrets.env`, created on first install and gitignored. Keycloak's
+admin consoles are off the edge; reach them with a port-forward
+([COMMANDS.md](COMMANDS.md#identity)).
 
 ## Configuration
 
@@ -93,7 +93,7 @@ with a port-forward ([COMMANDS.md](COMMANDS.md#identity)).
 | `LLM_FALLBACK`, `LLM_FALLBACK_MODEL` | a second provider (and model) the gateway fails over to; apply with `make llm` |
 | `OLLAMA_MODEL`, `OLLAMA_URL` | the local model and where the cluster reaches it |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL` | hosted models (held by agentgateway only) |
-| `ENTERPRISE_IDP` | S&V's IdPs in failover order, by name (default `auth0,keycloak,contingency`; an IdP without an issuer is left out): who signs Bob in. S&V's broker vouches for him to Ledgerline, whichever IdP signed him in |
+| `ENTERPRISE_IDP` | S&V's IdPs, who sign Bob in, by name in failover order (default `auth0,keycloak,contingency`). An IdP without an issuer is left out, so a fresh clone starts on S&V's own Keycloak ([IDPS.md](IDPS.md)) |
 | `<NAME>_ISSUER`, `<NAME>_CLIENT_ID`, `<NAME>_CLIENT_SECRET` | each IdP in the chain (`auth0`, `gluu`, `okta`, `ping`, any other); without a secret S&V authenticates with its keys (`make xaa-keys`). `keycloak` and `contingency` default to S&V's own at `login.sterling.lab` and `login-dr.sterling.lab` |
 | `<NAME>_DIRECTORY_*`, `<NAME>_GROUPS_CLAIM`, `<NAME>_ASSURANCE`, ... | the rest of an IdP's settings ([IDPS.md](IDPS.md#settings)) |
 | `RESOURCE_AS`, `LEDGERLINE_<NAME>_ISSUER`, `LEDGERLINE_<NAME>_CLIENT_ID` | Ledgerline's authorization server, by name: `keycloak` (default, its own) or any other ([IDPS.md](IDPS.md#ledgerlines-authorization-server)) |

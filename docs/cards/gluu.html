@@ -13,7 +13,7 @@
 <div class="wrap">
   <header class="masthead">
     <h1>Gluu Demo Card (experimental)</h1>
-    <p class="standfirst">Gluu is the firm's IdP and Ledgerline's authorization server. Gluu signs Bob in, the firm's broker vouches for him, and his agent reaches Ledgerline as Bob through Cross App Access.</p>
+    <p class="standfirst">Gluu is the firm's IdP and Ledgerline's authorization server. Gluu signs Bob in and the firm's broker vouches for him. His agent reaches Ledgerline as Bob through Cross App Access.</p>
   </header>
   <section class="screens">
     <div class="screen left">
@@ -30,7 +30,7 @@
 
   <section class="setup">
     <h2>Pre-demo setup</h2>
-    <p class="setup-note">Needs two Gluu servers, one for each company. Registration: <code>docs/GLUU.md</code>.</p>
+    <p class="setup-note">Needs two Gluu servers, one for each company. Registration steps are in <code>docs/GLUU.md</code>.</p>
     <div class="table-scroll">
       <table>
         <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
@@ -58,7 +58,7 @@
             <span class="where">Keys</span>
             <div class="cmdwrap"><code class="cmd">make xaa-keys</code></div>
           </td>
-          <td class="say">Register S&amp;V's public keys at both Gluu servers before the build (docs/GLUU.md, Run it).</td>
+          <td class="say">Register S&amp;V's public keys at both Gluu servers before the build. See docs/GLUU.md, Run it.</td>
         </tr>
         <tr class="term">
           <td class="num">4</td>
@@ -138,7 +138,7 @@
           </td>
           <td class="say">
             <span class="chip refused">Every bypass fails</span>
-            <span class="lede">agentgateway checks every ID-JAG at the firm's gateway, a fresh one per call; the agent never holds one.</span>
+            <span class="lede">agentgateway checks every ID-JAG at the firm's gateway, a fresh one per call.</span>
           </td>
         </tr>
         <tr class="term">
@@ -149,7 +149,7 @@
           </td>
           <td class="say">
             <span class="chip tier">On the wire</span>
-            <span class="lede">Bob's call: <code>idp: gluu</code>. Both token requests, at the firm's broker and Ledgerline's Gluu, by their claims; no tokens logged.</span>
+            <span class="lede">Bob's call shows <code>idp: gluu</code>. Both token requests appear by their claims, at the firm's broker and at Ledgerline's Gluu. No tokens are logged.</span>
           </td>
         </tr>
         </tbody>

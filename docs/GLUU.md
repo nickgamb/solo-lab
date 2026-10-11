@@ -3,9 +3,8 @@
 Story 1's Cross App Access with Gluu Flex / Janssen in both companies'
 slots: S&V's enterprise IdP (signs Bob in with a passkey; S&V's broker
 vouches for him) and Ledgerline's authorization server (redeems the broker's
-ID-JAG). Same code path as the
-default; two settings choose who plays each role
-([IDENTITY-FLOWS.md](IDENTITY-FLOWS.md#2-cross-app-access-id-jag-to-a-saas)).
+ID-JAG). The code path is the default's; two settings choose who plays each
+role ([IDENTITY-FLOWS.md](IDENTITY-FLOWS.md#2-cross-app-access-id-jag-to-a-saas)).
 
 - Demo card: [cards/gluu.html](cards/gluu.html)
 - Checks: `make bob-verify` (Bob signs in through S&V's own Keycloak; the
@@ -31,14 +30,13 @@ Register the keys `make xaa-keys` wrote to `.lab/xaa/keys/` before `make up`:
 | `sv-ras-client.jwks.json` | Ledgerline's Gluu: S&V's client (`LEDGERLINE_GLUU_CLIENT_ID`) |
 | `sv-idp.jwks.json` | Ledgerline's Gluu, as its one trusted ID-JAG issuer `https://idp.sterling.lab/realms/sterling-vance` (S&V's broker) |
 
-Then sign in as Bob at `https://kagent.sterling.lab`: the login goes to
-Gluu (a passkey; the first sign-in enrolls one). Ask his assistant which
-Ledgerline account he is using: S&V's broker vouches (an ID-JAG) and
-Ledgerline's Gluu redeems it. `make xaa-logs` writes the trail.
+Then sign in as Bob at `https://kagent.sterling.lab`; the login goes to Gluu,
+and the first sign-in enrolls a passkey. Ask his assistant which Ledgerline
+account he is using, then run `make xaa-logs` for the trail.
 
 ## Settings
 
-`.env` (each setting: [IDPS.md](IDPS.md#gluu-gluu)):
+`.env` ([IDPS.md](IDPS.md#gluu-gluu) explains each setting):
 
 ```
 ENTERPRISE_IDP=gluu,auth0,keycloak,contingency
@@ -51,14 +49,12 @@ LEDGERLINE_GLUU_ISSUER=https://<Ledgerline's Gluu>
 LEDGERLINE_GLUU_CLIENT_ID=<S&V's client at Ledgerline's Gluu>
 ```
 
-Gluu first makes it S&V's primary: the source of truth for who exists and
-their groups. The directory sync reads its users over SCIM and gives the
-broker an account for each whose primary email is verified (the email's
-`verified`, else `emailVerified` in its SCIM user extension) under
-`sterling.lab`; Bob signs in to that account.
-The broker's ID-JAGs name S&V's client at Ledgerline's Gluu
-(`LEDGERLINE_GLUU_CLIENT_ID`) as their `client_id`, and their `sub` is Bob's
-broker account.
+Listing `gluu` first makes it S&V's primary IdP, the source of truth for who
+exists and their groups. The directory sync reads its users over SCIM and
+gives the broker an account for each whose primary email under
+`sterling.lab` is verified (the email's `verified`, else `emailVerified` in
+its SCIM user extension). Bob signs in to that account, the `sub` of the
+broker's ID-JAGs; their `client_id` is `LEDGERLINE_GLUU_CLIENT_ID`.
 
 ## S&V's Gluu
 
@@ -76,15 +72,15 @@ S&V's client with `sv-ras-client.jwks.json`, the jwt-bearer grant, S&V's
 broker as its one trusted ID-JAG issuer (`sv-idp.jwks.json`), scope
 `research:read`, access tokens for `ledgerline-research`.
 
-After failover to the next IdP a Gluu session is refused; Bob signs in again
-there and S&V's broker still vouches, for the same broker account:
-Ledgerline's Gluu sees the same issuer and subject.
+After failover to the next IdP, a Gluu session is refused. Bob signs in
+there to the same broker account, so Ledgerline's Gluu sees the same issuer
+and subject.
 
 ## Logs
 
-`make xaa-logs SINCE=2h` writes `.lab/xaa/<UTC time>/`; tokens are replaced
-by `<jwt>`, claims kept. agentgateway makes both token requests through its
-own routes, so ai-gateway's access log (`ai-gateway.log`) has them:
+`make xaa-logs SINCE=2h` writes `.lab/xaa/<UTC time>/`, with tokens replaced
+by `<jwt>` and claims kept. agentgateway makes both token requests through
+its own routes, so ai-gateway's access log (`ai-gateway.log`) has them:
 
 | Route | Fields |
 | --- | --- |
@@ -94,7 +90,7 @@ own routes, so ai-gateway's access log (`ai-gateway.log`) has them:
 
 ## Roadmap
 
-Not built. Each item, with what it needs.
+Not built; each item with what it needs.
 
 | Item | Needs |
 | --- | --- |

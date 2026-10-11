@@ -13,7 +13,7 @@
 <div class="wrap">
   <header class="masthead">
     <h1>Identity Continuity Demo Card</h1>
-    <p class="standfirst">Take the firm's IdP off the network. Sign-in moves to the firm's next IdP, and nothing downstream notices. When the next IdP proves less than a workload needs: the Assurance rules card.</p>
+    <p class="standfirst">Take the firm's IdP off the network. Sign-in moves to the firm's next IdP, and nothing downstream notices. When the next IdP proves less than a workload needs, see the Assurance rules card.</p>
   </header>
   <section class="screens">
     <div class="screen left">
@@ -30,7 +30,7 @@
 
   <section class="setup">
     <h2>Pre-demo setup</h2>
-    <p class="setup-note">Needs an Auth0 tenant (free tier): <code>docs/IDPS.md</code>, Auth0.</p>
+    <p class="setup-note">Needs an Auth0 tenant (free tier). See <code>docs/IDPS.md</code>, Auth0.</p>
     <div class="table-scroll">
       <table>
         <colgroup><col class="c-num"><col class="c-act"><col class="c-say"></colgroup>
@@ -66,7 +66,7 @@
             <span class="where">Check</span>
             <div class="cmdwrap"><code class="cmd">make status</code></div>
           </td>
-          <td class="say">Sign-in: <strong>active: auth0</strong>.</td>
+          <td class="say">Sign-in shows <strong>active: auth0</strong>.</td>
         </tr>
         <tr class="port">
           <td class="num">5</td>
@@ -74,7 +74,7 @@
             <span class="where">Left screen</span>
             <span class="click"><strong>https://observatory.ops.lab</strong> as <strong>ops / ops-demo</strong>, then <strong>Identity Continuity</strong></span>
           </td>
-          <td class="say">Green banner: <strong>CONNECTED</strong>.</td>
+          <td class="say">A green <strong>CONNECTED</strong> banner.</td>
         </tr>
         </tbody>
       </table>
@@ -129,7 +129,7 @@
           </td>
           <td class="say">
             <span class="chip refused">Network cut</span>
-            <span class="lede">This isn't a flag: it's a real network cut.</span>
+            <span class="lede">It's a real network cut.</span>
           </td>
         </tr>
         <tr class="port">
@@ -140,14 +140,14 @@
           </td>
           <td class="say">
             <span class="chip held">Failover</span>
-            <span class="lede">Amber, counting failed checks. Then red: FAILOVER ACTIVE.</span>
+            <span class="lede">Amber while it counts failed checks, then red with FAILOVER ACTIVE.</span>
           </td>
         </tr>
         <tr class="port">
           <td class="num">5</td>
           <td class="act">
             <span class="where">Right screen</span>
-            <span class="click">Open a new private window, open kagent, and sign in at the firm's own Keycloak as <strong>bob / bob-demo</strong>, then the code from <code>make totp</code></span>
+            <span class="click">In a new private window, open kagent and sign in at the firm's own Keycloak as <strong>bob / bob-demo</strong>, then the code from <code>make totp</code></span>
           </td>
           <td class="say">
             <span class="chip through">Still Bob</span>
@@ -162,7 +162,7 @@
           </td>
           <td class="say">
             <span class="chip tier">Auditable</span>
-            <span class="lede">The whole outage is one policy: <code>continuity-partition-auth0</code>, DENY.</span>
+            <span class="lede">The whole outage is one DENY policy, <code>continuity-partition-auth0</code>.</span>
           </td>
         </tr>
         <tr class="port">
@@ -184,7 +184,7 @@
           </td>
           <td class="say">
             <span class="chip tier">Any IdP</span>
-            <span class="lede">The sequence was cut, failover, restore, failback, and every step is recorded.</span>
+            <span class="lede">Cut, failover, restore, failback. Every step is recorded.</span>
           </td>
         </tr>
         </tbody>
