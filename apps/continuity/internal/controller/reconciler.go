@@ -682,7 +682,18 @@ func (r *Reconciler) reconcileKeycloak(ctx context.Context, ic *v1.IdentityConti
 		d := r.cachedDiscovery(ic, t)
 		switch {
 		case d != nil:
-			want := desiredIdP(ic, t, c, d, owner, hide, enabled)
+			// Keycloak's ID-token-only email_verified filter stays until
+			// the IdP has the broker's own check (ID token, then userinfo):
+			// never neither. A new IdP gets it on the next pass.
+			verifies := false
+			if exists {
+				if err := ensureEmailCheck(ctx, kc, t.Name); err != nil {
+					errs = append(errs, fmt.Errorf("identity provider %s: email check: %w", t.Name, err))
+				} else {
+					verifies = true
+				}
+			}
+			want := desiredIdP(ic, t, c, d, owner, hide, enabled, verifies)
 			if !exists {
 				err = kc.CreateIdP(ctx, want)
 			} else if !sameIdP(cur, want) {
@@ -758,7 +769,7 @@ func localTiers(ts []v1.Tier) []v1.Tier {
 	return out
 }
 
-func desiredIdP(ic *v1.IdentityContinuity, t v1.Tier, c credential, d *probe.Discovery, owner string, hide, enabled bool) keycloak.IdP {
+func desiredIdP(ic *v1.IdentityContinuity, t v1.Tier, c credential, d *probe.Discovery, owner string, hide, enabled, verifies bool) keycloak.IdP {
 	scopes := t.OIDC.Scopes
 	if len(scopes) == 0 {
 		scopes = []string{"openid", "email", "profile"}
@@ -781,12 +792,17 @@ func desiredIdP(ic *v1.IdentityContinuity, t v1.Tier, c credential, d *probe.Dis
 		// every sign-in updates the broker's profile from the IdP's token
 		// (email, names; groups through their own mappers): the token is
 		// the truth, just in time
-		"syncMode": "FORCE",
-		// Auto-linking by email is only safe for addresses the upstream verified.
-		"filteredByClaim":  "true",
-		"claimFilterName":  "email_verified",
-		"claimFilterValue": "true",
-		cfgInstance:        owner,
+		"syncMode":  "FORCE",
+		cfgInstance: owner,
+	}
+	// Auto-linking by email is only safe for addresses the upstream
+	// verified: the IdP's continuity-email-verified mapper checks the ID
+	// token, then userinfo; until it has one, Keycloak's own filter checks
+	// the ID token.
+	if verifies {
+		cfg["filteredByClaim"] = "false"
+	} else {
+		cfg["filteredByClaim"], cfg["claimFilterName"], cfg["claimFilterValue"] = "true", "email_verified", "true"
 	}
 	switch auth := t.OIDC.ClientAuth; auth {
 	case "private_key_jwt":
@@ -1073,4 +1089,17 @@ func ensureGroupMappers(ctx context.Context, kc *keycloak.Client, ic *v1.Identit
 	}
 	errs = append(errs, kc.PruneMappers(ctx, t.Name, keycloak.GroupMapperPrefix, keep))
 	return errors.Join(errs...)
+}
+
+// ensureEmailCheck puts the broker's email_verified check on the IdP, when
+// the broker image offers it.
+func ensureEmailCheck(ctx context.Context, kc *keycloak.Client, alias string) error {
+	ok, err := kc.HasMapperType(ctx, alias, keycloak.EmailVerifiedMapper.Type)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("the broker offers no %s (tools/keycloak-idjag)", keycloak.EmailVerifiedMapper.Type)
+	}
+	return kc.EnsureMapper(ctx, alias, keycloak.EmailVerifiedMapper)
 }

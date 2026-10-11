@@ -60,7 +60,16 @@ it on every upstream IdP (`continuity-assurance`, sync mode FORCE, so every
 sign-in), and the broker's `continuity-assurance` client scope puts the notes
 in tokens as `idp_acr`, `idp_amr` and `idp_auth_time`.
 
-The image compiles it against the Keycloak jars it builds and loads it from
+The same provider has a second mapper, `continuity-email-verified-idp-mapper`.
+It refuses a sign-in unless `email_verified` is true in the upstream's ID token
+or, when the ID token doesn't carry the claim, its userinfo response, before
+the broker looks up or links an account. It takes the place of Keycloak's
+essential-claim filter, which reads the ID token alone: an upstream that
+returns email claims from userinfo only (Janssen and Gluu by default) is
+accepted when it verified the email. The controller puts it on every upstream
+IdP and drops Keycloak's filter only from an IdP that has it.
+
+The image compiles them against the Keycloak jars it builds and loads them from
 `/opt/keycloak/providers`. It is independent of the ID-JAG patch and stays
 when that patch goes.
 

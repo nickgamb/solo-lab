@@ -34,7 +34,7 @@ func TestSameIdP(t *testing.T) {
 	ic.Namespace, ic.Name = "sv-identity", "sterling-vance"
 	tier := v1.Tier{Name: "auth0", Type: "oidc", OIDC: &v1.OIDCUpstream{Issuer: "https://tenant.example/"}}
 	d := &probe.Discovery{AuthorizationEndpoint: "https://tenant.example/authorize", TokenEndpoint: "https://tenant.example/oauth/token", JWKSURI: "https://tenant.example/jwks"}
-	want := desiredIdP(ic, tier, credential{id: "client", secret: "s3cret"}, d, "sv-identity/sterling-vance", false, true)
+	want := desiredIdP(ic, tier, credential{id: "client", secret: "s3cret"}, d, "sv-identity/sterling-vance", false, true, false)
 
 	if !sameIdP(fromKeycloak(want), want) {
 		t.Fatal("an unchanged IdP (secret masked) must compare equal")
@@ -49,7 +49,7 @@ func TestSameIdP(t *testing.T) {
 	if sameIdP(edited, want) {
 		t.Error("trustEmail changed by hand must be repaired")
 	}
-	rotated := desiredIdP(ic, tier, credential{id: "client", secret: "rotated"}, d, "sv-identity/sterling-vance", false, true)
+	rotated := desiredIdP(ic, tier, credential{id: "client", secret: "rotated"}, d, "sv-identity/sterling-vance", false, true, false)
 	if sameIdP(fromKeycloak(want), rotated) {
 		t.Error("a rotated client secret must be pushed (the hash covers it)")
 	}
@@ -59,17 +59,36 @@ func TestStoreTokens(t *testing.T) {
 	ic := &v1.IdentityContinuity{}
 	d := &probe.Discovery{AuthorizationEndpoint: "https://op.example/authorize", TokenEndpoint: "https://op.example/token", JWKSURI: "https://op.example/jwks"}
 	tier := v1.Tier{Name: "gluu", Type: "oidc", OIDC: &v1.OIDCUpstream{Issuer: "https://op.example"}}
-	off := desiredIdP(ic, tier, credential{id: "c", secret: "s"}, d, "o", false, true)
+	off := desiredIdP(ic, tier, credential{id: "c", secret: "s"}, d, "o", false, true, false)
 	if off["storeToken"] != false {
 		t.Fatalf("storeToken = %v, want false by default", off["storeToken"])
 	}
 	tier.OIDC.StoreTokens = true
-	on := desiredIdP(ic, tier, credential{id: "c", secret: "s"}, d, "o", false, true)
+	on := desiredIdP(ic, tier, credential{id: "c", secret: "s"}, d, "o", false, true, false)
 	if on["storeToken"] != true {
 		t.Fatalf("storeToken = %v, want true", on["storeToken"])
 	}
 	if sameIdP(fromKeycloak(off), on) {
 		t.Error("turning storeTokens on must update the IdP")
+	}
+}
+
+// email_verified: Keycloak's ID-token filter until the IdP has the broker's
+// own check (ID token, then userinfo), then that check alone.
+func TestEmailVerified(t *testing.T) {
+	ic := &v1.IdentityContinuity{}
+	d := &probe.Discovery{AuthorizationEndpoint: "https://op.example/authorize", TokenEndpoint: "https://op.example/token", JWKSURI: "https://op.example/jwks"}
+	tier := v1.Tier{Name: "gluu", Type: "oidc", OIDC: &v1.OIDCUpstream{Issuer: "https://op.example"}}
+	filtered := desiredIdP(ic, tier, credential{id: "c", secret: "s"}, d, "o", false, true, false)
+	if cfg := filtered.Config(); cfg["filteredByClaim"] != "true" || cfg["claimFilterName"] != "email_verified" || cfg["claimFilterValue"] != "true" {
+		t.Fatalf("without the broker's check, Keycloak's filter: %v", cfg)
+	}
+	checked := desiredIdP(ic, tier, credential{id: "c", secret: "s"}, d, "o", false, true, true)
+	if cfg := checked.Config(); cfg["filteredByClaim"] != "false" {
+		t.Fatalf("with it, no ID-token filter: %v", cfg)
+	}
+	if sameIdP(fromKeycloak(filtered), checked) {
+		t.Error("gaining the check must update the IdP")
 	}
 }
 
@@ -79,7 +98,7 @@ func TestClientAuth(t *testing.T) {
 	ic := &v1.IdentityContinuity{}
 	d := &probe.Discovery{AuthorizationEndpoint: "https://op.example/authorize", TokenEndpoint: "https://op.example/token", JWKSURI: "https://op.example/jwks"}
 	tier := v1.Tier{Name: "gluu", Type: "oidc", OIDC: &v1.OIDCUpstream{Issuer: "https://op.example", ClientID: "sv", ClientAuth: "private_key_jwt"}}
-	cfg := desiredIdP(ic, tier, credential{id: "sv"}, d, "o", false, true).Config()
+	cfg := desiredIdP(ic, tier, credential{id: "sv"}, d, "o", false, true, false).Config()
 	if cfg["clientAuthMethod"] != "private_key_jwt" || cfg["clientAssertionSigningAlg"] != "PS256" {
 		t.Fatalf("config %v", cfg)
 	}
@@ -87,7 +106,7 @@ func TestClientAuth(t *testing.T) {
 		t.Fatal("private_key_jwt config carries a clientSecret")
 	}
 	tier.OIDC.ClientAuth = ""
-	cfg = desiredIdP(ic, tier, credential{id: "sv", secret: "s"}, d, "o", false, true).Config()
+	cfg = desiredIdP(ic, tier, credential{id: "sv", secret: "s"}, d, "o", false, true, false).Config()
 	if cfg["clientAuthMethod"] != "client_secret_post" || cfg["clientSecret"] != "s" {
 		t.Fatalf("default config %v", cfg)
 	}
@@ -100,6 +119,7 @@ type adminAPI struct {
 	deleted      []string
 	cacheCleared int // clear-user-cache calls
 	redirect     string
+	noEmailCheck bool // an image without the broker's email_verified mapper
 }
 
 func (a *adminAPI) serve(t *testing.T) *httptest.Server {
@@ -120,10 +140,17 @@ func (a *adminAPI) serve(t *testing.T) *httptest.Server {
 			json.NewDecoder(r.Body).Decode(&v)
 			a.idps[v["alias"].(string)] = v
 			w.WriteHeader(http.StatusCreated)
+		case strings.HasSuffix(p, "/mapper-types"):
+			types := map[string]any{"oidc-username-idp-mapper": map[string]any{}, "continuity-session-claims-idp-mapper": map[string]any{}}
+			if !a.noEmailCheck {
+				types["continuity-email-verified-idp-mapper"] = map[string]any{}
+			}
+			json.NewEncoder(w).Encode(types)
 		case strings.HasSuffix(p, "/mappers"):
 			if r.Method == http.MethodGet {
 				w.Write([]byte(`[{"id":"u","name":"username-from-email","identityProviderMapper":"oidc-username-idp-mapper","config":{"template":"${CLAIM.email}","target":"LOCAL","syncMode":"INHERIT"}},` +
-					`{"id":"a","name":"continuity-assurance","identityProviderMapper":"continuity-session-claims-idp-mapper","config":{"claims":"acr,amr,auth_time","note.prefix":"continuity.","syncMode":"FORCE"}}]`))
+					`{"id":"a","name":"continuity-assurance","identityProviderMapper":"continuity-session-claims-idp-mapper","config":{"claims":"acr,amr,auth_time","note.prefix":"continuity.","syncMode":"FORCE"}},` +
+					`{"id":"e","name":"continuity-email-verified","identityProviderMapper":"continuity-email-verified-idp-mapper","config":{"syncMode":"INHERIT"}}]`))
 			}
 		case strings.HasPrefix(p, pre+"/identity-provider/instances/"):
 			alias := strings.TrimPrefix(p, pre+"/identity-provider/instances/")
@@ -233,6 +260,40 @@ func TestReconcileKeycloakKeepsUnmanagedConfig(t *testing.T) {
 	}
 	if cfg["prompt"] != "login" || p["guiOrder"] != "3" {
 		t.Fatalf("a field set in Keycloak was dropped: %v", p)
+	}
+}
+
+// The broker's email_verified check replaces Keycloak's ID-token filter only
+// on an IdP that has it: a broker image without it keeps the filter.
+func TestReconcileEmailCheck(t *testing.T) {
+	owner := "sv-identity/sterling-vance"
+	for _, image := range []struct {
+		name     string
+		without  bool
+		filtered string
+	}{{"with the check", false, "false"}, {"without it", true, "true"}} {
+		api := &adminAPI{noEmailCheck: image.without, idps: map[string]keycloak.IdP{
+			"gluu": {"alias": "gluu", "config": map[string]any{cfgInstance: owner}}}}
+		srv := api.serve(t)
+		kc := keycloak.New(srv.URL, "r")
+		kc.SetCredentials("id", "secret")
+		ic := &v1.IdentityContinuity{Spec: v1.IdentityContinuitySpec{
+			Broker: v1.Broker{Keycloak: v1.KeycloakBroker{BrowserFlow: "continuity-browser"}},
+			Tiers:  []v1.Tier{{Name: "gluu", Type: "oidc", OIDC: &v1.OIDCUpstream{Issuer: "https://gluu.example"}}},
+		}}
+		ic.Namespace, ic.Name = "sv-identity", "sterling-vance"
+		r := &Reconciler{discovery: map[string]*probe.Discovery{}}
+		r.discovery[discoveryKey(ic, ic.Spec.Tiers[0])] = &probe.Discovery{AuthorizationEndpoint: "https://gluu.example/authorize",
+			TokenEndpoint: "https://gluu.example/token", JWKSURI: "https://gluu.example/jwks"}
+		st := map[string]*v1.TierStatus{"gluu": {Configured: true, Healthy: true}}
+		_, _, _, err := r.reconcileKeycloak(context.Background(), ic, kc, map[string]credential{"gluu": {id: "c", secret: "s"}}, st, "gluu", nil)
+		srv.Close()
+		if got := api.idps["gluu"].Config()["filteredByClaim"]; got != image.filtered {
+			t.Errorf("%s: filteredByClaim = %v, want %s", image.name, got, image.filtered)
+		}
+		if (err != nil) != image.without {
+			t.Errorf("%s: err = %v", image.name, err)
+		}
 	}
 }
 
