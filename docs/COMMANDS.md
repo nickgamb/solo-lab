@@ -167,10 +167,23 @@ jq -r .access_token /tmp/bob.json | jq -R 'split(".")[1] | gsub("-";"+") | gsub(
 | `kubectl --context kind-solo-lab -n sv-identity port-forward svc/assurance-gate 19002:evaluate` | the gate's evaluate port on your machine (its mesh policy lets only the Observatory call it in the cluster) |
 | `curl -s localhost:19002/v1/evaluate -d '{"continuity": "sterling-vance", "session": {"idp": "contingency", "acr": "aal1"}}' \| jq` | what every rule decides for one sign-in, from the gate, through that port-forward |
 | `curl -s localhost:19002/access/v1/evaluation -d '{"subject": {"type": "user", "id": "bob", "properties": {"idp": "contingency", "acr": "aal1"}}, "resource": {"type": "assurance_rule", "id": "advisor-workspace"}, "action": {"name": "call"}}' \| jq` | the same, as an AuthZEN access evaluation |
-| `curl -s localhost:19002/v1/policy` | the Rego module that decides the rules |
+| `curl -si localhost:19002/v1/policy` | the Rego module the gate decides with; `X-Assurance-Policy` names the ConfigMap version, `X-Assurance-Policy-Error` one it refused |
+| `kubectl --context kind-solo-lab get cm assurance-policy -n sv-identity -o jsonpath='{.data.policy\.rego}'` | the decision logic as saved (`agentgateway-system` on Enterprise); the gate loads an edit within 5 s |
 | `make continuity-verify` | the failover, kill switch and live-rule checks |
 
 The kill switch itself is in [IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#kill-switch).
+
+## Relationships (OpenFGA)
+
+| Command | Shows |
+| --- | --- |
+| `kubectl --context kind-solo-lab get relm,rel -n sv-identity` | the model (its OpenFGA store and model, how many relationships, synced) and each relationship |
+| `kubectl --context kind-solo-lab get relm sterling-vance -n sv-identity -o jsonpath='{.spec.model}'` | the model, in OpenFGA's DSL |
+| `kubectl --context kind-solo-lab delete rel c-1004-in-sv-bob -n sv-identity` | move a client out of Bob's book; his agent stops seeing her on the next call (`make reset` puts it back) |
+| `kubectl --context kind-solo-lab get pods,pdb -n sv-authz` | OpenFGA's replicas and its Postgres instances |
+| `kubectl --context kind-solo-lab -n agentgateway-system logs -l app=relationship-guard --prefix -f \| grep '"msg":"relationship"'` | each decision: user, agent, server, tool, allow or deny, why, how many clients |
+| `kubectl --context kind-solo-lab -n agentgateway-system port-forward svc/relationship-guard 19003:evaluate` | the guard's evaluate port on your machine (its mesh policy lets only the Observatory call it in the cluster) |
+| `curl -s localhost:19003/v1/evaluate -d '{"user": "bob@sterling.lab", "groups": ["advisors"], "agent": "agent:sv-agents.bob-assistant", "server": "bob-workspace"}' \| jq` | what the guard decides for one caller, through that port-forward |
 
 ## Agents and Agent Substrate
 

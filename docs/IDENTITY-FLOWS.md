@@ -151,6 +151,7 @@ sequenceDiagram
   A->>G: tools/call /mcp/bob-workspace, Authorization: Bob's access token (HBONE, SPIFFE ID of the agent)
   G->>G: verify JWT (aud ai-gateway), caller is an agent's pool, Bob in advisors, tool allowed
   G->>G: assurance gate: does Bob's sign-in meet advisor-workspace's assurance rules?
+  G->>G: relationship guard (OpenFGA): does the agent act for Bob, may he call the workspace, which clients may he see?
   G->>S: token exchange, subject = Bob's token, audience bob-workspace
   S-->>G: token for Bob, aud bob-workspace, seconds to live
   G->>T: tools/call, Authorization: the minted token (Bob's own token removed)
@@ -180,6 +181,14 @@ sequenceDiagram
     401 with an RFC 9470 challenge when a stronger sign-in at the IdP would
     pass, and 403 when the profile doesn't take sessions from that IdP
     ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#where-the-rules-are-decided)).
+  - Relationships. On every `tools/call`, `relationship-guard`
+    (`apps/relationship-guard`, the first of the backend's MCP guardrails,
+    ExtMCP, `FailClosed`) asks S&V's OpenFGA whether the agent acts for Bob,
+    whether Bob may call `bob-workspace`, and which clients he may see. Bob's
+    groups go in as contextual tuples from the verified token. The gateway
+    hands the workspace the client list (`x-relationship-clients`); the
+    workspace shows only those, and refuses the call without it
+    ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#relationships)).
   - Backend auth: `oauthTokenExchange` with subject
     `jwt.rawToken.unredacted()`, audience `bob-workspace`
     (`mcp_exchange` in `scripts/idp.sh`).

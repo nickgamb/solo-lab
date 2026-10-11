@@ -123,7 +123,7 @@ count, host ports, party domains, registry port; `config/oss.env` and
 | `continuity-verify` | identity continuity checks only (failover, kill switch, live rules, routing, directory sync) |
 | `observatory-verify` | what the Observatory's admins may and may not change (RBAC, admission) |
 | `tour` | drive every story end to end, paced, to watch in the Observatory |
-| `reset` | rewind the demos (grants, terms, agent key, follow-ups) |
+| `reset` | rewind the demos (grants, terms, agent key, follow-ups, relationships) |
 | `llm` | switch the model: `make llm LLM_PROVIDER=anthropic` |
 | `totp` | a one-time code for S&V's own Keycloak: `make totp` (Bob), `make totp EMPLOYEE=dana` |
 | `xaa-logs` | the Cross App Access trail (both token requests, claims, checks), tokens redacted: `make xaa-logs SINCE=2h` |
@@ -145,8 +145,10 @@ scripts/         cluster lifecycle, DNS, CA, machine setup, preflight, helpers (
 platform/NN-*/   one install.sh per layer, applied in order by make platform
 demos/           each story: install.sh, verify.sh, manifests, agents, tools
 apps/observatory Observatory: Go server (server/) and React UI (web/)
-apps/continuity  IdentityContinuity and WorkloadProfile CRDs, controller, directory sync,
-                 the assurance rules (Rego) and gate
+apps/continuity  IdentityContinuity, WorkloadProfile, RelationshipModel and Relationship
+                 CRDs, controller, directory sync, the assurance rules (Rego) and gate
+apps/relationship-guard
+                 the gateway's entitlements check (OpenFGA), an MCP guardrail
 apps/idtoken-exchange
                  Cross App Access at S&V's egress: the user's ID token from S&V's broker
 tools/           patched upstream builds (kagent, Substrate, Keycloak), the probe
@@ -163,6 +165,7 @@ docs/            architecture, per-app docs, commands, demo cards, images and vi
 | `40-agentgateway` | ai-gateway: LLM backend, MCP; on Enterprise the STS for MCP servers' tokens and Solo's ext-auth service, replicated |
 | `45-identity` | S&V's mesh baseline, S&V's broker (Keycloak, `idp.sterling.lab`), S&V's own Keycloak (`login.sterling.lab`, realm `workforce`), its contingency IdP (`login-dr.sterling.lab`), client secrets for S&V components |
 | `47-continuity` | IdentityContinuity and WorkloadProfile CRDs and controller, the directory sync, the assurance rules (Solo's ext-auth service on Enterprise, the assurance gate on OSS), S&V egress waypoint |
+| `48-relationships` | OpenFGA (3 replicas) on Postgres (CloudNativePG, 3 instances) in `sv-authz`, S&V's relationship model |
 | `50-substrate` | Agent Substrate (patched), in the mesh |
 | `60-kagent` | kagent + kmcp (patched), ops agents on Substrate, their tools (kagent-tools, its own release) behind ai-gateway, edge SSO (OSS) |
 | `70-agentregistry` | agentregistry behind S&V SSO |
