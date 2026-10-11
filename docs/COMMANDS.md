@@ -8,7 +8,7 @@ another cluster selected. To skip the flag, select the lab once:
 kubectl config use-context kind-solo-lab
 ```
 
-The `make` targets are in the [README](../README.md#make-targets); the same commands grouped by Observatory screen, as a card, in [cards/commands.html](cards/commands.html). Commands
+The `make` targets are in the [SETUP.md](SETUP.md#make-targets); the same commands grouped by Observatory screen, as a card, in [cards/commands.html](cards/commands.html). Commands
 that need the lab's helpers (`lab_secret`, `port_forward`) run under bash from
 the repo root: `bash -c '. scripts/lib.sh; ...'`.
 

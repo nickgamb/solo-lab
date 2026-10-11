@@ -152,6 +152,8 @@ builder, and the directory sync window. See
     Save writes `spec.routing.rules` as the signed-in admin.
   - **Gateway policy:** the agentgateway policy the continuity controller
     wrote from the rules and the chain's health, read-only.
+
+  ![Routing policy: each rule's CEL and IdPs, and where each sign-in goes now](images/observatory-routing-policy.jpg)
 - **Assurance rules** (a button in the rule builder): what a sign-in must
   prove to reach what relies on the broker, whichever IdP it came through
   ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#assurance-rules)). Every
@@ -169,19 +171,26 @@ builder, and the directory sync window. See
     **Enforced at** (every gateway policy that takes the broker's tokens,
     with the rule it asks for: checking one makes that policy ask the gate
     for this rule, failing closed), and the outcome for each IdP.
+
+    ![Assurance rules: advisor-workspace, Critical, AAL2, enforced at two gateway policies that fail closed](images/observatory-assurance-rules.jpg)
   - **IdPs:** the chain in failover order; for each, what its acr and amr
     values are worth, its trust checks with **Check now**, and its outcome
     under every rule.
   - **What if:** one sign-in (IdP, acr, amr, how long ago) against every
     rule: the decision, the status a gateway would return, the reason, and
     the `acr_values` the user would be asked for.
+
+    ![What if: a contingency sign-in at AAL1, allowed by the default rule, refused by advisor-workspace (401, step up) and ledgerline-research (403)](images/observatory-assurance-whatif.jpg)
   - **Code:** the same as YAML: `default` (the default rule), `idps` (what
     each IdP's acr and amr values are worth), `rules` (one key per rule) and
     `policy_points` (each gateway policy that takes the broker's tokens, and
     the rule it asks the gate for: a rule, `default` or `null`). Errors are
     marked at their line and column. Leaving the tab applies it. **Decision
-    logic (Rego, read-only)** beside it shows the Rego the assurance gate
-    decides every request with (`/api/assurance/{ns}/{name}/policy`).
+    logic (Rego, read-only)** beside it shows the Rego every request is
+    decided with, by Solo's ext-auth service on Enterprise and the assurance
+    gate on OSS (`/api/assurance/{ns}/{name}/policy`).
+
+    ![The decision logic: the Rego module, read-only](images/observatory-assurance-rego.jpg)
 
     ```yaml
     default:
@@ -223,6 +232,10 @@ The AI gateway's model chain: HTTPRoute `llm` (agentgateway-system), the
 `llm-backend` and `llm-callers` (`AgentgatewayPolicy` on OSS,
 `EnterpriseAgentgatewayPolicy` on enterprise). `make llm` rewrites the
 chain from `.env`.
+
+| | |
+| --- | --- |
+| ![Model Continuity: the agents' pools through ai-gateway to the primary model, the fallback idle](images/observatory-model-continuity.jpg) | ![Model failover: the primary cut, the fallback serving every call](images/observatory-model-failover.jpg) |
 
 - **Map:** the callers `llm-callers` allows (agent pools, by mesh identity),
   the API-key callers of route `llm-external` when it exists, ai-gateway, and
