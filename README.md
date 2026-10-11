@@ -12,7 +12,15 @@ A production-shaped lab you run on your laptop. People and agents sign in once;
 agentgateway routes each sign-in to the right IdP, fails over between IdPs
 without anything downstream noticing, checks who and which workload is
 calling on every request, and mints each tool or SaaS a token for that one
-call. Everything is a real Solo product doing a real job, watched live.
+call. Everything is a real Solo product doing a real job, watched live in the
+Solo UI.
+
+| [![Solo UI, kagent: a trace of Bob's agent calling get_positions on Alice's terms](docs/images/solo-ui-kagent-trace.jpg)](docs/images/solo-ui-kagent-trace.jpg) | [![Solo UI, agentgateway: requests, tokens by model and tool requests across the lab](docs/images/solo-ui-agentgateway-dashboard.jpg)](docs/images/solo-ui-agentgateway-dashboard.jpg) | [![Solo UI, Istio: the ambient mesh by namespace, with live traffic](docs/images/solo-ui-mesh-graph.jpg)](docs/images/solo-ui-mesh-graph.jpg) |
+| :---: | :---: | :---: |
+| **kagent**: every agent run, traced to the tool | **agentgateway**: every call, model token and tool request | **Istio ambient**: the mesh, live |
+
+And in the lab's own Observatory, the identity fabric: agents and apps through
+agentgateway to every IdP the firm owns, in failover order.
 
 ![The identity fabric in the Observatory: agents and apps through agentgateway, the fabric, and S&V's IdPs in failover order](docs/images/observatory-continuity-connected.jpg)
 
@@ -103,16 +111,23 @@ code from `make totp`
 
 ## See it
 
+**The Solo UI** ([all of it](docs/ENTERPRISE.md#the-solo-ui)):
+
+| | |
+| --- | --- |
+| ![Solo UI, kagent: agents, runs, tokens per model, the cluster](docs/images/solo-ui-kagent-dashboard.jpg) | ![Solo UI, kagent: every agent, its model and its tools](docs/images/solo-ui-kagent-agents.jpg) |
+| **kagent**: agents, runs and tokens | **kagent**: every agent, its model and tools |
+| ![Solo UI, agentgateway: every route, its match, destination and latency](docs/images/solo-ui-agentgateway-routes.jpg) | ![Solo UI, agentgateway: cost management, spend by provider and over time](docs/images/solo-ui-agentgateway-cost.jpg) |
+| **agentgateway**: every route behind the AI gateway | **agentgateway**: cost per call, by provider |
+
+**The Observatory**, the lab's own view of identity and model continuity:
+
 | | |
 | --- | --- |
 | ![IdP failover: S&V's Keycloak cut at the egress, the contingency IdP signing people in](docs/images/observatory-continuity-failover.jpg) | ![What if: a contingency sign-in (AAL1) refused where the rule needs AAL2, with the reason](docs/images/observatory-assurance-whatif.jpg) |
 | **IdP failover**: a real network cut, the next IdP takes over | **Assurance what-if**: refused below AAL2, and why |
 | ![Model failover: the primary model down, the fallback serving every agent](docs/images/observatory-model-failover.jpg) | ![Routing policy: which IdP each sign-in goes to, as rules in CEL](docs/images/observatory-routing-policy.jpg) |
 | **Model failover** at the gateway | **Routing policy**: rules in CEL, decided at the gateway |
-| ![Solo UI, kagent: agents, runs, tokens per model, the cluster](docs/images/solo-ui-kagent-dashboard.jpg) | ![Solo UI, kagent: a trace of Bob's agent calling get_positions on Alice's terms](docs/images/solo-ui-kagent-trace.jpg) |
-| **Solo UI · kagent**: agents and runs | **A trace**: Bob's agent calls Alice's vault |
-| ![Solo UI, agentgateway: requests, tokens by model, tool requests](docs/images/solo-ui-agentgateway-dashboard.jpg) | ![Solo UI, Istio: the ambient mesh by namespace, with live traffic](docs/images/solo-ui-mesh-graph.jpg) |
-| **Solo UI · agentgateway** | **Solo UI · Istio**: the mesh graph |
 
 More in [OBSERVATORY.md](docs/OBSERVATORY.md), and the
 [3-minute walkthrough](https://youtu.be/Y3P4a7HRvVs).
