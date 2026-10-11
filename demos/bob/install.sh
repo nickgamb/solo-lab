@@ -16,9 +16,10 @@ BOB_WORKSPACE_IMAGE=$(lab_build sv/bob-workspace "$D/mcp/bob-workspace"); export
 LEDGERLINE_RESEARCH_IMAGE=$(lab_build ledgerline/research-mcp "$D/ledgerline/mcp"); export LEDGERLINE_RESEARCH_IMAGE
 IDTOKEN_EXCHANGE_IMAGE=$(lab_build lab/idtoken-exchange "$LAB_ROOT/apps/idtoken-exchange"); export IDTOKEN_EXCHANGE_IMAGE
 MCP_GUARD_IMAGE=$(lab_build lab/mcp-guard "$LAB_ROOT/apps/mcp-guard"); export MCP_GUARD_IMAGE
+RELATIONSHIP_GUARD_IMAGE=$(lab_build lab/relationship-guard "$LAB_ROOT/apps/relationship-guard"); export RELATIONSHIP_GUARD_IMAGE
 ok "$BOB_WORKSPACE_IMAGE  $LEDGERLINE_RESEARCH_IMAGE"
 ok "$IDTOKEN_EXCHANGE_IMAGE"
-ok "$MCP_GUARD_IMAGE"
+ok "$MCP_GUARD_IMAGE  $RELATIONSHIP_GUARD_IMAGE"
 TOOLBOX_IMAGE=$(lab_build lab/toolbox "$LAB_ROOT/tools/toolbox")
 ok "$TOOLBOX_IMAGE   (probe pods for the checks)"
 
@@ -67,6 +68,8 @@ step "Sterling & Vance: workspace, front door, agent, Cross App Access"
 xaa_secrets
 K delete secret ledgerline-client -n agentgateway-system --ignore-not-found >/dev/null   # earlier labs: a shared secret
 MCP_EXCHANGE_WORKSPACE=$(mcp_exchange bob-workspace); export MCP_EXCHANGE_WORKSPACE
+# the relationship guard's key to S&V's OpenFGA (layer 48)
+secret_apply agentgateway-system openfga-guard token="$(lab_secret SV_OPENFGA_KEY)"
 apply_tmpl "$D"/manifests/*.yaml
 # earlier labs: the tools sat behind a waypoint of their own in sv-mcp
 K label namespace sv-mcp istio.io/use-waypoint- >/dev/null 2>&1 || true
@@ -103,7 +106,7 @@ else
 fi
 K delete secret llm-via-gateway -n sv-agents --ignore-not-found >/dev/null   # earlier labs: a placeholder model key
 rollout sv-mcp deploy/bob-workspace
-rollout agentgateway-system deploy/mcp-guard deploy/idtoken-exchange
+rollout agentgateway-system deploy/mcp-guard deploy/relationship-guard deploy/idtoken-exchange
 wait_for "bob-assistant Ready" 60 5 K wait sandboxagent/bob-assistant -n sv-agents --for=condition=Ready --timeout=2s
 apply_kustomize "$D/desk"
 for a in meeting-prep market-brief compliance-check; do

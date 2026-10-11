@@ -1,0 +1,50 @@
+# S&V's entitlements for story 1, kept in OpenFGA by the continuity controller
+# (model: platform/48-relationships/model.yaml). The gateway checks them on
+# every tool call: Bob's agents act for advisors, advisors may call the
+# workspace, and Bob sees the clients in his own book. Group membership is the
+# IdP's, from the token; nothing here copies it.
+apiVersion: continuity.lab.solo.io/v1alpha1
+kind: Relationship
+metadata: {name: bob-assistant-acts-for-advisors, namespace: sv-identity}
+spec: {model: sterling-vance, user: "group:advisors#member", relation: acts_for, object: agent:sv-agents.bob-assistant}
+---
+apiVersion: continuity.lab.solo.io/v1alpha1
+kind: Relationship
+metadata: {name: advisor-desk-acts-for-advisors, namespace: sv-identity}
+spec: {model: sterling-vance, user: "group:advisors#member", relation: acts_for, object: agent:sv-agents.advisor-desk}
+---
+# AI clients outside the mesh (Claude Code, an IDE) at the firm's front door
+apiVersion: continuity.lab.solo.io/v1alpha1
+kind: Relationship
+metadata: {name: ai-clients-act-for-advisors, namespace: sv-identity}
+spec: {model: sterling-vance, user: "group:advisors#member", relation: acts_for, object: agent:client.sv-mcp-client}
+---
+apiVersion: continuity.lab.solo.io/v1alpha1
+kind: Relationship
+metadata: {name: advisors-call-bob-workspace, namespace: sv-identity}
+spec: {model: sterling-vance, user: "group:advisors#member", relation: caller, object: mcp_server:bob-workspace}
+---
+apiVersion: continuity.lab.solo.io/v1alpha1
+kind: Relationship
+metadata: {name: bob-advises-sv-bob, namespace: sv-identity}
+spec: {model: sterling-vance, user: "user:bob@${SV_DOMAIN}", relation: advisor, object: book:sv-bob}
+---
+apiVersion: continuity.lab.solo.io/v1alpha1
+kind: Relationship
+metadata: {name: c-1001-in-sv-bob, namespace: sv-identity}
+spec: {model: sterling-vance, user: "book:sv-bob", relation: book, object: client:c-1001}
+---
+apiVersion: continuity.lab.solo.io/v1alpha1
+kind: Relationship
+metadata: {name: c-1002-in-sv-bob, namespace: sv-identity}
+spec: {model: sterling-vance, user: "book:sv-bob", relation: book, object: client:c-1002}
+---
+apiVersion: continuity.lab.solo.io/v1alpha1
+kind: Relationship
+metadata: {name: c-1003-in-sv-bob, namespace: sv-identity}
+spec: {model: sterling-vance, user: "book:sv-bob", relation: book, object: client:c-1003}
+---
+apiVersion: continuity.lab.solo.io/v1alpha1
+kind: Relationship
+metadata: {name: c-1004-in-sv-bob, namespace: sv-identity}
+spec: {model: sterling-vance, user: "book:sv-bob", relation: book, object: client:c-1004}

@@ -1,6 +1,6 @@
 // continuity-controller: keeps a Keycloak broker signing users in through the
 // first healthy upstream IdP of an IdentityContinuity chain, and workload
-// profiles' status. "sync" runs one scheduled profile sync (the controller's
+// profiles' status, and RelationshipModels in OpenFGA. "sync" runs one scheduled profile sync (the controller's
 // CronJob); "gate" is the assurance gate workloads' policy points ask.
 package main
 
@@ -19,6 +19,7 @@ import (
 	v1 "github.com/nickgamb/solo-lab/apps/continuity/api/v1alpha1"
 	"github.com/nickgamb/solo-lab/apps/continuity/internal/controller"
 	"github.com/nickgamb/solo-lab/apps/continuity/internal/probe"
+	"github.com/nickgamb/solo-lab/apps/continuity/internal/relationships"
 )
 
 func main() {
@@ -28,7 +29,7 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "gate" {
 		os.Exit(runGate(os.Args[2:]))
 	}
-	var ns, caFile, metrics, health, syncImage, syncCA, extAuthNS string
+	var ns, caFile, metrics, health, syncImage, syncCA, extAuthNS, openfgaURL string
 	var leaderElect bool
 	flag.StringVar(&ns, "namespace", os.Getenv("POD_NAMESPACE"), "namespace to watch (IdentityContinuity and credential Secrets)")
 	flag.StringVar(&caFile, "ca-file", "", "extra CA bundle to trust for upstream probes (system roots always apply)")
@@ -38,6 +39,7 @@ func main() {
 	flag.StringVar(&syncImage, "sync-image", os.Getenv("SYNC_IMAGE"), "image of the scheduled profile sync (this controller's)")
 	flag.StringVar(&syncCA, "sync-ca-configmap", "", "ConfigMap (ca.crt) the profile sync trusts besides the system roots")
 	flag.StringVar(&extAuthNS, "extauth-namespace", os.Getenv("EXTAUTH_NAMESPACE"), "namespace of Solo's ext-auth service, which enforces the assurance rules (Enterprise); empty: the assurance gate does")
+	flag.StringVar(&openfgaURL, "openfga-url", os.Getenv("OPENFGA_URL"), "OpenFGA's HTTP API, where RelationshipModels are kept (its pre-shared key in OPENFGA_TOKEN); empty: relationships aren't synced")
 	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -83,6 +85,13 @@ func main() {
 	if err := (&controller.WorkloadProfileReconciler{Client: mgr.GetClient(), Continuity: r}).SetupWithManager(mgr); err != nil {
 		log.Error(err, "workload profile controller")
 		os.Exit(1)
+	}
+	if openfgaURL != "" {
+		fga := relationships.New(openfgaURL, os.Getenv("OPENFGA_TOKEN"))
+		if err := (&controller.RelationshipReconciler{Client: mgr.GetClient(), FGA: fga, DeleteStore: fga.DeleteStore}).SetupWithManager(mgr); err != nil {
+			log.Error(err, "relationships controller")
+			os.Exit(1)
+		}
 	}
 	_ = mgr.AddHealthzCheck("ping", healthz.Ping)
 	_ = mgr.AddReadyzCheck("ping", healthz.Ping)

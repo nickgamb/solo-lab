@@ -1,0 +1,38 @@
+# OpenFGA: S&V's entitlements store, highly available on Postgres. Only the
+# relationship guard (at the gateway) and the continuity controller call it,
+# each with the pre-shared key (Secret openfga-authn).
+replicaCount: 3
+
+datastore:
+  engine: postgres
+  uriSecret: openfga-db-app          # CloudNativePG's app Secret (key uri)
+  # each pod migrates the schema first (OpenFGA's own image, non-root):
+  # idempotent, and no root-running wait-for container or separate Job
+  applyMigrations: true
+  migrationType: initContainer
+
+authn:
+  method: preshared
+  preshared: {keysSecret: openfga-authn}
+
+playground: {enabled: false}         # no unauthenticated UI
+log: {format: json}
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile: {type: RuntimeDefault}
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities: {drop: [ALL]}
+  readOnlyRootFilesystem: true
+
+resources:
+  requests: {cpu: 50m, memory: 64Mi}
+  limits: {memory: 256Mi}
+
+topologySpreadConstraints:
+- maxSkew: 1
+  topologyKey: topology.kubernetes.io/zone
+  whenUnsatisfiable: ScheduleAnyway
+  labelSelector:
+    matchLabels: {app.kubernetes.io/name: openfga, app.kubernetes.io/instance: openfga}

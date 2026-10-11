@@ -43,6 +43,14 @@ check() {  # check <expect-regex> <label> <ns>[/<pod>] <probe args...>
   elif echo "$out" | grep -qE "$want"; then res ok "$label"
   else res no "$label" "$out"; fi
 }
+# check_until <seconds> <cond> <label> <ns>[/<pod>] <probe args...>: as check,
+# polled until cond (a function of the probe's last line) holds: what reaches
+# OpenFGA through the continuity controller takes a moment
+check_until() {
+  local secs=$1 cond=$2 label=$3 ns=${4%%/*} pod=probe out t=0; [[ $4 == */* ]] && pod=${4#*/}; shift 4
+  until out=$(probe_exec "$ns/$pod" "$@" 2>&1 | tail -1); "$cond" "$out" || [ $t -ge "$secs" ]; do sleep 2; t=$((t+2)); done
+  if "$cond" "$out"; then res ok "$label"; else res no "$label" "$out"; fi
+}
 step "Allowed: an S&V agent workload acting for Bob"
 check '"whoami"'                                "agent lists Bob's tools (as Bob)"            $AGENT $GW list --token "$BOB"
 check '\\"acting_for\\": \\"bob@.*\\"audience\\": \\"bob-workspace\\"' \
@@ -88,6 +96,36 @@ check 'http": 0|http": 40[13]|RBAC|isError": true|refused|reset|Broken pipe|Conn
                                                 "skip the front door: dial the workspace's Service with Bob's token" $AGENT http://bob-workspace-mcp.sv-mcp:3000/mcp call whoami '{}' --token "$BOB"
 check 'http": 0|http": 40[13]|RBAC|isError": true|refused|reset|Broken pipe|Connection' \
                                                 "skip the front door: dial a pod IP with Bob's token" $AGENT "http://$POD_IP:3000/mcp" call whoami '{}' --token "$BOB"
+
+step "Relationships: who may see which clients (OpenFGA, checked at the gateway)"
+RELS="$LAB_ROOT/demos/bob/manifests/06-relationships.yaml"
+on_exit "apply_tmpl $RELS; K scale deploy openfga -n sv-authz --replicas=3 >/dev/null 2>&1"
+expect_res '^True [0-9]+$' "S&V's relationships synced into OpenFGA by the continuity controller" \
+  "$(K get relm sterling-vance -n sv-identity -o jsonpath='{.status.conditions[?(@.type=="Synced")].status} {.status.relationships}')"
+all4() { echo "$1" | grep -q 'Alice Chen' && echo "$1" | grep -q 'Okafor'; }
+three() { echo "$1" | grep -q 'Alice Chen' && ! echo "$1" | grep -q 'Okafor'; }
+refused() { echo "$1" | grep -qE "$2"; }
+check_until 30 all4 "Bob's agent sees the four clients in his book (Bob advises book sv-bob)" $AGENT $GW call list_clients '{}' --token "$BOB"
+K delete rel c-1004-in-sv-bob -n sv-identity >/dev/null
+check_until 30 three "a client moved out of his book: gone from his agent's view, no other change" $AGENT $GW call list_clients '{}' --token "$BOB"
+no_okafor() { refused "$1" "isError\": true.*no client matching"; }
+check_until 10 no_okafor "and asking for that client by name finds nothing" $AGENT $GW call get_client '{"name": "Okafor"}' --token "$BOB"
+check_until 10 three "and a client list the caller sends itself is replaced by the gateway's" $AGENT $GW call list_clients '{}' --token "$BOB" --header "x-relationship-clients=c-1004"
+apply_tmpl "$RELS"
+check_until 30 all4 "back in his book: back in view" $AGENT $GW call list_clients '{}' --token "$BOB"
+K delete rel bob-assistant-acts-for-advisors -n sv-identity >/dev/null
+not_for() { refused "$1" "does not act for user:bob@"; }
+check_until 30 not_for "bob-assistant no longer acts for advisors: refused at the gateway, with the reason" $AGENT $GW call whoami '{}' --token "$BOB"
+apply_tmpl "$RELS"
+check_until 30 all4 "acting for advisors again: allowed" $AGENT $GW call list_clients '{}' --token "$BOB"
+# OpenFGA itself unreachable: refused, never let through
+K scale deploy openfga -n sv-authz --replicas=0 >/dev/null
+K wait pods -n sv-authz -l app.kubernetes.io/name=openfga --for=delete --timeout=60s >/dev/null 2>&1
+closed() { refused "$1" 'isError": true|"error": \{|http": 5[0-9][0-9]'; }
+check_until 20 closed "OpenFGA down: the call is refused (fail closed)" $AGENT $GW call list_clients '{}' --token "$BOB"
+K scale deploy openfga -n sv-authz --replicas=3 >/dev/null
+K rollout status deploy/openfga -n sv-authz --timeout=120s >/dev/null
+check_until 30 all4 "OpenFGA back: allowed" $AGENT $GW call list_clients '{}' --token "$BOB"
 
 step "The ops agents' tools (kagent-tools), behind the same front door"
 OPS_GW=http://ai-gateway.agentgateway-system/mcp/kagent-tools
@@ -234,7 +272,7 @@ if [ "$KAGENT_EDITION" = enterprise ]; then
     *) res no "an advisor (kagent Reader) changing an agent through the Solo UI: refused" "HTTP $code" ;; esac
   # a platform engineer (group platform-engineers) administers kagent
   DANA=$(ui_token dana dana-demo | jq -r '.access_token // empty') || DANA=""
-  code=$(CHAT_TOKEN=$DANA api DELETE /api/agents/sv-agents/no-such-agent | tail -1)
+  code=$([ -n "$DANA" ] && CHAT_TOKEN=$DANA api DELETE /api/agents/sv-agents/no-such-agent | tail -1) || code="no token for dana (sign-in failed)"
   if [ "$code" = 404 ]; then res ok "a platform engineer (kagent Admin) through the Solo UI: may change agents (404 for no such agent)"
   else res no "a platform engineer (kagent Admin) through the Solo UI: may change agents" "HTTP ${code:-no answer}"; fi
 fi

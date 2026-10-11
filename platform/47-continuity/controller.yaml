@@ -26,6 +26,16 @@ rules:
 - apiGroups: [continuity.lab.solo.io]
   resources: [workloadprofiles/status]
   verbs: [get, update, patch]
+# relationships: the controller keeps OpenFGA matching them (layer 48)
+- apiGroups: [continuity.lab.solo.io]
+  resources: [relationshipmodels, relationships]
+  verbs: [get, list, watch]
+- apiGroups: [continuity.lab.solo.io]
+  resources: [relationshipmodels]
+  verbs: [update, patch]           # its finalizer: the store goes with the model
+- apiGroups: [continuity.lab.solo.io]
+  resources: [relationshipmodels/status]
+  verbs: [get, update, patch]
 - apiGroups: [coordination.k8s.io]
   resources: [leases]
   verbs: [get, list, watch, create, update, patch]
@@ -152,10 +162,10 @@ spec:
   failurePolicy: Fail
   matchConstraints:
     resourceRules:
-    - {apiGroups: [continuity.lab.solo.io], apiVersions: [v1alpha1], operations: [UPDATE], resources: [workloadprofiles/status]}
+    - {apiGroups: [continuity.lab.solo.io], apiVersions: [v1alpha1], operations: [UPDATE], resources: [workloadprofiles/status, relationshipmodels/status]}
   validations:
   - expression: "request.userInfo.username == 'system:serviceaccount:sv-identity:continuity-controller'"
-    message: "only the continuity controller writes a workload profile's status"
+    message: "only the continuity controller writes a workload profile's or relationship model's status"
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
@@ -258,6 +268,10 @@ spec:
           valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
         # Enterprise: the assurance rules go to Solo's ext-auth service (extauth.yaml)
         - {name: EXTAUTH_NAMESPACE, value: "${ASSURANCE_EXTAUTH_NS}"}
+        # relationships: S&V's OpenFGA (layer 48), its pre-shared key
+        - {name: OPENFGA_URL, value: "http://openfga.sv-authz.svc:8080"}
+        - name: OPENFGA_TOKEN
+          valueFrom: {secretKeyRef: {name: openfga-client, key: token}}
         ports:
         - {name: metrics, containerPort: 8080}
         - {name: health, containerPort: 8081}

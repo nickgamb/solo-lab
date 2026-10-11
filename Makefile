@@ -34,7 +34,7 @@ observatory-verify: ## what the Observatory's admins may and may not change (RBA
 	@./platform/90-observatory/verify.sh
 tour: ## drive every story end to end, paced, to watch live in the Observatory
 	@./scripts/tour.sh
-reset: ## rewind every demo to a first run (grants, terms, agent key, follow-ups)
+reset: ## rewind every demo to a first run (grants, terms, agent key, follow-ups, relationships)
 	@./scripts/reset.sh
 
 ## ---- day to day -------------------------------------------------------------

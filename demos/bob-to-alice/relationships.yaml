@@ -1,0 +1,8 @@
+# Story 2's one entitlement on S&V's side: Alice's vault holds client c-1001
+# (Alice Chen, in Bob's book), so only her advisor's agent may call it. Her
+# consent stays hers, at Meridian (UMA); this only keeps every other advisor
+# from asking her.
+apiVersion: continuity.lab.solo.io/v1alpha1
+kind: Relationship
+metadata: {name: alice-vault-holds-c-1001, namespace: sv-identity}
+spec: {model: sterling-vance, user: "client:c-1001", relation: holds, object: mcp_server:alice-vault}
