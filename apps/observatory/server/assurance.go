@@ -589,30 +589,6 @@ func (a *Assurance) Evaluate(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, io.LimitReader(resp.Body, 4<<20))
 }
 
-// Policy (GET /api/assurance/{ns}/{name}/policy): the gate's decision
-// logic, the Rego it decides every request with, as text. Read-only: the
-// rules are what people edit.
-func (a *Assurance) Policy(w http.ResponseWriter, r *http.Request) {
-	g := a.evaluateGate(w, r)
-	if g == nil {
-		return
-	}
-	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, g.url("/v1/policy"), nil)
-	resp, err := a.http.Do(req)
-	if err != nil {
-		http.Error(w, "the assurance gate didn't answer: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != http.StatusOK {
-		http.Error(w, fmt.Sprintf("the assurance gate's policy answer: %s %s", resp.Status, strings.TrimSpace(string(body))), http.StatusBadGateway)
-		return
-	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = w.Write(body)
-}
-
 // evaluateGate: the gate serving the request's chain, by its evaluate port;
 // nil (with the error written) when there's no such chain or gate.
 func (a *Assurance) evaluateGate(w http.ResponseWriter, r *http.Request) *GateRef {

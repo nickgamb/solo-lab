@@ -31,6 +31,8 @@ expect '^no$' "may not create a pod" "$(can create pods -n kagent)"
 expect '^no$' "may not exec into a pod" "$(can create pods/exec -n sv-identity)"
 expect '^no$' "may not change an agent" "$(can patch agents.kagent.dev -n sv-agents)"
 expect '^no$' "may not change a ConfigMap (realm imports)" "$(can patch configmaps -n sv-identity)"
+expect '^yes yes$' "may change the assurance decision logic (ConfigMap assurance-policy, by name)" \
+  "$(can update configmaps/assurance-policy -n sv-identity) $(can update configmaps/assurance-policy -n agentgateway-system)"
 expect '^no$' "may not change gateway parameters (proxy images)" "$(can patch agentgatewayparameters.agentgateway.dev -n agentgateway-system)"
 expect '^no$' "may not grant itself a role" "$(can create clusterrolebindings)"
 expect '^no$' "may not change admission policy" "$(can patch validatingadmissionpolicies.admissionregistration.k8s.io)"

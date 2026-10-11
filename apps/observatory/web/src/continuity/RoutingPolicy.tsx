@@ -1,10 +1,11 @@
 import { lazy, Suspense, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { getResource, isConflict, putContinuity, type IdentityContinuity } from '../api'
+import { isConflict, putContinuity, type IdentityContinuity } from '../api'
 import { Guard } from '../topology/DetailsPanel'
 import { fromCode, sameRules, toCode, type CodeError, type RoutingRule } from './routingCode'
 
 const CodeEditor = lazy(() => import('./CodeEditor'))
+const ConfigEditor = lazy(() => import('../topology/ConfigEditor').then(m => ({ default: m.ConfigEditor })))
 
 type Tab = 'rules' | 'policy'
 const TABS: [Tab, string][] = [['rules', 'Rules'], ['policy', 'Gateway policy']]
@@ -12,9 +13,10 @@ const TABS: [Tab, string][] = [['rules', 'Rules'], ['policy', 'Gateway policy']]
 // RoutingPolicy: which of the firm's IdPs each sign-in goes to, decided at
 // the gateway. Rules: each rule's CEL as written, its IdPs in order of
 // preference, saved to the chain (spec.routing.rules) as the signed-in
-// admin. Gateway policy: what the gateway runs now, the policy the
-// continuity controller writes from those rules and the chain's health,
-// read-only (the controller rewrites it on every failover).
+// admin. Gateway policy: what the gateway runs now, edited and applied as
+// the signed-in admin; the continuity controller owns its :path
+// transformation (from those rules and the chain's health, rewritten on
+// every failover), the rest is the admin's.
 export function RoutingPolicy({ ic, onSaved, onClose }: { ic: IdentityContinuity; onSaved: (ic: IdentityContinuity) => void; onClose: () => void }) {
   const ns = ic.metadata.namespace, chain = ic.metadata.name
   const routing = ic.spec.routing
@@ -23,7 +25,6 @@ export function RoutingPolicy({ ic, onSaved, onClose }: { ic: IdentityContinuity
   const [code, setCode] = useState(() => toCode(routing?.rules ?? []))
   const [errs, setErrs] = useState<CodeError[]>()
   const [tab, setTab] = useState<Tab>('rules')
-  const [policy, setPolicy] = useState<{ yaml?: string; error?: string }>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string; conflict?: boolean }>()
   const [busy, setBusy] = useState(false)
   const [rv, setRv] = useState(ic.metadata.resourceVersion)
@@ -32,18 +33,8 @@ export function RoutingPolicy({ ic, onSaved, onClose }: { ic: IdentityContinuity
   const parsed = fromCode(code, known)
   const dirty = !parsed.rules || !sameRules(parsed.rules, rules)
 
-  // the live policy, read again on Refresh and after a save
-  const ref = routing?.policy
-  const policyKey = ref ? [ref.apiVersion, ref.kind, ref.namespace, ref.name].join('|') : ''
+  // the live policy, loaded again after the rules are saved
   const [reads, setReads] = useState(0)
-  useEffect(() => {
-    if (!policyKey) return
-    const [apiVersion, kind, namespace, name] = policyKey.split('|')
-    let live = true
-    getResource(new URLSearchParams({ apiVersion, kind, namespace, name }))
-      .then(r => { if (live) setPolicy({ yaml: r.yaml }) }, e => { if (live) setPolicy({ error: (e as Error).message }) })
-    return () => { live = false }
-  }, [policyKey, reads])
   const loadPolicy = () => setReads(n => n + 1)
 
   const reset = () => { setCode(toCode(rules)); setErrs(undefined); setMsg(undefined) }
@@ -107,8 +98,10 @@ export function RoutingPolicy({ ic, onSaved, onClose }: { ic: IdentityContinuity
           <span className="grow" />
           {routing && <span className="subtle small mono" title="the gateway policy these rules are written into">{routing.policy.kind} {routing.policy.namespace}/{routing.policy.name}</span>}
           {dirty && <span className="chip warn">unsaved</span>}
-          <button className="btn small ghost" disabled={!dirty || busy} onClick={reset}>Reset</button>
-          <button className="btn small primary" disabled={!dirty || busy || !routing} onClick={save}>Save</button>
+          {tab === 'rules' && <>
+            <button className="btn small ghost" disabled={!dirty || busy} onClick={reset}>Reset</button>
+            <button className="btn small primary" disabled={!dirty || busy || !routing} onClick={save}>Save</button>
+          </>}
           <button className="btn small" onClick={close} title="Close (Esc)">Close</button>
         </header>
         {msg && (
@@ -159,18 +152,17 @@ export function RoutingPolicy({ ic, onSaved, onClose }: { ic: IdentityContinuity
           {tab === 'policy' && (
             <div className="cm-code">
               <p className="subtle small">
-                What the gateway runs on every sign-in now: the continuity controller writes the <span className="mono">:path</span> transformation
-                from the rules and the chain's health, and rewrites it on every failover. Read-only here; edit the rules.
-                {' '}<button className="btn small ghost" onClick={loadPolicy}>Refresh</button>
+                What the gateway runs on every sign-in now, applied as you. The continuity controller owns
+                the <span className="mono">:path</span> transformation: it writes it from the rules and the chain's health, and
+                rewrites it on every failover, so change routing in Rules. Everything else in the policy is yours.
               </p>
-              {policy.error && <div className="note bad">{policy.error}</div>}
-              <div className="monaco">
+              {routing && (
                 <Guard>
                   <Suspense fallback={<div className="subtle small">Loading editor…</div>}>
-                    <CodeEditor value={policy.yaml ?? ''} onChange={() => {}} language="yaml" readOnly />
+                    <ConfigEditor key={reads} target={routing.policy} />
                   </Suspense>
                 </Guard>
-              </div>
+              )}
             </div>
           )}
         </div>

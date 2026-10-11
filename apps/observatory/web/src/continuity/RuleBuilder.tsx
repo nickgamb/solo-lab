@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { isConflict, putContinuity, putSecret, type ContinuitySpec, type IdentityContinuity, type Tier, type TierStatus } from '../api'
+import { isConflict, putContinuity, putSecret, type ContinuitySpec, type IdentityContinuity, type RelationshipModelPhase, type Tier, type TierStatus } from '../api'
 import { AssuranceRules } from './AssuranceRules'
 import { enforced } from './rulesCode'
 import { DirectorySync } from './DirectorySync'
+import { Relationships } from './Relationships'
 import { RoutingPolicy } from './RoutingPolicy'
 import { routingSummary } from './routingCode'
 import { clone, noFill, stable, syncSummary } from './mapping'
@@ -24,8 +25,10 @@ function norm(s: ContinuitySpec): string {
 // RuleBuilder edits the failover chain declaratively: IdP order, what
 // counts as a failure, draining, health thresholds and failback. Saving
 // writes the IdentityContinuity spec as the signed-in admin; the continuity
-// controller does the rest.
-export function RuleBuilder({ ic, broker, profiles }: { ic: IdentityContinuity; broker: string; profiles: { name: string; phase?: string; mode?: string }[] }) {
+// controller does the rest. models: the RelationshipModels in its namespace.
+export function RuleBuilder({ ic, broker, profiles, models }: {
+  ic: IdentityContinuity; broker: string; profiles: { name: string; phase?: string; mode?: string }[]; models: RelationshipModelPhase[]
+}) {
   const ns = ic.metadata.namespace
   const [spec, setSpec] = useState<ContinuitySpec>(() => clone(ic.spec))
   const [base, setBase] = useState(() => norm(ic.spec))
@@ -44,6 +47,7 @@ export function RuleBuilder({ ic, broker, profiles }: { ic: IdentityContinuity; 
   const [mapping, setMapping] = useState(false)
   const [rules, setRules] = useState(false)
   const [routes, setRoutes] = useState(false)
+  const [relationships, setRelationships] = useState(false)
   const staged = useMemo(() => new Set(secrets.current.keys()), [secretsVersion]) // eslint-disable-line react-hooks/exhaustive-deps
   const dirty = norm(spec) !== base || staged.size > 0
 
@@ -196,6 +200,14 @@ export function RuleBuilder({ ic, broker, profiles }: { ic: IdentityContinuity; 
         <span className="subtle small">{assuranceSummary(ic, profiles)}</span>
       </div>
       {rules && <AssuranceRules ic={ic} onClose={() => setRules(false)} />}
+      {!!models.length && (
+        <div className="cm-open">
+          <button className="btn small" onClick={() => setRelationships(true)}
+            title="The entitlements the gateway checks on every tool call: which agents act for whom, who may call each MCP server and see each client">Relationships</button>
+          <span className="subtle small">{relationshipSummary(models)}</span>
+        </div>
+      )}
+      {relationships && !!models.length && <Relationships models={models} onClose={() => setRelationships(false)} />}
 
       <div className="label" style={{ marginTop: 18 }}>Health checks</div>
       <div className="grid2">
@@ -229,6 +241,11 @@ function assuranceSummary(ic: IdentityContinuity, profiles: { name: string; phas
   const closed = profiles.filter(p => p.phase === 'FailedClosed' && enforced(p)).length
   const min = ic.spec.assurancePolicy?.minimum
   return [`${profiles.length} rule${profiles.length === 1 ? '' : 's'}`, min && `default ${min}`, closed && `${closed} failing closed`].filter(Boolean).join(' · ')
+}
+
+function relationshipSummary(models: RelationshipModelPhase[]): string {
+  const n = models.reduce((a, m) => a + m.relationships, 0)
+  return `${n} relationship${n === 1 ? '' : 's'} · ${models.every(m => m.synced === 'True') ? 'synced' : 'not synced'}`
 }
 
 // NumField: a whole number, at least 1. While it's being typed in, an empty

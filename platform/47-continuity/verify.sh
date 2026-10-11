@@ -193,6 +193,46 @@ expect '^[0-9]+s SlowResponse$' "failoverWhen latencyAboveMs=1: slow counts, fai
 K patch idc "$IC" -n "$NS" --type json -p "[{\"op\":\"remove\",\"path\":\"/spec/tiers/$KI/failoverWhen/latencyAboveMs\"}]" >/dev/null
 expect '^[0-9]+s$' "rule removed: back to $T" "$(within 35 is_active "$T")"
 
+step "Decision logic: edited live in ConfigMap assurance-policy"
+# The gate polls the ConfigMap: an edit that compiles decides the next
+# request, one that doesn't is refused and the last good module kept. Asked
+# through its evaluate API, for a session from an IdP not in the chain (the
+# default rule's reason). The edits touch data.assurance.decision only, so
+# Solo's ext-auth service (Enterprise, data.assurance.extauth) is unaffected.
+PNS=${ASSURANCE_EXTAUTH_NS:-sv-identity}
+if K get configmap assurance-policy -n "$PNS" -o jsonpath='{.data.policy\.rego}' >"$TMPD/policy.rego" 2>/dev/null && [ -s "$TMPD/policy.rego" ]; then
+  set_policy() { K patch configmap assurance-policy -n "$PNS" --type merge -p "$(jq -n --rawfile r "$1" '{data: {"policy.rego": $r}}')" >/dev/null; }
+  on_exit "set_policy $TMPD/policy.rego"
+  gp=$(free_port); port_forward "$NS" assurance-gate "$gp" 9002
+  reason() {
+    curl -s "http://127.0.0.1:$gp/v1/evaluate" -H 'content-type: application/json' \
+      --data "{\"continuity\": \"$IC\", \"session\": {\"idp\": \"verify-nobody\"}}" | jq -r '.rules[] | select(.name=="") | .session.reason'
+  }
+  policy_header() { curl -s -D - -o /dev/null "http://127.0.0.1:$gp/v1/policy" | awk -v h="$1:" 'tolower($1)==h {$1=""; sub(/^ /, ""); print}' | tr -d '\r'; }
+  rv() { K get configmap assurance-policy -n "$PNS" -o jsonpath='{.metadata.resourceVersion}'; }
+  is_reason() { [ "$(reason)" = "$1" ]; }
+  base="session from verify-nobody, which isn't in the chain" edited="verify: edited live"
+  expect "^$base\$" "the gate decides with the ConfigMap's module" "$(reason)"
+  sed 's/^decision := decide(\(.*\))$/decision := object.union(decide(\1), {"reason": "'"$edited"'"})/' "$TMPD/policy.rego" >"$TMPD/edited.rego"
+  if cmp -s "$TMPD/policy.rego" "$TMPD/edited.rego"; then
+    skipped "the ConfigMap's module has no line 'decision := decide(...)' to edit: live edit checks skipped"
+  else
+    set_policy "$TMPD/edited.rego"; v=$(rv)
+    expect '^[0-9]+s$' "an edit that compiles decides the next request" "$(within 20 is_reason "$edited")"
+    expect "@$v\$" "the gate names the version it runs" "$(policy_header x-assurance-policy)"
+    sed 's/^decision := /decision_off := /' "$TMPD/edited.rego" >"$TMPD/bad.rego"
+    set_policy "$TMPD/bad.rego"; v=$(rv)
+    refused() { policy_header x-assurance-policy-error | grep -q "resourceVersion $v refused"; }
+    expect '^[0-9]+s$' "a module without data.assurance.decision is refused (X-Assurance-Policy-Error)" "$(within 20 refused)"
+    expect "^$edited\$" "the last good module keeps deciding" "$(reason)"
+    set_policy "$TMPD/policy.rego"
+    expect '^[0-9]+s$' "restored: the module as it was decides again" "$(within 20 is_reason "$base")"
+    expect '^$' "nothing refused" "$(policy_header x-assurance-policy-error)"
+  fi
+else
+  res no "ConfigMap $PNS/assurance-policy with key policy.rego (make layer-47)" "$(K get configmap assurance-policy -n "$PNS" 2>&1)"
+fi
+
 step "Routing: the gateway decides which IdP each sign-in goes to"
 # route_is <rule> <idp>: the rule's IdP now, as the controller wrote it ("" = the active IdP's)
 route_is() { [ "$(idc | jq -r --arg n "$1" '.status.routing[]? | select(.name==$n) | .idp // ""')" = "$2" ]; }

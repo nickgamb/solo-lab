@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { checkTrust, deleteProfile, evaluate, getAssurance, getAssuranceLogic, isConflict, putContinuity, putPolicyPoint, putProfile,
-  type AssuranceView, type EvalSession, type Evaluation, type IdentityContinuity } from '../api'
+import { checkTrust, deleteProfile, evaluate, getAssurance, getAssuranceLogic, isConflict, putAssuranceLogic, putContinuity, putPolicyPoint, putProfile,
+  type AssuranceLogic, type AssuranceView, type EvalSession, type Evaluation, type IdentityContinuity } from '../api'
 import { Guard } from '../topology/DetailsPanel'
 import { clone, critClass, draftOf, DURATION, fromCode, idpLabel, phaseChip, pointKey, refOf, same, toCode, type CodeError, type Draft } from './rulesCode'
 import { IdpForm, RuleForm, WhatIf } from './RuleForms'
@@ -19,7 +19,8 @@ const NAME = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
 // opens in the same form; what a rule decides is the assurance gate's own
 // answer (its evaluate API), for the rules as edited. Saved as the
 // signed-in admin: the chain, each rule, and the gateway policies that ask
-// the gate for one.
+// the gate for one. The Code tab also edits the decision logic itself (the
+// Rego both runtimes run), saved on its own.
 export function AssuranceRules({ ic, onClose }: { ic: IdentityContinuity; onClose: () => void }) {
   const ns = ic.metadata.namespace, chain = ic.metadata.name
   const [view, setView] = useState<AssuranceView>()
@@ -31,9 +32,11 @@ export function AssuranceRules({ ic, onClose }: { ic: IdentityContinuity; onClos
   const [code, setCode] = useState('')
   const [codeBase, setCodeBase] = useState('')
   const [codeErrs, setCodeErrs] = useState<CodeError[]>()
-  // the Code tab shows the rules, or the gate's decision logic they feed
+  // the Code tab shows the rules, or the decision logic they feed
   const [codeView, setCodeView] = useState<'rules' | 'logic'>('rules')
-  const [logic, setLogic] = useState<{ text?: string; error?: string }>()
+  const [logic, setLogic] = useState<{ view?: AssuranceLogic; text: string; error?: string }>()
+  const [logicErrs, setLogicErrs] = useState<CodeError[]>()
+  const [logicMsg, setLogicMsg] = useState<{ ok: boolean; text: string; conflict?: boolean }>()
   const [ev, setEv] = useState<Evaluation>()
   const [evErr, setEvErr] = useState<string>()
   const [msg, setMsg] = useState<{ ok: boolean; text: string; conflict?: boolean }>()
@@ -100,10 +103,30 @@ export function AssuranceRules({ ic, onClose }: { ic: IdentityContinuity; onClos
     setTab(next)
     return true
   }
-  const loadLogic = () => {
-    getAssuranceLogic(ns, chain).then(text => setLogic({ text }), e => setLogic({ error: (e as Error).message }))
+  const logicDirty = !!logic?.view && logic.text !== logic.view.text
+  const loadLogic = (discard = false) => {
+    if (!discard && logicDirty && !window.confirm('Discard the unsaved decision logic?')) return
+    setLogicErrs(undefined); setLogicMsg(undefined)
+    getAssuranceLogic(ns, chain).then(v => setLogic({ view: v, text: v.text }), e => setLogic({ text: '', error: (e as Error).message }))
   }
-  const showLogic = () => { setCodeView('logic'); if (!logic?.text) loadLogic() }
+  const showLogic = () => { setCodeView('logic'); if (!logic?.view) loadLogic() }
+  // the decision logic, on its own: compiled by the server first, at the
+  // version it was read
+  const saveLogic = async () => {
+    const v = logic?.view
+    if (!v?.resourceVersion || !logic) return
+    setBusy(true); setLogicMsg(undefined)
+    try {
+      const r = await putAssuranceLogic(ns, chain, v.resourceVersion, logic.text)
+      if ('errors' in r) { setLogicErrs(r.errors); return }
+      setLogicErrs(undefined)
+      setLogic({ view: { ...v, text: logic.text, resourceVersion: r.resourceVersion, running: undefined, refused: undefined }, text: logic.text })
+      setLogicMsg({ ok: true, text: 'Saved. The next decisions use it, within seconds.' })
+    } catch (e) {
+      setLogicMsg({ ok: false, text: (e as Error).message, conflict: isConflict(e) })
+    } finally { setBusy(false) }
+  }
+  const revertLogic = () => { if (logic?.view) { setLogic({ ...logic, text: logic.view.text }); setLogicErrs(undefined); setLogicMsg(undefined) } }
   const onTabKey = (e: ReactKeyboardEvent) => {
     const i = TABS.findIndex(([t]) => t === tab)
     const j = e.key === 'ArrowRight' ? (i + 1) % TABS.length : e.key === 'ArrowLeft' ? (i + TABS.length - 1) % TABS.length : -1
@@ -153,6 +176,7 @@ export function AssuranceRules({ ic, onClose }: { ic: IdentityContinuity; onClos
   }
   const close = () => {
     if (dirty && !window.confirm('Discard the unsaved assurance rules?')) return
+    if (!dirty && logicDirty && !window.confirm('Discard the unsaved decision logic?')) return
     onClose()
   }
   useEffect(() => {
@@ -328,9 +352,19 @@ export function AssuranceRules({ ic, onClose }: { ic: IdentityContinuity; onClos
                 <div className="row">
                   <div className="seg" role="radiogroup" aria-label="Code view">
                     <button role="radio" aria-checked={codeView === 'rules'} className={codeView === 'rules' ? 'on' : ''} onClick={() => setCodeView('rules')}>Rules (YAML)</button>
-                    <button role="radio" aria-checked={codeView === 'logic'} className={codeView === 'logic' ? 'on' : ''} onClick={showLogic}>Decision logic (Rego, read-only)</button>
+                    <button role="radio" aria-checked={codeView === 'logic'} className={codeView === 'logic' ? 'on' : ''} onClick={showLogic}>Decision logic (Rego)</button>
                   </div>
-                  {codeView === 'logic' && <button className="btn small ghost" onClick={loadLogic}>Refresh</button>}
+                  {codeView === 'logic' && (
+                    <>
+                      <span className="grow" />
+                      {logicDirty && <span className="chip warn">unsaved</span>}
+                      <button className="btn small ghost" disabled={busy} onClick={() => loadLogic()}>Refresh</button>
+                      {logic?.view?.name && <>
+                        <button className="btn small ghost" disabled={!logicDirty || busy} onClick={revertLogic}>Revert</button>
+                        <button className="btn small primary" disabled={!logicDirty || busy} onClick={saveLogic}>Save logic</button>
+                      </>}
+                    </>
+                  )}
                 </div>
                 {codeView === 'rules' ? (
                   <>
@@ -349,15 +383,33 @@ export function AssuranceRules({ ic, onClose }: { ic: IdentityContinuity; onClos
                   </>
                 ) : (
                   <>
-                    <p className="subtle small">What the assurance gate decides every request with: the rules, the chain and the session are its input. Read-only here; edit the rules.</p>
+                    <p className="subtle small">
+                      What every request is decided with: the rules, the chain and the session are its input.
+                      {logic?.view?.name && <> ConfigMap <span className="mono">{logic.view.namespace}/{logic.view.name}</span>; the gate and, on Enterprise, Solo's ext-auth service load it as saved. A module that doesn't compile isn't saved.</>}
+                      {logic?.view?.running && <> The gate runs <span className="mono">{logic.view.running}</span>.</>}
+                    </p>
                     {logic?.error && <div className="note bad">{logic.error}</div>}
+                    {logic?.view?.note && <div className="note bad">{logic.view.note}</div>}
+                    {logic?.view?.refused && <div className="note bad">The gate refused a newer version and decides with the last good one: {logic.view.refused}</div>}
+                    {logicMsg && (
+                      <div className={`note ${logicMsg.ok ? 'ok' : 'bad'}`}>
+                        {logicMsg.text}
+                        {logicMsg.conflict && <> <button className="btn small" onClick={() => loadLogic(true)}>Reload</button></>}
+                      </div>
+                    )}
                     <div className="monaco">
                       <Guard>
                         <Suspense fallback={<div className="subtle small">Loading editor…</div>}>
-                          <CodeEditor value={logic?.text ?? ''} onChange={() => {}} language="rego" readOnly />
+                          <CodeEditor value={logic?.text ?? ''} language="rego" markers={logicErrs} readOnly={!logic?.view?.name}
+                            onChange={v => { setLogic(l => (l ? { ...l, text: v } : l)); if (logicErrs) setLogicErrs(undefined) }} />
                         </Suspense>
                       </Guard>
                     </div>
+                    {logicErrs && (
+                      <ul className="note bad ar-errs" role="alert">
+                        {logicErrs.map((e, i) => <li key={i}><span className="mono">{e.line}:{e.col}</span> {e.message}</li>)}
+                      </ul>
+                    )}
                   </>
                 )}
               </div>

@@ -79,8 +79,10 @@ func main() {
 	cont := &Continuity{k: k, res: &Resources{k: k, admin: env("ADMIN_GROUP", "observatory-admins")}, traffic: traffic}
 	models := &Models{k: k, res: cont.res, traffic: traffic, index: func() *Index { return index.Load() }}
 	assurance := &Assurance{k: k, res: cont.res, index: func() *Index { return index.Load() }, http: &http.Client{Timeout: 10 * time.Second}}
+	rels := &Relationships{k: k, res: cont.res, http: &http.Client{Timeout: 10 * time.Second}}
 	if local {
 		assurance.gateURL = os.Getenv("ASSURANCE_GATE_URL") // a port-forward to the gate's evaluate port
+		rels.guardURL = os.Getenv("RELATIONSHIP_GUARD_URL") // a port-forward to the guard's evaluate port
 	}
 	sub := &Substrate{url: env("KAGENT_URL", ""), hc: &http.Client{Timeout: 5 * time.Second}, hub: hub, traffic: traffic,
 		index: func() *Index { return index.Load() }}
@@ -160,26 +162,8 @@ func main() {
 		}
 		writeJSON(w, traffic.Recent(r.URL.Query().Get("node"), limit))
 	})
-	api.HandleFunc("GET /api/resource", res.Get)
-	api.HandleFunc("POST /api/resource", res.Apply)
 	api.HandleFunc("GET /api/continuity", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, cont.View(index.Load())) })
-	api.HandleFunc("PUT /api/continuity/{ns}/{name}", cont.PutSpec)
-	api.HandleFunc("PUT /api/continuity/{ns}/secrets/{name}", cont.PutSecret)
-	api.HandleFunc("POST /api/continuity/partition", cont.Partition)
-	api.HandleFunc("POST /api/continuity/{ns}/{name}/sync", cont.RunSync)
-	api.HandleFunc("POST /api/continuity/{ns}/{name}/directory-test", cont.TestDirectory)
-	api.HandleFunc("GET /api/continuity/{ns}/jobs/{job}", cont.SyncJob)
-	api.HandleFunc("POST /api/continuity/{ns}/{name}/check-trust", assurance.CheckTrust)
-	api.HandleFunc("GET /api/assurance/{ns}/{name}", assurance.Get)
-	api.HandleFunc("POST /api/assurance/{ns}/{name}/evaluate", assurance.Evaluate)
-	api.HandleFunc("GET /api/assurance/{ns}/{name}/policy", assurance.Policy)
-	api.HandleFunc("PUT /api/assurance/{ns}/{name}/policy-points/{pns}/{pname}", assurance.PutPolicyPoint)
-	api.HandleFunc("PUT /api/assurance/{ns}/profiles/{profile}", assurance.PutProfile)
-	api.HandleFunc("DELETE /api/assurance/{ns}/profiles/{profile}", assurance.DeleteProfile)
-	api.HandleFunc("GET /api/models", models.Get)
-	api.HandleFunc("PUT /api/models/{ns}/{name}", models.Put)
-	api.HandleFunc("PUT /api/models/{ns}/secrets/{name}", models.PutSecret)
-	api.HandleFunc("POST /api/models/{ns}/{name}/outage", models.Outage)
+	apiRoutes(api, res, cont, assurance, rels, models)
 
 	web, _ := fs.Sub(webFS, "web")
 	mux := http.NewServeMux()
@@ -289,4 +273,34 @@ func lifecycle(t *TrafficStore, index func() *Index) func(string, *unstructured.
 			Summary: "pod " + p.GetNamespace() + "/" + p.GetName() + " " + what,
 			Attrs:   map[string]string{"pod": p.GetName(), "namespace": p.GetNamespace(), "node": str(p.Object, "spec", "nodeName")}})
 	}
+}
+
+// apiRoutes: the API's reads and writes on the cluster. Kept apart so a test
+// registers them all: two patterns the mux can't order panic at start.
+func apiRoutes(api *http.ServeMux, res *Resources, cont *Continuity, assurance *Assurance, rels *Relationships, models *Models) {
+	api.HandleFunc("GET /api/resource", res.Get)
+	api.HandleFunc("POST /api/resource", res.Apply)
+	api.HandleFunc("PUT /api/continuity/{ns}/{name}", cont.PutSpec)
+	api.HandleFunc("PUT /api/continuity/{ns}/secrets/{name}", cont.PutSecret)
+	api.HandleFunc("POST /api/continuity/partition", cont.Partition)
+	api.HandleFunc("POST /api/continuity/{ns}/{name}/sync", cont.RunSync)
+	api.HandleFunc("POST /api/continuity/{ns}/{name}/directory-test", cont.TestDirectory)
+	api.HandleFunc("GET /api/continuity/{ns}/jobs/{job}", cont.SyncJob)
+	api.HandleFunc("POST /api/continuity/{ns}/{name}/check-trust", assurance.CheckTrust)
+	api.HandleFunc("GET /api/assurance/{ns}/{name}", assurance.Get)
+	api.HandleFunc("POST /api/assurance/{ns}/{name}/evaluate", assurance.Evaluate)
+	api.HandleFunc("GET /api/assurance-logic/{ns}/{name}", assurance.Policy)
+	api.HandleFunc("PUT /api/assurance-logic/{ns}/{name}", assurance.PutPolicy)
+	api.HandleFunc("PUT /api/assurance/{ns}/{name}/policy-points/{pns}/{pname}", assurance.PutPolicyPoint)
+	api.HandleFunc("PUT /api/assurance/{ns}/profiles/{profile}", assurance.PutProfile)
+	api.HandleFunc("DELETE /api/assurance/{ns}/profiles/{profile}", assurance.DeleteProfile)
+	api.HandleFunc("GET /api/relationships/{ns}/{name}", rels.Get)
+	api.HandleFunc("PUT /api/relationships/{ns}/{name}/model", rels.SaveModel)
+	api.HandleFunc("POST /api/relationships/{ns}/{name}/relationships", rels.Add)
+	api.HandleFunc("DELETE /api/relationships/{ns}/{name}/relationships/{rel}", rels.Remove)
+	api.HandleFunc("POST /api/relationships/{ns}/{name}/evaluate", rels.Evaluate)
+	api.HandleFunc("GET /api/models", models.Get)
+	api.HandleFunc("PUT /api/models/{ns}/{name}", models.Put)
+	api.HandleFunc("PUT /api/models/{ns}/secrets/{name}", models.PutSecret)
+	api.HandleFunc("POST /api/models/{ns}/{name}/outage", models.Outage)
 }
