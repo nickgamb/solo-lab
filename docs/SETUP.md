@@ -101,6 +101,8 @@ admin consoles are off the edge; reach them with a port-forward
 | `EDITION`, `<PRODUCT>_EDITION`, `SOLO_LICENSE_KEY` | Solo Enterprise, all products or one at a time ([ENTERPRISE.md](ENTERPRISE.md)) |
 | `SOLO_<PRODUCT>_LICENSE_KEY` | a licence for one product, in place of `SOLO_LICENSE_KEY` |
 | `LAB_PASSWORD_GRANT` | (`config/lab.env`) the password grant on Alice's portal client |
+| `LAB_TLD`, `LAB_LISTEN_ADDRESS`, `LAB_CERT_ISSUER`, `SV_MAIL_DOMAIN` | (`config/lab.env`) the lab under public names with Let's Encrypt certificates, as on AWS ([AWS.md](AWS.md)) |
+| `AWS_*` | the lab on one EC2 instance: `make aws-up` ([AWS.md](AWS.md)) |
 
 `config/lab.env` holds the lab's shape: cluster name, node image, worker
 count, host ports, party domains, registry port; `config/oss.env` and

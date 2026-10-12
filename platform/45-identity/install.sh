@@ -60,7 +60,7 @@ KC_IMAGE="localhost:${LAB_REGISTRY_PORT}/$KC_IDJAG" \
   deploy_keycloak sv-identity "$SV_DOMAIN" https-sterling "$D/realm-sterling-vance.json" \
   token-exchange-standard,identity-assertion-jwt,identity-brokering-api:v2
 wait_for "https://idp.$SV_DOMAIN discovery" 30 3 \
-  sh -c "curl -sf --cacert '$LAB_CA_DIR/ca.crt' https://idp.$SV_DOMAIN/realms/sterling-vance/.well-known/openid-configuration >/dev/null"
+  sh -c "curl -sf --cacert '$LAB_TRUST' https://idp.$SV_DOMAIN/realms/sterling-vance/.well-known/openid-configuration >/dev/null"
 ok "issuer https://idp.$SV_DOMAIN/realms/sterling-vance  (admin: see .lab/secrets.env)"
 apply_tmpl "$D/gateway-grants.yaml"   # the firm's gateway may use the broker
 # The broker keeps its accounts in memory (a restart, as on a realm change,
@@ -95,7 +95,7 @@ workforce_realm "$D/realm-workforce.json" >"$LAB_STATE/realm/realm-workforce.jso
 KC_HOST=login \
   deploy_keycloak sv-workforce "$SV_DOMAIN" https-sterling "$LAB_STATE/realm/realm-workforce.json"
 wait_for "https://login.$SV_DOMAIN discovery" 30 3 \
-  sh -c "curl -sf --cacert '$LAB_CA_DIR/ca.crt' https://login.$SV_DOMAIN/realms/workforce/.well-known/openid-configuration >/dev/null"
+  sh -c "curl -sf --cacert '$LAB_TRUST' https://login.$SV_DOMAIN/realms/workforce/.well-known/openid-configuration >/dev/null"
 ok "issuer https://login.$SV_DOMAIN/realms/workforce  (bob / bob-demo + make totp; admin: see .lab/secrets.env)"
 
 step "Sterling & Vance contingency IdP, Keycloak $KEYCLOAK_VERSION (sv-contingency)"
@@ -112,7 +112,7 @@ contingency_realm "$D/realm-contingency.json" >"$LAB_STATE/realm/realm-contingen
 KC_HOST=login-dr \
   deploy_keycloak sv-contingency "$SV_DOMAIN" https-sterling "$LAB_STATE/realm/realm-contingency.json"
 wait_for "https://login-dr.$SV_DOMAIN discovery" 30 3 \
-  sh -c "curl -sf --cacert '$LAB_CA_DIR/ca.crt' https://login-dr.$SV_DOMAIN/realms/contingency/.well-known/openid-configuration >/dev/null"
+  sh -c "curl -sf --cacert '$LAB_TRUST' https://login-dr.$SV_DOMAIN/realms/contingency/.well-known/openid-configuration >/dev/null"
 ok "issuer https://login-dr.$SV_DOMAIN/realms/contingency  (bob / bob-demo; admin: see .lab/secrets.env)"
 
 step "Client secrets, in the namespace that uses each"

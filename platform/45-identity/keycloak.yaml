@@ -68,6 +68,7 @@ spec:
         # (e.g. an ID-JAG receiver fetching the issuing IdP's JWKS).
         - {name: KC_TRUSTSTORE_PATHS, value: /etc/lab-ca/ca.crt}
         - {name: SV_DOMAIN, value: "${SV_DOMAIN}"}
+        - {name: SV_MAIL_DOMAIN, value: "${SV_MAIL_DOMAIN}"}         # S&V: its users' email domain
         - {name: OPS_DOMAIN, value: "${OPS_DOMAIN}"}
         - {name: ALICE_DOMAIN, value: "${ALICE_DOMAIN}"}
         - {name: MERIDIAN_DOMAIN, value: "${MERIDIAN_DOMAIN}"}

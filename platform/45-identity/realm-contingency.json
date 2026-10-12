@@ -229,7 +229,7 @@
     {
       "username": "bob",
       "id": "5b0b0000-0000-4000-8000-00000000d0b0",
-      "email": "bob@${SV_DOMAIN}",
+      "email": "bob@${SV_MAIL_DOMAIN}",
       "firstName": "Bob",
       "lastName": "Reyes",
       "enabled": true,
@@ -248,7 +248,7 @@
     {
       "username": "carol",
       "id": "5b0b0000-0000-4000-8000-00000000d0ca",
-      "email": "carol@${SV_DOMAIN}",
+      "email": "carol@${SV_MAIL_DOMAIN}",
       "firstName": "Carol",
       "lastName": "Diaz",
       "enabled": true,
@@ -276,7 +276,7 @@
     {
       "username": "dana",
       "id": "5b0b0000-0000-4000-8000-00000000d0da",
-      "email": "dana@${SV_DOMAIN}",
+      "email": "dana@${SV_MAIL_DOMAIN}",
       "firstName": "Dana",
       "lastName": "Okafor",
       "enabled": true,

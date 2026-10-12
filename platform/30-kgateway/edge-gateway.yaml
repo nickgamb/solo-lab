@@ -55,13 +55,15 @@ spec:
       name: edge
   # One HTTPS listener per party. Each admits routes ONLY from namespaces of
   # that party, so Alice cannot publish *.meridian.lab and Meridian cannot
-  # publish *.alice.lab. Port 80 only redirects to HTTPS (redirect.yaml).
+  # publish *.alice.lab. Port 80 only redirects to HTTPS (redirect.yaml), and
+  # with Let's Encrypt also answers its HTTP-01 challenges, whose routes
+  # cert-manager adds in each party's certificate namespace.
   listeners:
   - name: http
     protocol: HTTP
     port: 80
     allowedRoutes:
-      namespaces: {from: Same}
+      namespaces: ${EDGE_HTTP_ROUTES}
   - name: https-ops
     protocol: HTTPS
     port: 443

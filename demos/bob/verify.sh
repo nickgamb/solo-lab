@@ -172,7 +172,7 @@ if [ "$AGW_EDITION" = enterprise ]; then
   ISSUER_CLIENT=$(issuer_client_token bob bob-demo | jq -r '.access_token // empty') || ISSUER_CLIENT=""
   if [ -z "$ISSUER_CLIENT" ]; then res no "an AI client registers itself and signs Bob in through the issuer" "no token"
   else
-    check '\"acting_for\": \"bob@.*\"audience\": \"bob-workspace\"' \
+    check '\\"acting_for\\": \\"bob@.*\\"audience\\": \\"bob-workspace\\"' \
                                                 "an AI client that registered itself, signed in through the issuer: whoami acts as bob" observability $FRONT call whoami '{}' --token "$ISSUER_CLIENT"
   fi
 fi
@@ -274,17 +274,17 @@ fi
 check 'http": 40[13]'                           "right token, wrong workload (observability)"      observability $XAA call account_info '{}' --token "$BOB"
 check 'http": 40[13]|refused|reset|Broken pipe|Connection' \
                                                 "ask the ID-token exchange directly (ai-gateway only)" $AGENT http://idtoken-exchange.agentgateway-system:8080/mcp call account_info '{}' --token "$BOB"
-check 'http": 40[13]|RBAC'                      "straight to Ledgerline with Bob's S&V token"      $AGENT https://mcp.ledgerline.lab/mcp call account_info '{}' --token "$BOB"
+check 'http": 40[13]|RBAC'                      "straight to Ledgerline with Bob's S&V token"      $AGENT https://mcp.$LEDGERLINE_DOMAIN/mcp call account_info '{}' --token "$BOB"
 if [ "$KGATEWAY_EDITION" = enterprise ]; then
-  code=$(curl -s -m 20 --cacert "$LAB_CA_DIR/ca.crt" -o /dev/null -w '%{http_code}' "https://mcp.ledgerline.lab/mcp?q=1%20union%20select%20password%20from%20users")
+  code=$(curl -s -m 20 --cacert "$LAB_TRUST" -o /dev/null -w '%{http_code}' "https://mcp.$LEDGERLINE_DOMAIN/mcp?q=1%20union%20select%20password%20from%20users")
   if [ "$code" = 403 ]; then res ok "SQL injection at the edge: refused by the WAF"
   else res no "SQL injection at the edge: refused by the WAF" "HTTP $code"; fi
 else
   skipped "SQL injection at the edge refused: the WAF is Solo Enterprise for kgateway's"
 fi
 # Ledgerline answers nothing without its own token: not even its tool list
-check 'http": 401'                              "Ledgerline with no token: 401, nothing listed" $AGENT https://mcp.ledgerline.lab/mcp list
-check 'http": 401'                              "a research call with no Ledgerline token: 401 at Ledgerline's gateway" $AGENT https://mcp.ledgerline.lab/mcp call sector_outlook '{"sector": "technology"}'
+check 'http": 401'                              "Ledgerline with no token: 401, nothing listed" $AGENT https://mcp.$LEDGERLINE_DOMAIN/mcp list
+check 'http": 401'                              "a research call with no Ledgerline token: 401 at Ledgerline's gateway" $AGENT https://mcp.$LEDGERLINE_DOMAIN/mcp call sector_outlook '{"sector": "technology"}'
 # and through Bob's agent itself, as in the chat (the model picks the tool)
 if ! why=$(llm_ready); then
   skipped "Bob's agent, in chat: needs the model ($why)"
@@ -350,7 +350,7 @@ fi
 ext() {  # ext <path> <body> [key]: the edge's answer, status last
   local h=()
   [ -n "${3:-}" ] && { printf 'authorization: Bearer %s' "$3" >"$TMPD/ext.h"; h=(-H @"$TMPD/ext.h"); }
-  curl -s -m 180 --cacert "$LAB_CA_DIR/ca.crt" -w '\n%{http_code}' "https://llm.$SV_DOMAIN$1" -H 'content-type: application/json' ${h[@]+"${h[@]}"} -d "$2"
+  curl -s -m 180 --cacert "$LAB_TRUST" -w '\n%{http_code}' "https://llm.$SV_DOMAIN$1" -H 'content-type: application/json' ${h[@]+"${h[@]}"} -d "$2"
 }
 msg='{"model": "any", "max_tokens": 400, "messages": [{"role": "user", "content": "Reply with exactly: hello"}]}'
 out=$(ext /v1/messages "$msg")

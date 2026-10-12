@@ -20,7 +20,7 @@ BOB=$(sso_token bob bob-demo | jq -r '.access_token // empty') || BOB=""
 ALICE=$(user_token alice-identity alice alice-portal "" alice alice-demo) || ALICE=""
 [ -n "$ALICE" ] || die "could not sign Alice in (alice-portal, password grant)"
 probe_pod "$KAGENT_UI_NS" "$KAGENT_UI_SA"; probe_pod sv-agents
-AS="https://as.$ALICE_DOMAIN"; CA=(--cacert "$LAB_CA_DIR/ca.crt")
+AS="https://as.$ALICE_DOMAIN"; CA=(--cacert "$LAB_TRUST")
 
 ask_bob() {  # ask_bob <question> -> the agent's last reply (what the UI shows), in a new session
   local body; body=$(jq -nc --arg q "$1" --arg c "$(new_uuid)" '{jsonrpc:"2.0",id:"1",method:"message/send",params:{message:{role:"user",kind:"message",messageId:(now|tostring),contextId:$c,parts:[{kind:"text",text:$q}]}}}')

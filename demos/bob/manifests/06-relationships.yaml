@@ -33,7 +33,7 @@ spec: {model: sterling-vance, user: "group:advisors#member", relation: caller, o
 apiVersion: continuity.lab.solo.io/v1alpha1
 kind: Relationship
 metadata: {name: bob-advises-sv-bob, namespace: sv-identity}
-spec: {model: sterling-vance, user: "user:bob@${SV_DOMAIN}", relation: advisor, object: book:sv-bob}
+spec: {model: sterling-vance, user: "user:bob@${SV_MAIL_DOMAIN}", relation: advisor, object: book:sv-bob}
 ---
 apiVersion: continuity.lab.solo.io/v1alpha1
 kind: Relationship

@@ -87,6 +87,9 @@ make verify               # rewinds the demos, then every enforcement check
 `make down` deletes the cluster and keeps the image caches and the CA, so the
 next `make up` is much faster; `make nuke` removes those too.
 
+The same lab runs on one EC2 instance under public names with `make aws-up`
+([AWS.md](docs/AWS.md)).
+
 ## What you can open
 
 | URL | What | Sign in |

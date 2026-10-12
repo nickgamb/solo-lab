@@ -34,7 +34,7 @@ idp_secret() {
 # issuer (*.<LAB_TLD>) is checked against the lab CA, not the host's store.
 idp_discover() {
   local ca=()
-  idp_internal "$1" && ca=(--cacert "$LAB_CA_DIR/ca.crt")
+  idp_internal "$1" && ca=(--cacert "$LAB_TRUST")
   curl -sf --max-time 15 ${ca[@]+"${ca[@]}"} "${1%/}/.well-known/openid-configuration" \
     || die "no OpenID discovery at ${1%/}/.well-known/openid-configuration"
 }
@@ -126,7 +126,6 @@ mcp_issuer_resources() {
 # documents, or registered) and signs it in through S&V's broker. OSS: the
 # gateway hands every client the one S&V registered at the broker.
 mcp_client_auth() {
-  local url="$MCP_PUBLIC_URL/mcp/$1"
   if [ "$AGW_EDITION" = enterprise ]; then
     jq -nc --argjson md "$(mcp_issuer_metadata "$1")" '{resourceMetadata: $md}'
   else

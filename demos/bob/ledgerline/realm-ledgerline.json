@@ -36,7 +36,7 @@
         "defaultScope": "openid email profile",
         "filteredByClaim": "true",
         "claimFilterName": "email",
-        "claimFilterValue": ".*@${SV_DOMAIN}",
+        "claimFilterValue": ".*@${SV_MAIL_DOMAIN}",
         "syncMode": "IMPORT"
       },
       "firstBrokerLoginFlowAlias": "enterprise first sign-in"
@@ -46,7 +46,7 @@
     {
       "id": "11ed0000-0000-4000-8000-000000000b0b",
       "username": "bob@sterling.lab",
-      "email": "bob@${SV_DOMAIN}",
+      "email": "bob@${SV_MAIL_DOMAIN}",
       "firstName": "Bob",
       "lastName": "Reyes",
       "enabled": true,

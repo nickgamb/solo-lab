@@ -53,7 +53,25 @@ status: ## what's running, where, and the URLs
 preflight: ## check tools and Docker resources
 	@./scripts/preflight.sh
 
+## ---- on AWS: one EC2 instance, public names (docs/AWS.md) -----------------
+aws-up: ## create the instance (and what it needs) and make up there
+	@./scripts/aws.sh up
+aws-sync: ## copy the lab to the instance again
+	@./scripts/aws.sh sync
+aws-run-%: ## a make target on the instance, e.g. make aws-run-verify
+	@./scripts/aws.sh run $*
+aws-ssh: ## a shell on the instance
+	@./scripts/aws.sh ssh
+aws-stop: ## stop the instance (disk and address kept)
+	@./scripts/aws.sh stop
+aws-start: ## start it again
+	@./scripts/aws.sh start
+aws-status: ## the instance, its address and the lab's names
+	@./scripts/aws.sh status
+aws-down: ## terminate the instance; keeps the address so the names stay (ALL=1 removes everything)
+	@./scripts/aws.sh down $(if $(ALL),--all)
+
 help:
 	@awk 'BEGIN{FS=":.*## "} /^## ----/{printf "\n\033[1m%s\033[0m\n", substr($$0,9)} /^[a-zA-Z%_-]+:.*## /{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-.PHONY: machine-setup up cluster platform down nuke verify bob-verify alice-verify continuity-verify observatory-verify tour reset llm xaa-logs xaa-keys routes totp status preflight help
+.PHONY: machine-setup up cluster platform down nuke verify bob-verify alice-verify continuity-verify observatory-verify tour reset llm xaa-logs xaa-keys routes totp status preflight aws-up aws-sync aws-ssh aws-stop aws-start aws-status aws-down help

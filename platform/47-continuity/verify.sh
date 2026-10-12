@@ -9,10 +9,10 @@ need_cluster
 . "$LAB_ROOT/scripts/idp.sh"
 NS=sv-identity IC=sterling-vance
 # Bob's S&V account: the directory sync made it from the primary IdP
-BOB_ID=$(kc_admin sv-identity SV_KC_ADMIN_PASSWORD sterling-vance GET "/users?exact=true&briefRepresentation=true&email=bob%40$SV_DOMAIN" | jq -r '.[0].id // empty')
-[ -n "$BOB_ID" ] || die "no S&V broker account for bob@$SV_DOMAIN: the directory sync makes it from the primary IdP (make layer-47)"
+BOB_ID=$(kc_admin sv-identity SV_KC_ADMIN_PASSWORD sterling-vance GET "/users?exact=true&briefRepresentation=true&email=bob%40$SV_MAIL_DOMAIN" | jq -r '.[0].id // empty')
+[ -n "$BOB_ID" ] || die "no S&V broker account for bob@$SV_MAIL_DOMAIN: the directory sync makes it from the primary IdP (make layer-47)"
 T=keycloak TNS=sv-workforce   # S&V's own IdP, cut by a DENY in its namespace
-CA=(--cacert "$LAB_CA_DIR/ca.crt")
+CA=(--cacert "$LAB_TRUST")
 TMPD=$(umask 077; mktemp -d); on_exit "rm -rf $TMPD"   # every temp file, gone on exit
 BODY=$TMPD/body JAR=$TMPD/jar
 pass=0 fail=0 skip=0

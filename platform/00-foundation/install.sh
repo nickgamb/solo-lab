@@ -24,7 +24,9 @@ helm_up metrics-server metrics-server "$METRICS_SERVER_VERSION" kube-system \
 step "cert-manager $CERT_MANAGER_VERSION + lab CA"
 helm_up cert-manager cert-manager "$CERT_MANAGER_VERSION" cert-manager \
   --repo https://charts.jetstack.io --set crds.enabled=true --set replicaCount=2 \
-  --set podDisruptionBudget.enabled=true
+  --set podDisruptionBudget.enabled=true \
+  --set config.apiVersion=controller.config.cert-manager.io/v1alpha1 --set config.kind=ControllerConfiguration \
+  --set config.enableGatewayAPI=true
 helm_up trust-manager trust-manager "$TRUST_MANAGER_VERSION" cert-manager \
   --repo https://charts.jetstack.io --set app.trust.namespace=cert-manager \
   --set secretTargets.enabled=false
