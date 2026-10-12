@@ -16,7 +16,7 @@ spec:
       realm: sterling-vance
       credentialsRef: {name: continuity-controller}
   # every S&V call to an upstream IdP leaves through this waypoint
-  egress: {namespace: sv-egress, waypoint: egress-waypoint}
+  egress: {namespace: sv-egress, waypoint: egress-waypoint${XAA_EGRESS_EXPORT}}
   tiers: []   # from ENTERPRISE_IDP (install.sh)
   health: {intervalSeconds: 5, timeoutSeconds: 2, unhealthyThreshold: 2, healthyThreshold: 3}
   failback: Automatic

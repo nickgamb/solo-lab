@@ -5,6 +5,10 @@
 #
 #   sv-upstream-client.jwks.json  S&V's client at an upstream IdP (e.g. Gluu):
 #                                 the broker's key (Keycloak, PS256)
+#   sv-voucher-client.jwks.json   S&V's client for ID-JAGs at the IdP in
+#                                 XAA_VOUCHER (e.g. Okta's AI agent): the
+#                                 broker's key, as the gateway signs with it
+#                                 there (NAME_XAA_CLIENT_ALG)
 #   sv-ras-client.jwks.json       S&V's client at Ledgerline's AS
 #                                 (sterling-vance-kagent)
 #   sv-idp.jwks.json              S&V's broker's token-signing keys, issuer
@@ -19,6 +23,9 @@
 # runs before make up, so they can be registered before the lab is built
 out="$LAB_STATE/xaa/keys"; mkdir -p "$out"
 sv_upstream_client_jwks >"$out/sv-upstream-client.jwks.json"
+if [ -n "$XAA_VOUCHER_IDP" ]; then
+  kc_jwks sv-broker-client "$(idp_setting "$XAA_VOUCHER_IDP" XAA_CLIENT_ALG PS256)" >"$out/sv-voucher-client.jwks.json"
+else rm -f "$out/sv-voucher-client.jwks.json"; fi
 xaa_client_jwks >"$out/sv-ras-client.jwks.json"
 kc_jwks sterling-vance RS256 >"$out/sv-idp.jwks.json"
 rm -f "$out/sv-workforce.jwks.json"   # earlier labs: S&V's own Keycloak vouched too

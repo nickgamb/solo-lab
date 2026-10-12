@@ -2,9 +2,10 @@
 
 Story 1's Cross App Access with Gluu Flex / Janssen in both companies'
 slots: S&V's enterprise IdP (signs Bob in with a passkey; S&V's broker
-vouches for him) and Ledgerline's authorization server (redeems the broker's
-ID-JAG). The code path is the default's; two settings choose who plays each
-role ([IDENTITY-FLOWS.md](IDENTITY-FLOWS.md#2-cross-app-access-id-jag-to-a-saas)).
+vouches for him, or with `XAA_VOUCHER=gluu` Gluu itself) and Ledgerline's
+authorization server (redeems the ID-JAG). The code path is the default's;
+settings choose who plays each role
+([IDENTITY-FLOWS.md](IDENTITY-FLOWS.md#2-cross-app-access-id-jag-to-a-saas)).
 
 - Demo card: [cards/gluu.html](cards/gluu.html)
 - Checks: `make bob-verify` (Bob signs in through S&V's own Keycloak; the
@@ -56,6 +57,25 @@ gives the broker an account for each whose primary email under
 its SCIM user extension). Bob signs in to that account, the `sub` of the
 broker's ID-JAGs; their `client_id` is `LEDGERLINE_GLUU_CLIENT_ID`.
 
+## Gluu vouches
+
+```
+XAA_VOUCHER=gluu
+```
+
+S&V's Gluu issues the ID-JAG from the ID token it issued for Bob's sign-in,
+and Ledgerline's Gluu trusts it. Its `sub` is Bob's account at S&V's Gluu.
+S&V's client at S&V's Gluu also has:
+
+- the token exchange grant, for ID-JAGs (Janssen feature
+  `identity_assertion_authz_grant`), audience `LEDGERLINE_GLUU_ISSUER`,
+  scope `research:read`, `resource` `https://mcp.ledgerline.lab/mcp`
+- `LEDGERLINE_GLUU_CLIENT_ID` as the ID-JAG's `client_id`
+
+Ledgerline's Gluu lists S&V's Gluu among its trusted ID-JAG issuers, by its
+`jwks_uri`. Only sign-ins through Gluu reach Ledgerline; after failover to
+the next IdP, Bob's calls to Ledgerline are refused until Gluu is back.
+
 ## S&V's Gluu
 
 - S&V's client: [Registering S&V at an IdP](IDPS.md#registering-sv-at-an-idp),
@@ -85,7 +105,7 @@ its own routes, so ai-gateway's access log (`ai-gateway.log`) has them:
 | Route | Fields |
 | --- | --- |
 | `xaa-ledgerline` | the caller's SPIFFE ID, the verified S&V token's claims, MCP method and tool, status |
-| `xaa-idp` | the verified ID token's claims (`iss`, `sub`, `aud`, `acr`, `amr`), the broker's endpoint, status |
+| `xaa-idp` | the verified ID token's claims (`iss`, `sub`, `aud`, `acr`, `amr`), the voucher's endpoint, status |
 | `xaa-as-ledgerline` | the verified ID-JAG's claims (`iss`, `sub`, `aud`, `client_id`, `scope`, `jti`, `iat`, `exp`), status; 401 or 403 when it fails a check |
 
 ## Roadmap
@@ -97,7 +117,7 @@ Not built; each item with what it needs.
 | Keys for `kagent` too | kgateway OAuth2 with `private_key_jwt`; then `kagent` (edge and egress) authenticates with one key per component, and no secret is left |
 | Upstream logout reaching S&V | OIDC back-channel logout from the upstream to S&V's broker, ending the Keycloak session (the broker's session otherwise outlives it) |
 | CIMD client ID for S&V's client at the AS | an HTTPS-hosted client metadata document whose URL is the `client_id`, `jwks` from `make xaa-keys`; an AS that dereferences CIMD at the token endpoint |
-| Resource indicators (RFC 8707) | `crossAppAccess.resources: [https://mcp.ledgerline.lab/mcp]`; an AS that binds `aud` to `resource` |
+| Resource indicators (RFC 8707) with the broker vouching | the broker binding the ID-JAG to `resource` (sent when an IdP vouches); an AS that binds `aud` to `resource` |
 | Sender-constrained tokens (DPoP, RFC 9449) | agentgateway DPoP proofs on the RAS leg and the MCP call; an AS issuing `cnf.jkt`; Ledgerline's MCP gateway and server checking the proof |
 | MCP enterprise-managed authorization extension | agentgateway or kagent MCP client declaring it on `initialize` |
 | OAuth MCP flow (401 + `WWW-Authenticate` to Protected Resource Metadata) | the MCP server on a public HTTPS host; agentgateway serving the metadata and the challenge for `/mcp` |

@@ -131,7 +131,7 @@ creates no flows or roles, so the realm needs these first (all in
 | `broker.keycloak.firstBrokerLoginFlow` | first-broker-login flow for every upstream (`continuity-first-broker-login`: link to the existing user) |
 | `egress.namespace`, `egress.waypoint` | route back-channel calls to external upstreams through this waypoint (one ServiceEntry per external IdP) |
 | `egress.internalDomains` | hosts under these domains are in-cluster and get no ServiceEntry |
-| `egress.exportTo` | other namespaces that call upstreams for the broker: the ServiceEntries are exported there too |
+| `egress.exportTo` | other namespaces that call upstreams: the ServiceEntries are exported there too (agentgateway's control plane, for a vouching IdP's keys with `XAA_VOUCHER`) |
 | `tiers[]` | ordered; the first eligible, healthy tier is active |
 | `tiers[].name` | also the Keycloak IdP alias |
 | `tiers[].displayName` | shown on the login page and in the Observatory |

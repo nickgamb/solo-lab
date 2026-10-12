@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -235,5 +236,47 @@ func TestCacheIsBounded(t *testing.T) {
 	}
 	if _, ok := x.cache[[32]byte{4}]; !ok {
 		t.Fatal("new entry not stored")
+	}
+}
+
+// With an upstream IdP, the ID token is the one it issued for the sign-in,
+// from the broker's continuity-upstream endpoint, for kagent's access token
+// in the same session.
+func TestUpstreamIDToken(t *testing.T) {
+	var calls int32
+	gluuID := jwtFor("https://gluu.example", "bob-gluu", time.Now().Add(5*time.Minute))
+	broker := keycloakOK(t, &calls)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if id, secret, ok := r.BasicAuth(); !ok || id != "kagent" || secret != "s3cret" {
+			t.Errorf("client auth = %q/%q/%v", id, secret, ok)
+		}
+		r.ParseForm()
+		if r.URL.Path != "/continuity-upstream/gluu/id-token" || r.PostForm.Get("token") != "at-2" {
+			t.Errorf("upstream request %s %v", r.URL.Path, r.PostForm)
+		}
+		json.NewEncoder(w).Encode(map[string]string{"id_token": gluuID, "issued_token_type": typeIDToken})
+	}))
+	t.Cleanup(up.Close)
+	x := newExchanger(broker.URL)
+	x.upstream, x.upstreamURL = "gluu", up.URL+"/continuity-upstream"
+	id, source, err := x.idToken(context.Background(), jwtWithExp(time.Now().Add(time.Minute)))
+	if err != nil || id != gluuID || source != "gluu" {
+		t.Fatalf("got %q from %q, %v", id, source, err)
+	}
+}
+
+// A sign-in through another IdP: the broker refuses, and so does the gateway.
+func TestUpstreamRefused(t *testing.T) {
+	var calls int32
+	broker := keycloakOK(t, &calls)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `{"error":"invalid_request","error_description":"this sign-in didn't come from gluu"}`)
+	}))
+	t.Cleanup(up.Close)
+	x := newExchanger(broker.URL)
+	x.upstream, x.upstreamURL = "gluu", up.URL
+	if _, _, err := x.idToken(context.Background(), jwtWithExp(time.Now().Add(time.Minute))); err == nil || !errors.Is(err, errRefused) {
+		t.Fatalf("want refused, got %v", err)
 	}
 }

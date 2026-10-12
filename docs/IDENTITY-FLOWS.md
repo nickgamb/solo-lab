@@ -249,25 +249,28 @@ Ledgerline Research is a SaaS S&V subscribes to, a separate company with its
 own authorization server. Bob's agent uses it as Bob, with no consent screen
 and no shared credential. On every call, S&V's identity fabric vouches for
 Bob to Ledgerline for one approved connection with a fresh ID-JAG, living
-`MCP_TOKEN_LIFETIME` (5 s). Ledgerline then issues its own token, which
-lives no longer than that vouch and has no refresh token.
+`MCP_TOKEN_LIFETIME` (5 s) when the broker issues it. Ledgerline then issues
+its own token, which lives no longer than that vouch and has no refresh
+token.
 
 Every exchange happens at the firm's gateway. The agent holds only Bob's
 S&V access token, never an ID token, the ID-JAG or Ledgerline's token. The
 ID-JAG covers only the gateway-to-SaaS hop; sign-in never uses one.
 
-Two settings in `config/lab.env` (`scripts/idp.sh`):
+Three settings in `config/lab.env` (`scripts/idp.sh`):
 
 | Setting | Values | Decides |
 | --- | --- | --- |
 | `ENTERPRISE_IDP` | `auth0,keycloak,contingency` (default), `gluu,auth0,keycloak,contingency`, `okta,keycloak`, ...; any order | S&V's IdPs, which sign Bob in, in failover order ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md)); `keycloak` is the Keycloak S&V runs itself (`https://login.sterling.lab`) |
-| `RESOURCE_AS` | `keycloak` (default), `gluu`, any name with `LEDGERLINE_<NAME>_ISSUER` | Ledgerline's authorization server |
+| `RESOURCE_AS` | `keycloak` (default), `gluu`, `auth0` (experimental), any name with `LEDGERLINE_<NAME>_ISSUER` | Ledgerline's authorization server |
+| `XAA_VOUCHER` | `broker` (default), or an IdP in `ENTERPRISE_IDP` that issues ID-JAGs (`gluu`; `okta`, experimental) | who vouches for Bob to Ledgerline (issues the ID-JAG) |
 
 Each is configured by name ([IDPS.md](IDPS.md)).
 
-S&V's broker vouches for every S&V user, whichever IdP signed them in.
-Ledgerline trusts that one issuer and never learns S&V's IdP chain. The
-ID-JAG's `sub` is Bob's broker account, the same across failover.
+By default (`XAA_VOUCHER=broker`) S&V's broker vouches for every S&V user,
+whichever IdP signed them in. Ledgerline trusts that one issuer and never
+learns S&V's IdP chain. The ID-JAG's `sub` is Bob's broker account, the
+same across failover.
 
 | Bob's session | Vouches |
 | --- | --- |
@@ -275,14 +278,31 @@ ID-JAG's `sub` is Bob's broker account, the same across failover.
 | the broker's break-glass accounts (platform admins) | S&V's broker |
 | an IdP that is no longer active (failed over, drained) | nobody: refused until Bob signs in again |
 
+With `XAA_VOUCHER=<idp>` the user's own IdP vouches instead, from the ID
+token it issued for Bob's sign-in. Ledgerline's AS trusts that IdP, and
+the ID-JAG's `sub` is Bob's account there.
+
+| Bob's session | Vouches |
+| --- | --- |
+| signed in through the voucher, while it is S&V's active IdP | the voucher, from its own ID token |
+| any other IdP in the chain, or break-glass | nobody: there is no ID token from the voucher to exchange |
+
+The broker issues no ID-JAG in this mode. It keeps the voucher's ID token
+from Bob's sign-in and releases it only to `kagent`, for Bob's live session
+from that IdP (`continuity-upstream`,
+[tools/keycloak-idjag](../tools/keycloak-idjag/README.md)). Ledgerline's
+access token still comes from Ledgerline's own AS.
+
 Failover is the continuity controller's decision alone (`status.active`).
 An inactive upstream is disabled at the broker (no sign-in, even by hint),
 and every call to an upstream leaves through `sv-egress`, where one cut
 stops them all
-([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#the-resource)). Cross App
-Access calls no upstream; the broker vouches from Bob's session. With a
-fresh ID-JAG and Ledgerline token per call, a refusal takes effect on the
-next call.
+([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#the-resource)). When the
+broker vouches, Cross App Access calls no upstream; the broker vouches from
+Bob's session. When an IdP vouches, the gateway's request to it leaves
+through `sv-egress` like every other call to an upstream. With a fresh
+ID-JAG and Ledgerline token per call, a refusal takes effect on the next
+call.
 
 ```mermaid
 sequenceDiagram
@@ -332,6 +352,11 @@ sequenceDiagram
       client, so the ID token belongs to the same sign-in. Each replica
       keeps it until the earlier of the two tokens' expiries; nothing is
       shared between replicas.
+    - With `XAA_VOUCHER=<idp>` it then asks the broker for that IdP's ID
+      token from the same sign-in (`POST
+      /realms/sterling-vance/continuity-upstream/<idp>/id-token`, as
+      `kagent`, `token` = the access token) and sets that instead. A
+      session from any other IdP is refused (403).
   - Backend auth `crossAppAccess` on backend `xaa-ledgerline`
     (`xaa/ledgerline.yaml`, applied by `xaa_gateway_apply` in
     `scripts/idp.sh`): subject from header `x-id-token`, type ID token;
@@ -341,20 +366,28 @@ sequenceDiagram
     authenticates at the broker as `kagent` (its client secret), and at
     Ledgerline's AS with `private_key_jwt` (client `sterling-vance-kagent`,
     assertion audience the AS's issuer, key `.lab/keys/sv-xaa-client.key`).
-    Only the gateway holds those credentials.
+    Only the gateway holds those credentials. With `XAA_VOUCHER=<idp>`
+    the ID-JAG is requested at that IdP's token endpoint as S&V's client
+    there (`XAA_CLIENT_ID`, default `<IDP>_CLIENT_ID`), with
+    `private_key_jwt` by the broker's key (Secret `xaa-idp-client-key`,
+    `<IDP>_XAA_CLIENT_ALG`), scope `research:read` and `resource`
+    Ledgerline's MCP server (RFC 8707).
   - Both token requests go out through ai-gateway's own routes, so its
     policies apply to them. Only ai-gateway may call these routes.
     - IdP leg, `/xaa-legs/ledgerline/idp/token` (route and policy
-      `xaa-idp`): the subject token is verified against the broker's keys
-      (issuer, audience `kagent`). Only a token exchange for an ID-JAG for
-      Ledgerline's AS, within the connection's scopes, goes out.
+      `xaa-idp`): the subject token is verified against the voucher's keys
+      (the broker: issuer, audience `kagent`; an IdP: its issuer, audience
+      S&V's client there, keys from its `jwks_uri`). Only a token exchange
+      for an ID-JAG for Ledgerline's AS, within the connection's scopes and
+      for Ledgerline's MCP server if a `resource` is named, goes out.
     - Ledgerline leg, `/xaa-legs/ledgerline/as/token` (route and policy
       `xaa-as-ledgerline`): the ID-JAG in the grant is verified against
-      S&V's broker, the only issuer it trusts (signature, `iss`, `aud` =
+      the voucher, the only issuer it trusts (signature, `iss`, `aud` =
       Ledgerline's AS, `exp`, `sub`). Then `typ` `oauth-id-jag+jwt`,
-      `client_id` = `sterling-vance-kagent`, a lifetime of at most
-      `MCP_TOKEN_LIFETIME`, and scopes within the connection's and
-      `openid profile email`. A refusal fails the call.
+      `client_id` = S&V's client at Ledgerline's AS, a lifetime of at most
+      `MCP_TOKEN_LIFETIME` (broker) or 300 s (an IdP, which sets its own),
+      and scopes within the connection's and `openid profile email`. A
+      refusal fails the call.
     - Both legs are in ai-gateway's access log with the verified claims,
       never the tokens (`make xaa-logs`).
   - The agent's tool (`RemoteMCPServer ledgerline-research`) points at
@@ -395,9 +428,10 @@ sequenceDiagram
     egress waypoint (`ledgerline-egress`, one ServiceEntry per host). With
     an AS outside the lab, that is how the MCP server gets the AS's keys.
 - **Resource AS** outside the lab (e.g. `RESOURCE_AS=gluu`, at
-  `LEDGERLINE_GLUU_ISSUER`): it trusts S&V's broker as its one ID-JAG
-  issuer, by the broker's published keys (`sv-idp.jwks.json`; the broker's
-  issuer isn't reachable from the internet), and registers S&V's client key
+  `LEDGERLINE_GLUU_ISSUER`): it trusts the voucher as its ID-JAG issuer:
+  S&V's broker by its published keys (`sv-idp.jwks.json`; the broker's
+  issuer isn't reachable from the internet), or with `XAA_VOUCHER=<idp>`
+  that IdP by its `jwks_uri`. It registers S&V's client key
   (`make xaa-keys`;
   [IDPS.md](IDPS.md#ledgerlines-authorization-server)).
 - **Resource server** (`demos/bob/ledgerline/research.yaml`): Ledgerline's
