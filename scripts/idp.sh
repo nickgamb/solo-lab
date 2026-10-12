@@ -38,6 +38,16 @@ idp_discover() {
   curl -sf --max-time 15 ${ca[@]+"${ca[@]}"} "${1%/}/.well-known/openid-configuration" \
     || die "no OpenID discovery at ${1%/}/.well-known/openid-configuration"
 }
+# as_discover <issuer>: an authorization server's metadata: RFC 8414 (the
+# path after the host goes after the well-known name), else OpenID's
+as_discover() {
+  local ca=() i=${1%/} host path
+  idp_internal "$1" && ca=(--cacert "$LAB_TRUST")
+  host=$(echo "$i" | sed -E 's#^(https://[^/]+).*#\1#'); path=${i#"$host"}
+  curl -sf --max-time 15 ${ca[@]+"${ca[@]}"} "$host/.well-known/oauth-authorization-server$path" \
+    || curl -sf --max-time 15 ${ca[@]+"${ca[@]}"} "$i/.well-known/openid-configuration" \
+    || die "no authorization server metadata at $host/.well-known/oauth-authorization-server$path or $i/.well-known/openid-configuration"
+}
 
 # idp_names: ENTERPRISE_IDP as a list, checked: names (lower case letters
 # and digits), each once
@@ -159,7 +169,7 @@ ras_env() {
     LEDGERLINE_AS_TOKEN_URL="${LEDGERLINE_AS_ISSUER%/}/protocol/openid-connect/token"
     LEDGERLINE_AS_JWKS_URI="http://keycloak.ledgerline-identity.svc/realms/ledgerline/protocol/openid-connect/certs"
   else
-    d=$(idp_discover "$LEDGERLINE_AS_ISSUER")
+    d=$(as_discover "$LEDGERLINE_AS_ISSUER")
     [ "$(echo "$d" | jq -r .issuer)" = "$LEDGERLINE_AS_ISSUER" ] \
       || die "Ledgerline's AS issuer must match the issuer its discovery states: $(echo "$d" | jq -r .issuer)"
     LEDGERLINE_AS_TOKEN_URL=$(echo "$d" | jq -r .token_endpoint)
