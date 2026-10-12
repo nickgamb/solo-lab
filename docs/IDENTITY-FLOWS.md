@@ -368,7 +368,7 @@ sequenceDiagram
     assertion audience the AS's issuer, key `.lab/keys/sv-xaa-client.key`).
     Only the gateway holds those credentials. With `XAA_VOUCHER=<idp>`
     the ID-JAG is requested at that IdP's token endpoint as S&V's client
-    there (`<IDP>_XAA_CLIENT_ID`, default `<IDP>_CLIENT_ID`), with
+    there (`XAA_CLIENT_ID`, default `<IDP>_CLIENT_ID`), with
     `private_key_jwt` by the broker's key (Secret `xaa-idp-client-key`,
     `<IDP>_XAA_CLIENT_ALG`), scope `research:read` and `resource`
     Ledgerline's MCP server (RFC 8707).

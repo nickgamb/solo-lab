@@ -194,9 +194,9 @@ xaa_gateway_apply() {
     iss=$(_idp_var "$n" ISSUER) cid=$(_idp_var "$n" CLIENT_ID)
     [ -n "$iss" ] && [ -n "$cid" ] || die "XAA_VOUCHER=$n: its issuer and S&V's client there (.env)"
     # S&V's client for ID-JAGs there: its sign-in client, or one of its own
-    xcid=$(idp_setting "$n" XAA_CLIENT_ID "$cid") alg=$(idp_setting "$n" XAA_CLIENT_ALG PS256)
+    xcid=${XAA_CLIENT_ID:-$cid} alg=$(idp_setting "$n" XAA_CLIENT_ALG PS256)
     [ "$xcid" != "$cid" ] || [ "$(idp_client_auth "$n")" = private_key_jwt ] \
-      || die "XAA_VOUCHER=$n: S&V asks for ID-JAGs with its key (private_key_jwt), not a client secret: drop the secret, or set its own client for ID-JAGs ($(echo "$n" | tr "[:lower:]" "[:upper:]")_XAA_CLIENT_ID)"
+      || die "XAA_VOUCHER=$n: S&V asks for ID-JAGs with its key (private_key_jwt), not a client secret: drop the secret, or set its own client for ID-JAGs (XAA_CLIENT_ID)"
     case "$alg" in PS256|RS256) ;; *) die "XAA_VOUCHER=$n: $(echo "$n" | tr "[:lower:]" "[:upper:]")_XAA_CLIENT_ALG is PS256 or RS256, not $alg" ;; esac
     d=$(idp_discover "$iss")
     [ "$(echo "$d" | jq -r .issuer)" = "$iss" ] || die "XAA_VOUCHER=$n: the issuer its discovery states is $(echo "$d" | jq -r .issuer)"

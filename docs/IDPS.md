@@ -94,7 +94,7 @@ vouches for everyone, whichever IdP signed them in.
 Only its sign-ins reach Ledgerline. It needs:
 
 - S&V's client for ID-JAGs there: its sign-in client (`NAME_CLIENT_ID`), or
-  one of its own (`NAME_XAA_CLIENT_ID`). It authenticates with
+  one of its own (`XAA_CLIENT_ID`). It authenticates with
   `private_key_jwt`, the broker's key (`sv-voucher-client.jwks.json` from
   `make xaa-keys`) signed `NAME_XAA_CLIENT_ALG` (`PS256` or `RS256`, default
   `PS256`), for `NAME_XAA_ASSERTION_AUDIENCE` (`issuer`, the default, or
@@ -308,7 +308,7 @@ too: the ID-JAG's issuer, and that of the ID token it is made from.
 
 ```
 XAA_VOUCHER=okta
-OKTA_XAA_CLIENT_ID=<the AI agent's client ID>
+XAA_CLIENT_ID=<the AI agent's client ID>
 ```
 
 - **AI agent** (Directory > AI Agents): S&V's requesting app. Its
