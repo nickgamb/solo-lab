@@ -177,6 +177,12 @@ code=$(K exec -n sv-agents probe-bob-assistant -- curl -s -m 10 -o /dev/null -w 
   http://ai-gateway.agentgateway-system/xaa-legs/ledgerline/as/token -d 'grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=a.b.c' 2>/dev/null) || code=""
 case "$code" in 401|403) res ok "Bob's agent asks Ledgerline's token endpoint through the gateway's leg: refused ($code)" ;;
   *) res no "Bob's agent asks Ledgerline's token endpoint through the gateway's leg: refused" "HTTP ${code:-no answer}" ;; esac
+# and it can't pick its own voucher: only ai-gateway reaches the voucher route
+code=$(K exec -n sv-agents probe-bob-assistant -- curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST \
+  http://ai-gateway.agentgateway-system/xaa-vouched/ledgerline/mcp -H 'x-xaa-voucher: broker' -H 'x-id-token: a.b.c' \
+  -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' 2>/dev/null) || code=""
+case "$code" in 401|403) res ok "Bob's agent names its own voucher and ID token, straight to ai-gateway's voucher route: refused ($code)" ;;
+  *) res no "Bob's agent names its own voucher and ID token, straight to ai-gateway's voucher route: refused" "HTTP ${code:-no answer}" ;; esac
 # who vouches for Bob's session: the IdP that signed him in when it vouches for
 # its own sign-ins (XAA_VOUCHER), else S&V's broker
 BOB_IDP=$(echo "$BOB" | cut -d. -f2 | python3 -c 'import base64,json,sys; s=sys.stdin.read().strip(); print(json.loads(base64.urlsafe_b64decode(s+"="*(-len(s)%4))).get("idp","") if s else "")' 2>/dev/null) || BOB_IDP=""
