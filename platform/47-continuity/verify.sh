@@ -318,10 +318,15 @@ run_sync() {  # run_sync [args]: one run of the CronJob's job, its pod's termina
 }
 sync_status() { idc | jq -r '.status.sync | "updated=\(.updated // 0) written=\(.written // 0) failed=\(.failed // 0) \(.message)"'; }
 
-expect '^204$' "Bob's department set in S&V's profile" "$(set_dept broker "$BOB_ID" "$W-out")"
-run_sync >/dev/null
-expect "^$W-out\$" "written out to the failover: S&V's own Keycloak has Bob's department" "$(dept_of workforce "$BOB_WF")"
-expect 'written=[1-9].* failed=0' "status.sync: failover accounts written, no failures" "$(sync_status)"
+# out to a failover: only while S&V's own Keycloak is one (not the primary)
+if [ "$(echo "$ORIG" | jq -r '.tiers[0].name')" != keycloak ]; then
+  expect '^204$' "Bob's department set in S&V's profile" "$(set_dept broker "$BOB_ID" "$W-out")"
+  run_sync >/dev/null
+  expect "^$W-out\$" "written out to the failover: S&V's own Keycloak has Bob's department" "$(dept_of workforce "$BOB_WF")"
+  expect 'written=[1-9].* failed=0' "status.sync: failover accounts written, no failures" "$(sync_status)"
+else
+  skipped "written out to a failover: S&V's own Keycloak is the primary (first in ENTERPRISE_IDP)"
+fi
 
 K patch idc "$IC" -n "$NS" --type merge -p "$(idc | jq -c '{spec: {tiers: ([.spec.tiers[] | select(.name == "keycloak")] + [.spec.tiers[] | select(.name != "keycloak")])}}')" >/dev/null
 expect '^204$' "S&V's own Keycloak made the primary; Bob's department changed there" "$(set_dept workforce "$BOB_WF" "$W-in")"
