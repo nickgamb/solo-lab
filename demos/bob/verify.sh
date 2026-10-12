@@ -172,7 +172,7 @@ if [ "$AGW_EDITION" = enterprise ]; then
   ISSUER_CLIENT=$(issuer_client_token bob bob-demo | jq -r '.access_token // empty') || ISSUER_CLIENT=""
   if [ -z "$ISSUER_CLIENT" ]; then res no "an AI client registers itself and signs Bob in through the issuer" "no token"
   else
-    check '\"acting_for\": \"bob@.*\"audience\": \"bob-workspace\"' \
+    check '\\"acting_for\\": \\"bob@.*\\"audience\\": \\"bob-workspace\\"' \
                                                 "an AI client that registered itself, signed in through the issuer: whoami acts as bob" observability $FRONT call whoami '{}' --token "$ISSUER_CLIENT"
   fi
 fi
