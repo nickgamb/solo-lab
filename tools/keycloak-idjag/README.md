@@ -69,6 +69,24 @@ returns email claims from userinfo only (Janssen and Gluu by default) is
 accepted when it verified the email. The controller puts it on every upstream
 IdP and drops Keycloak's filter only from an IdP that has it.
 
+It also serves the upstream's ID token for a sign-in, for an app that has
+that IdP vouch for the user in Cross App Access (`XAA_VOUCHER`, the IdP
+issuing the ID-JAG from its own ID token):
+
+```
+POST /realms/<realm>/continuity-upstream/<alias>/id-token   (client authenticated)
+  token=<the user's access token>
+-> { id_token: <the upstream's ID token>, issued_token_type: urn:ietf:params:oauth:token-type:id_token, token_type: N_A }
+```
+
+Identity Brokering API v2 (`identity-brokering-api:v2`) returns only the
+upstream's access token; the ID token stays on the session for logout. This
+endpoint applies v2's gates (a confidential client with
+`external.token.enabled` and the alias in `external.token.idp`, an active
+access token issued to or for that client) and also requires that session
+to have signed in through `<alias>`. Only that session's ID token is ever
+returned; anything else is refused with an OAuth error.
+
 The image compiles them against the Keycloak jars it builds and loads them from
 `/opt/keycloak/providers`. It is independent of the ID-JAG patch and stays
 when that patch goes.

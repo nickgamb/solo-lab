@@ -6,8 +6,11 @@ the same way:
 - **S&V's IdPs** (`ENTERPRISE_IDP`, in failover order; the first is the
   primary) sign S&V's people in. S&V's broker routes every sign-in to the
   active one and maps it into one shape
-  ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md)). Only the broker vouches
-  for S&V's people to other companies (the ID-JAG for Cross App Access).
+  ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md)). The broker vouches
+  for S&V's people to other companies (the ID-JAG for Cross App Access),
+  or, with `XAA_VOUCHER`, an IdP that issues ID-JAGs itself
+  ([below](#an-idp-that-vouches)).
+
 - **Ledgerline's authorization server** (`RESOURCE_AS`) redeems S&V's
   ID-JAGs for Ledgerline access tokens
   ([IDENTITY-FLOWS.md](IDENTITY-FLOWS.md#2-cross-app-access-id-jag-to-a-saas)).
@@ -24,8 +27,9 @@ An IdP without an issuer is left out of the chain.
 | `okta,keycloak` | `keycloak` | Okta | Ledgerline's Keycloak |
 | `ping,keycloak,contingency` | `keycloak` | Ping | Ledgerline's Keycloak |
 
-S&V's broker vouches for Bob in every case. After a failover he signs in at
-the next IdP, and the broker vouches for the same broker account.
+By default S&V's broker vouches for Bob in every case. After a failover he
+signs in at the next IdP, and the broker vouches for the same broker
+account.
 
 ## Settings
 
@@ -78,8 +82,28 @@ The same for every IdP:
 The `.lab` hosts resolve only on your machine. An IdP only redirects the
 browser to them, and every call S&V makes to it goes out from the lab.
 
-An upstream needs no token exchange or ID-JAG setup, since S&V's broker
+An upstream needs no token exchange or ID-JAG setup while S&V's broker
 vouches for everyone, whichever IdP signed them in.
+
+### An IdP that vouches
+
+`XAA_VOUCHER=<name>` has that IdP issue the ID-JAG instead of the broker
+([IDENTITY-FLOWS.md](IDENTITY-FLOWS.md#2-cross-app-access-id-jag-to-a-saas)).
+Only its sign-ins reach Ledgerline. It needs:
+
+- S&V's client there with `private_key_jwt` (the broker's PS256 key,
+  `sv-upstream-client.jwks.json`) and the token exchange grant for an
+  ID-JAG (`requested_token_type`
+  `urn:ietf:params:oauth:token-type:id-jag`), audience Ledgerline's AS
+  issuer, scope `research:read`, `resource`
+  `https://mcp.ledgerline.lab/mcp`
+- ID-JAGs issued under `NAME_ISSUER`, signed with keys at its `jwks_uri`,
+  living 300 s at most, `client_id` S&V's client at Ledgerline's AS
+- Ledgerline's AS trusting it as an ID-JAG issuer
+
+After a change, run `make layer-45 layer-47 layer-80` (the broker releases
+that IdP's ID token to `kagent`; the gateway's control plane fetches its
+keys through `sv-egress`), then `./demos/bob/install.sh`.
 
 ### Directory
 
@@ -297,7 +321,7 @@ The same for every AS:
 
 | Item | Value |
 | --- | --- |
-| Trusted ID-JAG issuer | S&V's broker (`https://idp.sterling.lab/realms/sterling-vance`) only, by its keys |
+| Trusted ID-JAG issuer | the voucher only, by its keys: S&V's broker (`https://idp.sterling.lab/realms/sterling-vance`), or the IdP in `XAA_VOUCHER` |
 | S&V's client | `LEDGERLINE_NAME_CLIENT_ID`, `private_key_jwt` RS256, JWKS `sv-ras-client.jwks.json` from `make xaa-keys` |
 | Grant type | `urn:ietf:params:oauth:grant-type:jwt-bearer`; assertion reuse refused; assertion lifetime at most 300 s |
 | Subject | the ID-JAG's `sub` (the user's broker account) mapped to Ledgerline's user, or its verified `email` |
@@ -326,7 +350,8 @@ LEDGERLINE_GLUU_ISSUER=https://<Ledgerline's Gluu>
 LEDGERLINE_GLUU_CLIENT_ID=<S&V's client there>
 ```
 
-Its one trusted issuer is S&V's broker, by `sv-idp.jwks.json`.
+Its trusted issuer is S&V's broker, by `sv-idp.jwks.json`, or with
+`XAA_VOUCHER=gluu` S&V's Gluu, by its `jwks_uri`.
 
 ### Another AS
 

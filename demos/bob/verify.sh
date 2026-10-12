@@ -172,16 +172,22 @@ if ras_external; then
   CHAT='bob'
 fi
 step "Cross App Access: Bob's agent -> Ledgerline Research (ID-JAG)"
-check "$ACCOUNT"                                "account_info: Ledgerline's own account for Bob"  $AGENT $XAA call account_info '{}' --token "$BOB"
-check "$ACCOUNT"                                "an AI client at S&V's front door, for Bob: Ledgerline's own account, through S&V's gateway" observability https://mcp.$SV_DOMAIN/mcp/ledgerline call account_info '{}' --token "$CLIENT"
-# the ID-JAG the gateway verified at the Ledgerline leg (ai-gateway's access
-# log: its claims; a fresh one per call, living MCP_TOKEN_LIFETIME at most)
-# S&V's broker vouches for every S&V user, whichever IdP signed them in
-WANT_ISS="https://idp.$SV_DOMAIN/realms/sterling-vance"
-if ! gw_log=$(K logs -n agentgateway-system -l gateway.networking.k8s.io/gateway-name=ai-gateway --since=6m --tail=-1 2>&1); then
-  res no "ID-JAG from S&V's broker, verified at S&V's egress" "could not read ai-gateway's log: $gw_log"
-else
-  vouched=$(echo "$gw_log" | grep 'route=agentgateway-system/xaa-as-ledgerline ' | grep 'http.status=200 ' | python3 -c '
+# the token requests go out through ai-gateway's own routes: no one else may use them
+code=$(K exec -n sv-agents probe-bob-assistant -- curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST \
+  http://ai-gateway.agentgateway-system/xaa-legs/ledgerline/as/token -d 'grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=a.b.c' 2>/dev/null) || code=""
+case "$code" in 401|403) res ok "Bob's agent asks Ledgerline's token endpoint through the gateway's leg: refused ($code)" ;;
+  *) res no "Bob's agent asks Ledgerline's token endpoint through the gateway's leg: refused" "HTTP ${code:-no answer}" ;; esac
+if [ -z "$XAA_VOUCHER_IDP" ]; then
+  check "$ACCOUNT"                                "account_info: Ledgerline's own account for Bob"  $AGENT $XAA call account_info '{}' --token "$BOB"
+  check "$ACCOUNT"                                "an AI client at S&V's front door, for Bob: Ledgerline's own account, through S&V's gateway" observability https://mcp.$SV_DOMAIN/mcp/ledgerline call account_info '{}' --token "$CLIENT"
+  # the ID-JAG the gateway verified at the Ledgerline leg (ai-gateway's access
+  # log: its claims; a fresh one per call, living MCP_TOKEN_LIFETIME at most)
+  # S&V's broker vouches for every S&V user, whichever IdP signed them in
+  WANT_ISS="https://idp.$SV_DOMAIN/realms/sterling-vance"
+  if ! gw_log=$(K logs -n agentgateway-system -l gateway.networking.k8s.io/gateway-name=ai-gateway --since=6m --tail=-1 2>&1); then
+    res no "ID-JAG from S&V's broker, verified at S&V's egress" "could not read ai-gateway's log: $gw_log"
+  else
+    vouched=$(echo "$gw_log" | grep 'route=agentgateway-system/xaa-as-ledgerline ' | grep 'http.status=200 ' | python3 -c '
 import json, sys
 last = None
 for line in sys.stdin:
@@ -190,30 +196,25 @@ for line in sys.stdin:
         last = json.JSONDecoder().raw_decode(line[i + 5:])[0]
 if last:
     print(last.get("iss", ""), "aud=%s client_id=%s" % (last.get("aud"), last.get("client_id")), int(last.get("exp", 0)) - int(last.get("iat", 0)))') || vouched=""
-  life=${vouched##* }; vouched=${vouched% *}
-  if [ -n "$vouched" ] && [ "${vouched%% *}" = "${WANT_ISS%/}" ]; then res ok "ID-JAG from S&V's broker, verified at S&V's egress: ${vouched#* }"
-  else res no "ID-JAG from S&V's broker, verified at S&V's egress" "${vouched:-no ID-JAG in the ai-gateway log}"; fi
-  if [ -n "$life" ] && [ "$life" -le "$MCP_TOKEN_LIFETIME_S" ] 2>/dev/null; then res ok "the ID-JAG lives ${life}s: no longer than a minted tool token ($MCP_TOKEN_LIFETIME)"
-  else res no "the ID-JAG lives no longer than a minted tool token ($MCP_TOKEN_LIFETIME)" "${life:-no ID-JAG}s"; fi
-fi
-# the token requests go out through ai-gateway's own routes: no one else may use them
-code=$(K exec -n sv-agents probe-bob-assistant -- curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST \
-  http://ai-gateway.agentgateway-system/xaa-legs/ledgerline/as/token -d 'grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=a.b.c' 2>/dev/null) || code=""
-case "$code" in 401|403) res ok "Bob's agent asks Ledgerline's token endpoint through the gateway's leg: refused ($code)" ;;
-  *) res no "Bob's agent asks Ledgerline's token endpoint through the gateway's leg: refused" "HTTP ${code:-no answer}" ;; esac
-check 'overweight'                              "sector_outlook through XAA"                       $AGENT $XAA call sector_outlook '{"sector":"technology"}' --token "$BOB"
-check "$ACCOUNT"                                "another user's ID token is replaced: still Bob"   $AGENT $XAA call account_info '{}' --token "$BOB" --header "x-id-token=$OTHER_ID"
-# every call vouched afresh: as many distinct ID-JAGs as calls through the leg
-# to Ledgerline's AS; and, at Ledgerline's own AS, a token no longer lived
-jags=$(K logs -n agentgateway-system -l gateway.networking.k8s.io/gateway-name=ai-gateway --since=2m --tail=-1 2>/dev/null \
-  | grep 'route=agentgateway-system/xaa-as-ledgerline ' | grep -oE '"jti": "[^"]+"' | sort | uniq -c) || jags=""
-calls=$(echo "$jags" | awk 'NF {n++} END {print n+0}'); reused=$(echo "$jags" | awk '$1 > 1 {n++} END {print n+0}')
-if [ "$calls" -ge 3 ] && [ "$reused" = 0 ]; then res ok "a fresh ID-JAG for every call to Ledgerline ($calls, none reused)"
-else res no "a fresh ID-JAG for every call to Ledgerline" "$calls distinct, $reused reused"; fi
-if ras_external; then
-  skipped "Ledgerline's token lives no longer than the ID-JAG: set at its own AS ($LEDGERLINE_AS_ISSUER)"
-else
-  ll_life=$(K logs -n ledgerline -l gateway.networking.k8s.io/gateway-name=mcp-gateway --since=2m --tail=-1 2>/dev/null | python3 -c '
+    life=${vouched##* }; vouched=${vouched% *}
+    if [ -n "$vouched" ] && [ "${vouched%% *}" = "${WANT_ISS%/}" ]; then res ok "ID-JAG from S&V's broker, verified at S&V's egress: ${vouched#* }"
+    else res no "ID-JAG from S&V's broker, verified at S&V's egress" "${vouched:-no ID-JAG in the ai-gateway log}"; fi
+    if [ -n "$life" ] && [ "$life" -le "$MCP_TOKEN_LIFETIME_S" ] 2>/dev/null; then res ok "the ID-JAG lives ${life}s: no longer than a minted tool token ($MCP_TOKEN_LIFETIME)"
+    else res no "the ID-JAG lives no longer than a minted tool token ($MCP_TOKEN_LIFETIME)" "${life:-no ID-JAG}s"; fi
+  fi
+  check 'overweight'                              "sector_outlook through XAA"                       $AGENT $XAA call sector_outlook '{"sector":"technology"}' --token "$BOB"
+  check "$ACCOUNT"                                "another user's ID token is replaced: still Bob"   $AGENT $XAA call account_info '{}' --token "$BOB" --header "x-id-token=$OTHER_ID"
+  # every call vouched afresh: as many distinct ID-JAGs as calls through the leg
+  # to Ledgerline's AS; and, at Ledgerline's own AS, a token no longer lived
+  jags=$(K logs -n agentgateway-system -l gateway.networking.k8s.io/gateway-name=ai-gateway --since=2m --tail=-1 2>/dev/null \
+    | grep 'route=agentgateway-system/xaa-as-ledgerline ' | grep -oE '"jti": "[^"]+"' | sort | uniq -c) || jags=""
+  calls=$(echo "$jags" | awk 'NF {n++} END {print n+0}'); reused=$(echo "$jags" | awk '$1 > 1 {n++} END {print n+0}')
+  if [ "$calls" -ge 3 ] && [ "$reused" = 0 ]; then res ok "a fresh ID-JAG for every call to Ledgerline ($calls, none reused)"
+  else res no "a fresh ID-JAG for every call to Ledgerline" "$calls distinct, $reused reused"; fi
+  if ras_external; then
+    skipped "Ledgerline's token lives no longer than the ID-JAG: set at its own AS ($LEDGERLINE_AS_ISSUER)"
+  else
+    ll_life=$(K logs -n ledgerline -l gateway.networking.k8s.io/gateway-name=mcp-gateway --since=2m --tail=-1 2>/dev/null | python3 -c '
 import json, sys
 last = None
 for line in sys.stdin:
@@ -222,8 +223,17 @@ for line in sys.stdin:
         last = json.JSONDecoder().raw_decode(line[i + 5:])[0]
 if last:
     print(int(last.get("exp", 0)) - int(last.get("iat", 0)))') || ll_life=""
-  if [ -n "$ll_life" ] && [ "$ll_life" -le "$MCP_TOKEN_LIFETIME_S" ] 2>/dev/null; then res ok "Ledgerline's token lives ${ll_life}s: no longer than the ID-JAG it was given"
-  else res no "Ledgerline's token lives no longer than the ID-JAG it was given" "${ll_life:-no token in the log of Ledgerline gateway}s"; fi
+    if [ -n "$ll_life" ] && [ "$ll_life" -le "$MCP_TOKEN_LIFETIME_S" ] 2>/dev/null; then res ok "Ledgerline's token lives ${ll_life}s: no longer than the ID-JAG it was given"
+    else res no "Ledgerline's token lives no longer than the ID-JAG it was given" "${ll_life:-no token in the log of Ledgerline gateway}s"; fi
+  fi
+else
+  # the user's own IdP vouches (XAA_VOUCHER): only a sign-in through it reaches
+  # Ledgerline, and a script can't make one there (its passkey, on the internet)
+  check 'http": 40[13]|isError": true|refused' "a sign-in that didn't come through $XAA_VOUCHER_IDP: no ID-JAG, Ledgerline refused" $AGENT $XAA call account_info '{}' --token "$BOB"
+  for c in "account_info: Ledgerline's own account for Bob" "an AI client at S&V's front door, for Bob" "ID-JAG from $XAA_VOUCHER_IDP, verified at S&V's egress" \
+           "sector_outlook through XAA" "another user's ID token is replaced: still Bob" "a fresh ID-JAG for every call to Ledgerline"; do
+    skipped "$c (XAA_VOUCHER=$XAA_VOUCHER_IDP: needs a sign-in through $XAA_VOUCHER_IDP, by hand)"
+  done
 fi
 # Ledgerline's server records any ID token that reaches it: none may
 # (an unreadable log is a failure, not a clean one)
