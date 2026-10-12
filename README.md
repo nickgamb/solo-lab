@@ -145,6 +145,7 @@ More in [OBSERVATORY.md](docs/OBSERVATORY.md), and the
 | [ENTERPRISE.md](docs/ENTERPRISE.md) | switching products to Solo Enterprise |
 | [IDPS.md](docs/IDPS.md) | adding Auth0, Gluu, Okta, Ping or any OIDC IdP; Ledgerline's authorization server |
 | [GLUU.md](docs/GLUU.md) | Gluu (experimental) as S&V's IdP and Ledgerline's authorization server |
+| [test-results/](docs/test-results/README.md) | runs against IdPs and authorization servers outside the lab, with their raw logs |
 
 Solo Enterprise editions, trial licences and support: [solo.io/get-started](https://www.solo.io/get-started).
 
