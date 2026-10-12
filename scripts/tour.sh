@@ -33,7 +33,7 @@ step "Signing in (Bob at S&V, Alice at her own IdP)"
 # Bob signs in through S&V's own IdP, which a script can drive; for that step
 # only: the chain goes back as it was (scene 5 cuts the IdP ahead of it)
 prefer_tier keycloak
-BOB=$(sso_token bob bob-demo | jq -r '.access_token // empty') || BOB=""
+BOB=$(sso_token bob "$LAB_PASSWORD_BOB" | jq -r '.access_token // empty') || BOB=""
 restore_tiers wait
 [ -n "$BOB" ] || die "could not get Bob's token"
 probe_pod "$KAGENT_UI_NS" "$KAGENT_UI_SA"; probe_pod sv-agents bob-assistant; probe_pod sv-agents; probe_pod observability
@@ -69,7 +69,7 @@ if ! why=$(llm_ready); then warn "Bob's agent has no model to answer with ($why)
 
 cat <<EOF
 
-  Open ${_B}https://observatory.$OPS_DOMAIN${_N} (ops / ops-demo) on the other screen.
+  Open ${_B}https://observatory.$OPS_DOMAIN${_N} (ops / $(password_hint ops)) on the other screen.
   Start on ${_B}Topology${_N}, view ${_B}All${_N}. Every scene below is real traffic on a real path.
 EOF
 next
@@ -111,7 +111,7 @@ if scene 4 "Bob to Alice (UMA for agents)"; then
   if ! K get deploy uma-as -n alice >/dev/null 2>&1; then warn "story 2 isn't installed: skipping"; else
     look "Topology: bob-assistant → u4a-adapter → Meridian's gateway → uma-pep → Alice's authorization server"
     look "Alice's lane lights up. On a first contact the call waits for her; the tour approves as her."
-    ALICE=$(user_token alice-identity alice alice-portal "" alice alice-demo) || ALICE=""
+    ALICE=$(user_token alice-identity alice alice-portal "" alice "$LAB_PASSWORD_ALICE") || ALICE=""
     [ -n "$ALICE" ] || warn "could not sign Alice in: her approval won't come, the call waits and times out"
     AS="https://as.$ALICE_DOMAIN"
     ( for _ in $(seq 1 45); do   # approve her next pending ask, if one comes
@@ -125,7 +125,7 @@ if scene 4 "Bob to Alice (UMA for agents)"; then
     ask "What is in Alice's portfolio? Use get_positions."
     wait $! 2>/dev/null || true
     look "Traffic: search as.alice.lab: the ticket, her terms, the grant, and Meridian checking it."
-    look "Her side: https://portal.$ALICE_DOMAIN (alice / alice-demo), Settings → Security → Agent Authorization."
+    look "Her side: https://portal.$ALICE_DOMAIN (alice / $(password_hint alice)), Settings → Security → Agent Authorization."
   fi
   next
 fi

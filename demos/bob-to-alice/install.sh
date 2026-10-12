@@ -57,7 +57,8 @@ install_cnpg
 
 step "Alice's IdP (alice-identity)"
 secret_apply alice-identity kc-secrets \
-  KC_BOOTSTRAP_ADMIN_USERNAME=admin KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret ALICE_KC_ADMIN_PASSWORD)"
+  KC_BOOTSTRAP_ADMIN_USERNAME=admin KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret ALICE_KC_ADMIN_PASSWORD)" \
+  LAB_PASSWORD_ALICE="$LAB_PASSWORD_ALICE"
 deploy_keycloak alice-identity "$ALICE_DOMAIN" https-alice "$D/realm-alice.json"
 apply_tmpl "$D/alice-identity.yaml"
 ok "https://idp.$ALICE_DOMAIN/realms/alice"
@@ -101,4 +102,4 @@ ok "https://portal.$ALICE_DOMAIN  https://as.$ALICE_DOMAIN  https://gateway.$MER
 step "Bob's agent: one more tool (kustomize overlay on story 1's agent)"
 apply_kustomize "$D/agent"
 wait_for "bob-assistant Ready" 60 5 K wait sandboxagent/bob-assistant -n sv-agents --for=condition=Ready --timeout=2s
-ok "Alice: https://portal.$ALICE_DOMAIN (alice / alice-demo). Bob: https://kagent.$SV_DOMAIN"
+ok "Alice: https://portal.$ALICE_DOMAIN (alice / $(password_hint alice)). Bob: https://kagent.$SV_DOMAIN"

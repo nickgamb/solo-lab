@@ -56,7 +56,7 @@
       "credentials": [
         {
           "type": "password",
-          "value": "ops-demo",
+          "value": "${LAB_PASSWORD_OPS}",
           "temporary": false
         }
       ],

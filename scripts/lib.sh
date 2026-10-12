@@ -433,6 +433,12 @@ lab_secret_get() {
   [ -n "$v" ] || die "no $1 in .lab/secrets.env: install its layer first"
   printf '%s' "$v"
 }
+# password_hint <user>: <user>'s password for a sign-in hint, when it is the
+# documented default; else where it is set (a lab others can reach)
+password_hint() {
+  local n; n="LAB_PASSWORD_$(echo "$1" | tr '[:lower:]' '[:upper:]')"
+  if [ "${!n:-}" = "$1-demo" ]; then printf '%s' "$1-demo"; else printf '%s in .env' "$n"; fi
+}
 
 # secret_apply <ns> <name> <key>=<value>...: a generic Secret, created or
 # updated. The values go to kubectl as files in a private temp dir (umask

@@ -7,18 +7,18 @@ need_cluster
 # broker to S&V's own IdP (keycloak), which a script can drive
 prefer_tier keycloak
 # Bob's access token as the edge forwards it after SSO (kagent)
-BOB=$(sso_token bob bob-demo | jq -r '.access_token // empty') || BOB=""
+BOB=$(sso_token bob "$LAB_PASSWORD_BOB" | jq -r '.access_token // empty') || BOB=""
 [ -n "$BOB" ] || die "could not sign Bob in"
 # the token kagent's UI holds for Bob: on Enterprise the Solo UI's own sign-in
 # (client kagent-ui), on OSS the edge's (the same as above)
 CHAT_TOKEN=$BOB CHAT_VIA="kagent's UI"
 if [ "$KAGENT_EDITION" = enterprise ]; then
-  CHAT_TOKEN=$(ui_token bob bob-demo | jq -r '.access_token // empty') || CHAT_TOKEN=""
+  CHAT_TOKEN=$(ui_token bob "$LAB_PASSWORD_BOB" | jq -r '.access_token // empty') || CHAT_TOKEN=""
   [ -n "$CHAT_TOKEN" ] || die "could not sign Bob in to the Solo UI (client kagent-ui)"
   CHAT_VIA="the Solo UI"
 fi
 # someone else's ID token (Carol, another S&V employee), to try to swap in
-OTHER_ID=$(sso_token carol carol-demo | jq -r '.id_token // empty') || OTHER_ID=""
+OTHER_ID=$(sso_token carol "$LAB_PASSWORD_CAROL" | jq -r '.id_token // empty') || OTHER_ID=""
 [ -n "$OTHER_ID" ] || die "could not sign Carol in (her ID token is the one swapped in below)"
 # Bob's agent's workload identity (its worker pool's ServiceAccount), another
 # workload in the same namespace, and one in another namespace.
@@ -149,7 +149,7 @@ else res no "no token: 401, pointing the client to where it signs in" "$(echo "$
 prm=$(K exec -n observability probe -- sh -c "curl -s -m 10 https://mcp.$SV_DOMAIN/.well-known/oauth-protected-resource/mcp/bob-workspace" 2>&1 | jq -r '.authorization_servers[0] // empty' 2>/dev/null) || prm=""
 if [ -n "$prm" ]; then res ok "the metadata names the authorization server the client signs in at ($prm)"
 else res no "the metadata names the authorization server the client signs in at" "none"; fi
-CLIENT=$(mcp_client_token bob bob-demo | jq -r '.access_token // empty') || CLIENT=""
+CLIENT=$(mcp_client_token bob "$LAB_PASSWORD_BOB" | jq -r '.access_token // empty') || CLIENT=""
 if [ -z "$CLIENT" ]; then res no "Bob signs in as an AI client (sv-mcp-client), through S&V's own IdP" "no token"
 else
   check '\\"acting_for\\": \\"bob@.*\\"audience\\": \\"bob-workspace\\"' \
@@ -158,7 +158,7 @@ else
   check 'Unknown tool|isError": true|http": 40[13]' "an AI client, for Bob: export_book is still compliance-only" observability $FRONT call export_book '{}' --token "$CLIENT"
 fi
 check 'http": 40[13]|isError": true'            "the front door with a token for another app (kagent): refused" observability $FRONT call whoami '{}' --token "$BOB"
-DANA_CLIENT=$(mcp_client_token dana dana-demo | jq -r '.access_token // empty') || DANA_CLIENT=""
+DANA_CLIENT=$(mcp_client_token dana "$LAB_PASSWORD_DANA" | jq -r '.access_token // empty') || DANA_CLIENT=""
 check 'http": 40[13]|isError": true'            "an AI client for a platform engineer (not an advisor): refused" observability $FRONT call whoami '{}' --token "$DANA_CLIENT"
 # Enterprise: agentgateway's OAuth issuer is the authorization server: the
 # resource names itself, its metadata is the issuer's, any MCP client
@@ -169,7 +169,7 @@ if [ "$AGW_EDITION" = enterprise ]; then
      && echo "$asm" | jq -e '(.registration_endpoint | test("/oauth-issuer/register$")) and .client_id_metadata_document_supported == true' >/dev/null 2>&1; then
     res ok "the issuer is the authorization server: metadata for $FRONT, open registration, client ID metadata documents"
   else res no "the issuer is the authorization server, with open registration and client ID metadata documents" "${asm:0:160}"; fi
-  ISSUER_CLIENT=$(issuer_client_token bob bob-demo | jq -r '.access_token // empty') || ISSUER_CLIENT=""
+  ISSUER_CLIENT=$(issuer_client_token bob "$LAB_PASSWORD_BOB" | jq -r '.access_token // empty') || ISSUER_CLIENT=""
   if [ -z "$ISSUER_CLIENT" ]; then res no "an AI client registers itself and signs Bob in through the issuer" "no token"
   else
     check '\\"acting_for\\": \\"bob@.*\\"audience\\": \\"bob-workspace\\"' \
@@ -306,7 +306,7 @@ if [ "$KAGENT_EDITION" = enterprise ]; then
   case "$code" in 401|403) res ok "an advisor (kagent Reader) changing an agent through the Solo UI: refused ($code)" ;;
     *) res no "an advisor (kagent Reader) changing an agent through the Solo UI: refused" "HTTP $code" ;; esac
   # a platform engineer (group platform-engineers) administers kagent
-  DANA=$(ui_token dana dana-demo | jq -r '.access_token // empty') || DANA=""
+  DANA=$(ui_token dana "$LAB_PASSWORD_DANA" | jq -r '.access_token // empty') || DANA=""
   code=$([ -n "$DANA" ] && CHAT_TOKEN=$DANA api DELETE /api/agents/sv-agents/no-such-agent | tail -1) || code="no token for dana (sign-in failed)"
   if [ "$code" = 404 ]; then res ok "a platform engineer (kagent Admin) through the Solo UI: may change agents (404 for no such agent)"
   else res no "a platform engineer (kagent Admin) through the Solo UI: may change agents" "HTTP ${code:-no answer}"; fi
@@ -458,7 +458,7 @@ if ! K get ns sv-contingency >/dev/null 2>&1 || ! K get idc sterling-vance -n sv
 else
   # a fresh sign-in at S&V's own Keycloak: the session from before the outage
   # below (Bob's first token may have expired by now; they live 5 minutes)
-  BOB=$(sso_token bob bob-demo | jq -r '.access_token // empty') || BOB=""
+  BOB=$(sso_token bob "$LAB_PASSWORD_BOB" | jq -r '.access_token // empty') || BOB=""
   expect_res '^aal2 pwd otp$' "Bob's sign-in at S&V's own Keycloak took a second factor: idp_acr aal2, idp_amr pwd otp" "$(claim "$BOB" idp_acr) $(claim "$BOB" idp_amr)"
   expect_res '^200 allow advisor-workspace: AAL2 via keycloak' "advisor-workspace (Critical, AAL2): Bob's agent allowed" "$(gate_says "$BOB" "$GW")"
   expect_res '^200 allow ledgerline-research: AAL2 via keycloak' "ledgerline-research (High, AAL2): allowed before anything is exchanged" "$(gate_says "$BOB" "$XAA")"
@@ -478,7 +478,7 @@ YAML
     "$(wlp advisor-workspace phase) $(wlp advisor-workspace serving) $(wlp advisor-workspace servingLevel)"
   expect_res '^FailedClosed Degraded$' "ledgerline-research FailedClosed; agent-console (Standard, AAL1) keeps serving, Degraded" \
     "$(wlp ledgerline-research phase) $(wlp agent-console phase)"
-  WEAK=$(sso_token bob bob-demo | jq -r '.access_token // empty') || WEAK=""
+  WEAK=$(sso_token bob "$LAB_PASSWORD_BOB" | jq -r '.access_token // empty') || WEAK=""
   expect_res '^contingency aal1$' "Bob signs in again: through contingency, password only (idp_acr aal1)" "$(claim "$WEAK" idp) $(claim "$WEAK" idp_acr)"
   expect_res '^401 deny advisor-workspace: assurance AAL1 below AAL2: session from contingency' \
     "his new session at advisor-workspace: refused (401 insufficient_user_authentication), fail closed" "$(gate_says "$WEAK" "$GW")"
