@@ -569,6 +569,7 @@ browser_signin() {
     case "$url" in "$cb"*) echo "$url"; return 0 ;; esac
     case "$url" in
       https://idp."$SV_DOMAIN"/*|https://login."$SV_DOMAIN"/*|https://login-dr."$SV_DOMAIN"/*|https://idp."$LEDGERLINE_DOMAIN"/*) ;;
+      "$MCP_PUBLIC_URL"/oauth-issuer/*) ;;   # agentgateway's OAuth issuer (Enterprise)
       *) echo "browser_signin: sign-in continues at ${url%%\?*}, outside S&V's own IdP" >&2; return 1 ;;
     esac
     hdr=$(curl -s --cacert "$LAB_CA_DIR/ca.crt" -b "$jar" -c "$jar" -D - -o "$body" "$url")
@@ -656,6 +657,28 @@ ui_token() { pkce_token kagent-ui "https://kagent.$SV_DOMAIN/callback" "$1" "$2"
 # mcp_client_token <user> <pass>: an AI client's sign-in at S&V's front door
 # (the client the gateway hands out, sv-mcp-client, on a loopback redirect)
 mcp_client_token() { pkce_token sv-mcp-client "http://127.0.0.1:33418/callback" "$1" "$2"; }
+# issuer_client_token <user> <pass> [resource path]: an AI client's sign-in
+# through agentgateway's OAuth issuer (Enterprise), as any MCP client does it:
+# the resource's metadata names the issuer; the client registers itself
+# (dynamic registration, a loopback redirect), signs the user in through S&V's
+# broker (PKCE), and redeems the code. Prints the token response.
+issuer_client_token() {
+  local res="$MCP_PUBLIC_URL/mcp/${3:-bob-workspace}" cb="http://127.0.0.1:6274/oauth/callback" meta cid verifier challenge state url code
+  local C=(--cacert "$LAB_CA_DIR/ca.crt" -s --max-time 20)
+  meta=$(curl "${C[@]}" "$(echo "$res" | sed -E 's#^(https://[^/]+)(.*)#\1/.well-known/oauth-authorization-server\2#')") || return 1
+  cid=$(curl "${C[@]}" "$(echo "$meta" | jq -r .registration_endpoint)" -H 'content-type: application/json' \
+    -d "$(jq -nc --arg r "$cb" '{redirect_uris: [$r], client_name: "lab check", token_endpoint_auth_method: "none"}')" | jq -r '.client_id // empty')
+  [ -n "$cid" ] || { echo "issuer_client_token: no registration" >&2; return 1; }
+  verifier=$(openssl rand -hex 32) state=$(openssl rand -hex 8)
+  challenge=$(printf '%s' "$verifier" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+  url=$(browser_signin "$(echo "$meta" | jq -r .authorization_endpoint)?response_type=code&client_id=$(jq -rn --arg v "$cid" '$v|@uri')&redirect_uri=$(jq -rn --arg v "$cb" '$v|@uri')&state=$state&code_challenge=$challenge&code_challenge_method=S256&resource=$(jq -rn --arg v "$res" '$v|@uri')&scope=openid" \
+    "$cb" "$1" "$2") || return 1
+  code=$(python3 -c 'import sys, urllib.parse as u; print(u.parse_qs(u.urlsplit(sys.argv[1]).query).get("code", [""])[0])' "$url")
+  [ -n "$code" ] || { echo "issuer_client_token: no code in $url" >&2; return 1; }
+  _C=$code _V=$verifier _I=$cid _R=$cb _S=$res jq -rn '{grant_type: "authorization_code", client_id: $ENV._I, code: $ENV._C, code_verifier: $ENV._V, redirect_uri: $ENV._R, resource: $ENV._S}
+     | to_entries | map("\(.key)=\(.value | @uri)") | join("&")' \
+    | curl "${C[@]}" "$(echo "$meta" | jq -r .token_endpoint)" --data @-
+}
 
 # a2a_send <access token> <json-rpc body>: one A2A turn with Bob's agent, sent
 # as kagent's UI would (from a probe running as its service account,

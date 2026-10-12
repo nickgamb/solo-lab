@@ -19,6 +19,12 @@ kind: Relationship
 metadata: {name: ai-clients-act-for-advisors, namespace: sv-identity}
 spec: {model: sterling-vance, user: "group:advisors#member", relation: acts_for, object: agent:client.sv-mcp-client}
 ---
+# the same clients, signed in through agentgateway's OAuth issuer (Enterprise)
+apiVersion: continuity.lab.solo.io/v1alpha1
+kind: Relationship
+metadata: {name: ai-clients-via-issuer-act-for-advisors, namespace: sv-identity}
+spec: {model: sterling-vance, user: "group:advisors#member", relation: acts_for, object: agent:client.sv-mcp-issuer}
+---
 apiVersion: continuity.lab.solo.io/v1alpha1
 kind: Relationship
 metadata: {name: advisors-call-bob-workspace, namespace: sv-identity}

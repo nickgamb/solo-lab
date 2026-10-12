@@ -3,11 +3,13 @@
 #   https://mcp.${SV_DOMAIN}/mcp/bob-workspace   Bob's workspace
 #   https://mcp.${SV_DOMAIN}/mcp/ledgerline      Ledgerline Research (Cross App Access)
 # A client with no token is told where to sign in (401, protected-resource
-# metadata, MCP authorization). The gateway names itself the authorization
-# server and hands sign-in to S&V's broker, which redirects straight to the
-# primary IdP (and to the next one on failover). The client never registers
-# itself: the gateway gives every client the one S&V registered for them
-# (sv-mcp-client: public, PKCE, loopback redirects).
+# metadata, MCP authorization). On Enterprise, agentgateway's OAuth issuer is
+# the authorization server: a client registers itself (dynamic registration),
+# names itself by a client ID metadata document, or uses one S&V registered,
+# and signs in through S&V's broker as the issuer's client there
+# (sv-mcp-issuer), which redirects straight to the active IdP. On OSS, the
+# gateway hands every client the one S&V registered (sv-mcp-client: public,
+# PKCE, loopback redirects). Either way the client gets the broker's token.
 #
 # Then the same path as the firm's own agents (20-front-door.yaml,
 # xaa/ledgerline.yaml): Bob's token is verified, the client and his groups and
@@ -27,6 +29,7 @@ spec:
     - path: {type: PathPrefix, value: /mcp/}
     - path: {type: PathPrefix, value: /.well-known/oauth-protected-resource/mcp/}
     - path: {type: PathPrefix, value: /.well-known/oauth-authorization-server/mcp/}
+    - path: {type: PathPrefix, value: /oauth-issuer/}   # Enterprise: agentgateway's OAuth issuer (platform/40-agentgateway/sts.yaml)
     timeouts: {request: 300s}   # a tool call and its stream, not the edge's 15 s default
     backendRefs: [{name: ai-gateway, port: 80}]
 ---
@@ -80,18 +83,13 @@ spec:
             backendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}
             jwksPath: /realms/sterling-vance/protocol/openid-connect/certs
             cacheDuration: 5m
-      mcp:
-        provider: Keycloak
-        clientId: sv-mcp-client
-        resourceMetadata:
-          scopesSupported: [openid, profile, email]
-          bearerMethodsSupported: [header]
+      mcp: ${MCP_CLIENT_AUTH_BOB_WORKSPACE}
     authorization:
       action: Allow
       policy:
         matchExpressions:
         # an AI client S&V registered, through the edge, acting for an advisor
-        - 'source.identity.namespace == "kgateway-system" && source.identity.serviceAccount == "edge" && jwt.azp == "sv-mcp-client" && "advisors" in jwt.groups'
+        - 'source.identity.namespace == "kgateway-system" && source.identity.serviceAccount == "edge" && jwt.azp in ["sv-mcp-client", "sv-mcp-issuer"] && "advisors" in jwt.groups'
     # the same assurance rule as the firm's own agents (advisor-workspace)
     ${ASSURANCE_POINT_OPEN}advisor-workspace${ASSURANCE_POINT_CLOSE}
 ---
@@ -112,17 +110,12 @@ spec:
             backendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}
             jwksPath: /realms/sterling-vance/protocol/openid-connect/certs
             cacheDuration: 5m
-      mcp:
-        provider: Keycloak
-        clientId: sv-mcp-client
-        resourceMetadata:
-          scopesSupported: [openid, profile, email]
-          bearerMethodsSupported: [header]
+      mcp: ${MCP_CLIENT_AUTH_LEDGERLINE}
     authorization:
       action: Allow
       policy:
         matchExpressions:
-        - 'source.identity.namespace == "kgateway-system" && source.identity.serviceAccount == "edge" && jwt.azp == "sv-mcp-client" && "advisors" in jwt.groups'
+        - 'source.identity.namespace == "kgateway-system" && source.identity.serviceAccount == "edge" && jwt.azp in ["sv-mcp-client", "sv-mcp-issuer"] && "advisors" in jwt.groups'
     # the same assurance rule as the firm's agents' way to Ledgerline
     ${ASSURANCE_POINT_OPEN}ledgerline-research${ASSURANCE_POINT_CLOSE}
     # the subject of the ID-JAG exchange and its voucher, as for the firm's

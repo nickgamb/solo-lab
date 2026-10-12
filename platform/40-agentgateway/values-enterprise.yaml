@@ -18,3 +18,19 @@ tokenExchange:
   - validatorType: k8s
   apiValidators:
   - validatorType: k8s
+  # shared by the controller's replicas and kept across restarts
+  # (sts-db.yaml); the chart takes the credentials in the URL only
+  database:
+    type: postgres
+    postgres: {url: '${STS_DB_URL}'}
+  # expired tokens and stale sign-ins removed, by one replica at a time
+  maintenance: {enabled: true}
+# Its OAuth issuer: the authorization server for AI clients outside the mesh
+# at the firm's front door (demos/bob/manifests/22-ai-clients.yaml). It signs
+# no tokens of its own: a client signs in through S&V's broker as the issuer's
+# client there (sv-mcp-issuer) and gets the broker's token. Built by
+# install.sh from config/lab.env (MCP_PUBLIC_URL, MCP_CLIENT_REDIRECT_URIS,
+# MCP_CIMD_TRUSTED_DOMAINS).
+controller:
+  extraEnv:
+    KGW_OAUTH_ISSUER_CONFIG: '${MCP_ISSUER_CONFIG}'
