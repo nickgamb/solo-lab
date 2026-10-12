@@ -33,12 +33,59 @@ helm_up "$KGATEWAY_RELEASE-crds" "$CRDS" "$([ "$CRDS" = "$KGATEWAY_CRDS_CHART" ]
 values_for "$D" values "$ED"
 helm_up "$KGATEWAY_RELEASE" "$KGATEWAY_CHART" "$KGATEWAY_VERSION" kgateway-system ${VALS[@]+"${VALS[@]}"}
 
+# Each party's certificate names: a wildcard from the lab CA; from Let's
+# Encrypt, every hostname the lab publishes under the party's domain
+# (lab_hosts), one HTTP-01 challenge each
+tls_names() {  # tls_names <domain>
+  if [ "$LAB_CERT_ISSUER" = letsencrypt ]; then
+    lab_hosts | tr ' ' '\n' | awk -v d=".$1" 'substr($0, length($0) - length(d) + 1) == d {printf "%s\"%s\"", (n++ ? ", " : "["), $0} END {print "]"}'
+  else
+    echo "[\"*.$1\"]"
+  fi
+}
+export OPS_TLS_NAMES SV_TLS_NAMES ALICE_TLS_NAMES MERIDIAN_TLS_NAMES LEDGERLINE_TLS_NAMES EDGE_HTTP_ROUTES
+OPS_TLS_NAMES=$(tls_names "$OPS_DOMAIN")
+SV_TLS_NAMES=$(tls_names "$SV_DOMAIN")
+ALICE_TLS_NAMES=$(tls_names "$ALICE_DOMAIN")
+MERIDIAN_TLS_NAMES=$(tls_names "$MERIDIAN_DOMAIN")
+LEDGERLINE_TLS_NAMES=$(tls_names "$LEDGERLINE_DOMAIN")
+PARTY_TLS_NS="kgateway-system sv-identity alice meridian ledgerline-identity"
+EDGE_HTTP_ROUTES='{from: Same}'
+
+case "$LAB_CERT_ISSUER" in
+  lab-ca) ;;
+  letsencrypt)
+    # port 80 also takes the challenge routes from the certificates' namespaces
+    EDGE_HTTP_ROUTES="{from: Selector, selector: {matchExpressions: [{key: kubernetes.io/metadata.name, operator: In, values: [${PARTY_TLS_NS// /, }]}]}}"
+    step "Edge gateway (kgateway-system/edge), port 80 for Let's Encrypt"
+    apply_tmpl "$D/edge-gateway.yaml" "$D/redirect.yaml" "$D/acme.yaml"
+    wait_for "ClusterIssuer letsencrypt Ready" 30 2 K wait clusterissuer/letsencrypt --for=condition=Ready --timeout=2s
+    # certificates kept from an earlier build of this domain, still good for
+    # 30 days: cert-manager keeps them rather than asking Let's Encrypt again
+    CERTS="$LAB_STATE/edge-certs/$LAB_TLD"
+    for ns in $PARTY_TLS_NS; do
+      f="$CERTS/$ns.yaml"
+      [ -s "$f" ] && yq '.data."tls.crt"' "$f" | base64 -d | openssl x509 -noout -checkend 2592000 >/dev/null 2>&1         && K apply -f "$f" >/dev/null
+    done
+    ;;
+  *) die "LAB_CERT_ISSUER=$LAB_CERT_ISSUER: lab-ca or letsencrypt" ;;
+esac
+
 step "Party edge certificates"
 apply_tmpl "$D/party-tls.yaml"
-for ns in kgateway-system sv-identity alice meridian ledgerline-identity; do
-  K wait -n "$ns" certificate/edge-tls --for=condition=Ready --timeout=120s >/dev/null
+for ns in $PARTY_TLS_NS; do
+  K wait -n "$ns" certificate/edge-tls --for=condition=Ready --timeout="$([ "$LAB_CERT_ISSUER" = letsencrypt ] && echo 300s || echo 120s)" >/dev/null \
+    || die "certificate $ns/edge-tls not issued (kubectl describe certificate -n $ns edge-tls; kubectl get challenges -A)"
 done
-ok "issued by lab-ca; each party holds its own key"
+if [ "$LAB_CERT_ISSUER" = letsencrypt ]; then
+  mkdir -p "$CERTS" && chmod 700 "$CERTS"
+  for ns in $PARTY_TLS_NS; do
+    K get secret edge-tls -n "$ns" -o yaml \
+      | yq 'del(.metadata.uid, .metadata.resourceVersion, .metadata.creationTimestamp, .metadata.ownerReferences, .metadata.managedFields)' \
+      > "$CERTS/$ns.yaml" && chmod 600 "$CERTS/$ns.yaml"
+  done
+fi
+ok "issued by $LAB_CERT_ISSUER; each party holds its own key"
 
 step "Edge gateway (kgateway-system/edge)"
 apply_tmpl "$D/edge-gateway.yaml" "$D/redirect.yaml"

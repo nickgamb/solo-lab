@@ -157,11 +157,11 @@ if [ "$KAGENT_EDITION" = enterprise ] || [ "$AGW_EDITION" = enterprise ] || [ "$
   step "Solo UI"
   expect '^true$' "its pods are ready (UI, collectors, ClickHouse)" \
     "$(K get pods -n solo-enterprise -o json | jq '[.items[] | .status.containerStatuses[]?.ready] | length > 0 and all')"
-  expect '^200$' "https://kagent.$SV_DOMAIN answers" "$(curl -s -o /dev/null -w '%{http_code}' --cacert "$LAB_CA_DIR/ca.crt" "https://kagent.$SV_DOMAIN/")"
+  expect '^200$' "https://kagent.$SV_DOMAIN answers" "$(curl -s -o /dev/null -w '%{http_code}' --cacert "$LAB_TRUST" "https://kagent.$SV_DOMAIN/")"
   # S&V's broker takes the sign-in (client kagent-ui, PKCE, its callback) and
   # sends it on to the active IdP; an unknown client or callback is an error page
   expect '^30[23]$' "S&V's broker takes its sign-in (client kagent-ui, PKCE, its callback)" \
-    "$(curl -s -o /dev/null -w '%{http_code}' --cacert "$LAB_CA_DIR/ca.crt" "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/auth?client_id=kagent-ui&redirect_uri=https%3A%2F%2Fkagent.$SV_DOMAIN%2Fcallback&response_type=code&scope=openid&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=verify")"
+    "$(curl -s -o /dev/null -w '%{http_code}' --cacert "$LAB_TRUST" "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/auth?client_id=kagent-ui&redirect_uri=https%3A%2F%2Fkagent.$SV_DOMAIN%2Fcallback&response_type=code&scope=openid&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=verify")"
 fi
 
 echo; [ $fail -eq 0 ] && ok "observatory: $pass/$((pass+fail)) checks passed" || die "observatory: $fail of $((pass+fail)) checks failed"

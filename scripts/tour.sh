@@ -14,7 +14,7 @@
 need_cluster; need_password_grant
 PAUSE=${TOUR_PAUSE:-12} FROM=${TOUR_FROM:-1}
 AUTO=${TOUR_AUTO:-}; [ -t 0 ] || AUTO=1
-CA=(--cacert "$LAB_CA_DIR/ca.crt")
+CA=(--cacert "$LAB_TRUST")
 _B=$'\033[1m' _D=$'\033[2m' _N=$'\033[0m'
 
 scene() {  # scene <n> <title>: returns false when skipped by TOUR_FROM

@@ -1,0 +1,49 @@
+# Let's Encrypt (LAB_CERT_ISSUER=letsencrypt): each party's certificate by
+# HTTP-01. cert-manager adds a route for each challenge on the edge's port 80
+# in the certificate's namespace, to a solver pod there.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata: {name: letsencrypt}
+spec:
+  acme:
+    server: ${LAB_ACME_SERVER}
+    email: "${LAB_ACME_EMAIL}"
+    privateKeySecretRef: {name: letsencrypt-account}
+    solvers:
+    - http01:
+        gatewayHTTPRoute:
+          parentRefs: [{name: edge, namespace: kgateway-system, kind: Gateway, sectionName: http}]
+---
+# The parties' namespaces deny by default: the edge reaches their solver pods,
+# for renewals once the mesh baseline is in place
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: acme-http01, namespace: sv-identity}
+spec:
+  selector: {matchLabels: {acme.cert-manager.io/http01-solver: "true"}}
+  action: ALLOW
+  rules: [{from: [{source: {principals: [cluster.local/ns/kgateway-system/sa/edge]}}], to: [{operation: {ports: ["8089"]}}]}]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: acme-http01, namespace: alice}
+spec:
+  selector: {matchLabels: {acme.cert-manager.io/http01-solver: "true"}}
+  action: ALLOW
+  rules: [{from: [{source: {principals: [cluster.local/ns/kgateway-system/sa/edge]}}], to: [{operation: {ports: ["8089"]}}]}]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: acme-http01, namespace: meridian}
+spec:
+  selector: {matchLabels: {acme.cert-manager.io/http01-solver: "true"}}
+  action: ALLOW
+  rules: [{from: [{source: {principals: [cluster.local/ns/kgateway-system/sa/edge]}}], to: [{operation: {ports: ["8089"]}}]}]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: acme-http01, namespace: ledgerline-identity}
+spec:
+  selector: {matchLabels: {acme.cert-manager.io/http01-solver: "true"}}
+  action: ALLOW
+  rules: [{from: [{source: {principals: [cluster.local/ns/kgateway-system/sa/edge]}}], to: [{operation: {ports: ["8089"]}}]}]

@@ -81,13 +81,13 @@ n_prompt=$(jq '[.[] | select(.kind == "Prompt")] | length' <<<"$docs")
 
 # the catalog's service account: client credentials, the secret on stdin
 token=$(printf 'grant_type=client_credentials&client_id=agentregistry-catalog&client_secret=%s' "$(lab_secret SV_AGENTREGISTRY_CATALOG_SECRET)" \
-  | curl -sf --cacert "$LAB_CA_DIR/ca.crt" -d @- "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/token" | jq -r '.access_token // empty') \
+  | curl -sf --cacert "$LAB_TRUST" -d @- "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/token" | jq -r '.access_token // empty') \
   || die "no token for agentregistry-catalog from S&V's Keycloak (make layer-45 adds the client)"
 [ -n "$token" ] || die "no token for agentregistry-catalog from S&V's Keycloak (make layer-45 adds the client)"
 
 yaml=$(jq -c '.[]' <<<"$docs" | while read -r d; do echo '---'; yq -P <<<"$d"; done)
 # the token as a header from a file descriptor, never an argument
-out=$(curl -s --cacert "$LAB_CA_DIR/ca.crt" -H @<(printf 'Authorization: Bearer %s\n' "$token") -H 'Content-Type: application/yaml' \
+out=$(curl -s --cacert "$LAB_TRUST" -H @<(printf 'Authorization: Bearer %s\n' "$token") -H 'Content-Type: application/yaml' \
   -X POST --data-binary @- -w '\n%{http_code}' "https://registry.$SV_DOMAIN/v0/apply" <<<"$yaml" 2>&1) || true
 code=$(tail -1 <<<"$out")
 [ "$code" = 200 ] || die "publishing to https://registry.$SV_DOMAIN failed ($code): $(sed '$d' <<<"$out" | head -c 600)"
@@ -99,7 +99,7 @@ ok "published $n_agent agents, $n_prompt prompts and $n_mcp MCP servers, readabl
 if [ "$runtime" = kagent ]; then
   # the registry connects to the kagent controller on its own; its discovery
   # lists what runs there as unmanaged instances a moment later
-  synced=$(curl -s --cacert "$LAB_CA_DIR/ca.crt" -H @<(printf 'Authorization: Bearer %s\n' "$token") "https://registry.$SV_DOMAIN/v0/runtimes/kagent" \
+  synced=$(curl -s --cacert "$LAB_TRUST" -H @<(printf 'Authorization: Bearer %s\n' "$token") "https://registry.$SV_DOMAIN/v0/runtimes/kagent" \
     | jq -r '[.status.conditions[]? | select(.type == "Synced") | .status][0] // "unknown"')
   [ "$synced" = True ] && ok "runtime kagent: connected to the kagent controller (sv-agents)" \
     || warn "runtime kagent: not synced yet ($synced): GET /v0/runtimes/kagent says why"

@@ -1,43 +1,45 @@
 # Each party's edge certificate (and private key) lives in its own namespace,
 # and the party grants the edge Gateway read access with a ReferenceGrant. The
-# platform never holds a party's key. The shared lab CA signs them all, so it
-# doesn't stop one namespace from requesting another's name
-# (docs/ARCHITECTURE.md, "What the lab doesn't enforce").
+# platform never holds a party's key. One issuer (LAB_CERT_ISSUER) signs them
+# all, so it doesn't stop one namespace from requesting another's name
+# (docs/ARCHITECTURE.md, "What the lab doesn't enforce"). Names: a wildcard per
+# party from the lab CA; each party's hostnames from Let's Encrypt
+# (config/lab.env, *_HOSTS).
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata: {name: edge-tls, namespace: kgateway-system}
 spec:
   secretName: edge-tls
-  dnsNames: ["*.${OPS_DOMAIN}"]
+  dnsNames: ${OPS_TLS_NAMES}
   privateKey: {algorithm: ECDSA, size: 256}
-  issuerRef: {name: lab-ca, kind: ClusterIssuer}
+  issuerRef: {name: ${LAB_CERT_ISSUER}, kind: ClusterIssuer}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata: {name: edge-tls, namespace: sv-identity}
 spec:
   secretName: edge-tls
-  dnsNames: ["*.${SV_DOMAIN}"]
+  dnsNames: ${SV_TLS_NAMES}
   privateKey: {algorithm: ECDSA, size: 256}
-  issuerRef: {name: lab-ca, kind: ClusterIssuer}
+  issuerRef: {name: ${LAB_CERT_ISSUER}, kind: ClusterIssuer}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata: {name: edge-tls, namespace: alice}
 spec:
   secretName: edge-tls
-  dnsNames: ["*.${ALICE_DOMAIN}"]
+  dnsNames: ${ALICE_TLS_NAMES}
   privateKey: {algorithm: ECDSA, size: 256}
-  issuerRef: {name: lab-ca, kind: ClusterIssuer}
+  issuerRef: {name: ${LAB_CERT_ISSUER}, kind: ClusterIssuer}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata: {name: edge-tls, namespace: meridian}
 spec:
   secretName: edge-tls
-  dnsNames: ["*.${MERIDIAN_DOMAIN}"]
+  dnsNames: ${MERIDIAN_TLS_NAMES}
   privateKey: {algorithm: ECDSA, size: 256}
-  issuerRef: {name: lab-ca, kind: ClusterIssuer}
+  issuerRef: {name: ${LAB_CERT_ISSUER}, kind: ClusterIssuer}
 ---
 apiVersion: gateway.networking.k8s.io/v1beta1
 kind: ReferenceGrant
@@ -65,9 +67,9 @@ kind: Certificate
 metadata: {name: edge-tls, namespace: ledgerline-identity}
 spec:
   secretName: edge-tls
-  dnsNames: ["*.${LEDGERLINE_DOMAIN}"]
+  dnsNames: ${LEDGERLINE_TLS_NAMES}
   privateKey: {algorithm: ECDSA, size: 256}
-  issuerRef: {name: lab-ca, kind: ClusterIssuer}
+  issuerRef: {name: ${LAB_CERT_ISSUER}, kind: ClusterIssuer}
 ---
 apiVersion: gateway.networking.k8s.io/v1beta1
 kind: ReferenceGrant

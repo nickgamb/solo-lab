@@ -14,7 +14,7 @@ echo "  everything else -> $(echo "$idc" | jq -r '.status.active') (active)"
 step "Sign-ins, through the edge"
 A="https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/auth?response_type=code&scope=openid&code_challenge=vErIfYvErIfYvErIfYvErIfYvErIfYvErIfYvErIf00&code_challenge_method=S256&state=routes"
 lands() {
-  local loc; loc=$(curl -s --cacert "$LAB_CA_DIR/ca.crt" -o /dev/null -w '%{redirect_url}' "$A&$2")
+  local loc; loc=$(curl -s --cacert "$LAB_TRUST" -o /dev/null -w '%{redirect_url}' "$A&$2")
   case "$loc" in
     */broker/*/login*) loc=${loc#*/broker/}; printf '  %-34s -> %s\n' "$1" "${loc%%/*}" ;;
     "") printf '  %-34s -> %s\n' "$1" "the broker's own sign-in form" ;;

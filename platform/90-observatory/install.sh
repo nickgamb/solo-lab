@@ -77,5 +77,5 @@ apply_tmpl "$D/observatory.yaml"
 apply_tmpl "$D/telemetry.yaml"
 rollout observatory deploy/observatory
 wait_for "https://observatory.$OPS_DOMAIN" 30 3 \
-  sh -c "curl -s --cacert '$LAB_CA_DIR/ca.crt' -o /dev/null -w '%{http_code}' https://observatory.$OPS_DOMAIN/ | grep -q 302"
+  sh -c "curl -s --cacert '$LAB_TRUST' -o /dev/null -w '%{http_code}' https://observatory.$OPS_DOMAIN/ | grep -q 302"
 ok "https://observatory.$OPS_DOMAIN"

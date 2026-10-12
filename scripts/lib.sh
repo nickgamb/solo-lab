@@ -39,6 +39,19 @@ for _p in ISTIO KGATEWAY AGW KAGENT AGENTREGISTRY; do
 done
 unset _p _ed _k
 
+# What the lab's own HTTPS checks trust: the lab CA and the host's public
+# roots, so they verify the edge whichever issues its certificates
+# (LAB_CERT_ISSUER: the lab CA, or Let's Encrypt for public names).
+LAB_TRUST="$LAB_STATE/trust.pem"
+{
+  [ -f "$LAB_CA_DIR/ca.crt" ] && cat "$LAB_CA_DIR/ca.crt"
+  for _f in /etc/ssl/cert.pem /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt; do
+    [ -f "$_f" ] && { cat "$_f"; break; }
+  done
+} > "$LAB_TRUST.tmp" 2>/dev/null && mv "$LAB_TRUST.tmp" "$LAB_TRUST"
+unset _f
+export LAB_TRUST
+
 # Per-product license keys fall back to one shared key. Solo trial keys are
 # often product-scoped (kagent-enterprise rejects an agentgateway key), so
 # set the specific one when you have it.
@@ -572,20 +585,20 @@ browser_signin() {
       "$MCP_PUBLIC_URL"/oauth-issuer/*) ;;   # agentgateway's OAuth issuer (Enterprise)
       *) echo "browser_signin: sign-in continues at ${url%%\?*}, outside S&V's own IdP" >&2; return 1 ;;
     esac
-    hdr=$(curl -s --cacert "$LAB_CA_DIR/ca.crt" -b "$jar" -c "$jar" -D - -o "$body" "$url")
+    hdr=$(curl -s --cacert "$LAB_TRUST" -b "$jar" -c "$jar" -D - -o "$body" "$url")
     loc=$(echo "$hdr" | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r')
     if [ -z "$loc" ] && [ -z "$posted" ] && grep -q 'id="kc-form-login"' "$body" && case "$url" in https://login."$SV_DOMAIN"/*|https://login-dr."$SV_DOMAIN"/*) true ;; *) false ;; esac; then
       action=$(grep -o 'id="kc-form-login"[^>]*action="[^"]*"' "$body" | sed 's/.*action="//; s/"$//; s/&amp;/\&/g')
       [ -n "$action" ] || action=$(grep -o 'action="[^"]*"' "$body" | head -1 | sed 's/action="//; s/"$//; s/&amp;/\&/g')
       hdr=$(_U=$3 _P=$4 jq -rn '{username: $ENV._U, password: $ENV._P, credentialId: ""} | to_entries | map("\(.key)=\(.value | @uri)") | join("&")' \
-        | curl -s --cacert "$LAB_CA_DIR/ca.crt" -b "$jar" -c "$jar" -D - -o "$body" "$action" --data @-)
+        | curl -s --cacert "$LAB_TRUST" -b "$jar" -c "$jar" -D - -o "$body" "$action" --data @-)
       loc=$(echo "$hdr" | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r'); posted=1
     fi
     if [ -z "$loc" ] && [ -n "$posted" ] && [ -z "$otp" ] && grep -q 'id="kc-otp-login-form"' "$body"; then
       action=$(grep -o 'id="kc-otp-login-form"[^>]*action="[^"]*"' "$body" | sed 's/.*action="//; s/"$//; s/&amp;/\&/g')
       code=$(totp_code "$3") || return 1
       hdr=$(_O=$code jq -rn '{otp: $ENV._O} | to_entries | map("\(.key)=\(.value | @uri)") | join("&")' \
-        | curl -s --cacert "$LAB_CA_DIR/ca.crt" -b "$jar" -c "$jar" -D - -o "$body" "$action" --data @-)
+        | curl -s --cacert "$LAB_TRUST" -b "$jar" -c "$jar" -D - -o "$body" "$action" --data @-)
       loc=$(echo "$hdr" | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r'); otp=1
     fi
     if [ -z "$loc" ]; then
@@ -633,7 +646,7 @@ sso_token() {
   _C=$code _V=$verifier _S=$(lab_secret_get SV_KAGENT_CLIENT_SECRET) _R="https://kagent.$SV_DOMAIN/oauth2/redirect" jq -rn \
     '{grant_type: "authorization_code", client_id: "kagent", client_secret: $ENV._S, code: $ENV._C, code_verifier: $ENV._V, redirect_uri: $ENV._R}
      | to_entries | map("\(.key)=\(.value | @uri)") | join("&")' \
-    | curl -s --cacert "$LAB_CA_DIR/ca.crt" "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/token" --data @-
+    | curl -s --cacert "$LAB_TRUST" "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/token" --data @-
 }
 
 # pkce_token <client> <redirect URI> <user> <pass>: an S&V employee signs in
@@ -650,7 +663,7 @@ pkce_token() {
   _C=$code _V=$verifier _R=$redirect _I=$client jq -rn \
     '{grant_type: "authorization_code", client_id: $ENV._I, code: $ENV._C, code_verifier: $ENV._V, redirect_uri: $ENV._R}
      | to_entries | map("\(.key)=\(.value | @uri)") | join("&")' \
-    | curl -s --cacert "$LAB_CA_DIR/ca.crt" "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/token" --data @-
+    | curl -s --cacert "$LAB_TRUST" "https://idp.$SV_DOMAIN/realms/sterling-vance/protocol/openid-connect/token" --data @-
 }
 # ui_token <user> <pass>: the Solo UI's sign-in (its public client kagent-ui)
 ui_token() { pkce_token kagent-ui "https://kagent.$SV_DOMAIN/callback" "$1" "$2"; }
@@ -664,7 +677,7 @@ mcp_client_token() { pkce_token sv-mcp-client "http://127.0.0.1:33418/callback" 
 # broker (PKCE), and redeems the code. Prints the token response.
 issuer_client_token() {
   local res="$MCP_PUBLIC_URL/mcp/${3:-bob-workspace}" cb="http://127.0.0.1:6274/oauth/callback" meta cid verifier challenge state url code
-  local C=(--cacert "$LAB_CA_DIR/ca.crt" -s --max-time 20)
+  local C=(--cacert "$LAB_TRUST" -s --max-time 20)
   meta=$(curl "${C[@]}" "$(echo "$res" | sed -E 's#^(https://[^/]+)(.*)#\1/.well-known/oauth-authorization-server\2#')") || return 1
   cid=$(curl "${C[@]}" "$(echo "$meta" | jq -r .registration_endpoint)" -H 'content-type: application/json' \
     -d "$(jq -nc --arg r "$cb" '{redirect_uris: [$r], client_name: "lab check", token_endpoint_auth_method: "none"}')" | jq -r '.client_id // empty')

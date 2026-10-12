@@ -35,8 +35,8 @@ nodes:
   # edge gateway (kgateway) NodePorts -> localhost
   - containerPort: 30080
     hostPort: ${LAB_HTTP_PORT}
-    listenAddress: "127.0.0.1"
+    listenAddress: "${LAB_LISTEN_ADDRESS}"
   - containerPort: 30443
     hostPort: ${LAB_HTTPS_PORT}
-    listenAddress: "127.0.0.1"
+    listenAddress: "${LAB_LISTEN_ADDRESS}"
 ${KIND_WORKER_NODES}

@@ -94,7 +94,7 @@
   "users": [
     {
       "username": "bob",
-      "email": "bob@${SV_DOMAIN}",
+      "email": "bob@${SV_MAIL_DOMAIN}",
       "firstName": "Bob",
       "lastName": "Reyes",
       "enabled": true,
@@ -122,7 +122,7 @@
     },
     {
       "username": "carol",
-      "email": "carol@${SV_DOMAIN}",
+      "email": "carol@${SV_MAIL_DOMAIN}",
       "firstName": "Carol",
       "lastName": "Diaz",
       "enabled": true,
@@ -159,7 +159,7 @@
     },
     {
       "username": "dana",
-      "email": "dana@${SV_DOMAIN}",
+      "email": "dana@${SV_MAIL_DOMAIN}",
       "firstName": "Dana",
       "lastName": "Okafor",
       "enabled": true,
