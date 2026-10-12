@@ -31,7 +31,7 @@ logs ledgerline gateway.networking.k8s.io/gateway-name=waypoint >"$out/ledgerlin
 K get "$AGW_BACKEND_KIND" -l lab.solo.io/xaa-voucher -n agentgateway-system -o yaml 2>/dev/null \
   | yq '[.items[] | {"name": .metadata.name, "voucher": .metadata.labels["lab.solo.io/xaa-voucher"], "crossAppAccess": .spec.mcp.targets[0].static.policies.auth.crossAppAccess}]' >"$out/xaa-config.yaml"
 if ras_external; then
-  (idp_discover "$LEDGERLINE_AS_ISSUER") >"$out/discovery-resource-as.json" || warn "no discovery from Ledgerline's AS: $out/discovery-resource-as.json is empty"
+  (as_discover "$LEDGERLINE_AS_ISSUER") >"$out/discovery-resource-as.json" || warn "no discovery from Ledgerline's AS: $out/discovery-resource-as.json is empty"
 fi
 for f in "$out"/*; do printf '  %-28s %s lines\n' "$(basename "$f")" "$(wc -l <"$f" | tr -d ' ')"; done
 ok "Cross App Access trail: $out"
