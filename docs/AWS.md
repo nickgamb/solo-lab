@@ -88,6 +88,7 @@ In `.env`:
 | `AWS_ENV` | | more `.env` lines for the instance only (or a file: `.lab/aws/env`) |
 | `LAB_ACME_EMAIL` | | Let's Encrypt's contact for expiry notices |
 | `LAB_ACME_SERVER` | Let's Encrypt production | the staging directory for rehearsals |
+| `MCP_UPSTREAM_CIMD` | `false` | `true` in `AWS_ENV`: the gateway names itself to outside MCP servers' authorization servers by its own client ID metadata document (`make upstream-mcp`, [IDENTITY-FLOWS.md](IDENTITY-FLOWS.md)) |
 
 Let's Encrypt certificates are kept on the instance in `.lab/edge-certs/` and
 reused by later builds of the same names until 30 days before they expire.

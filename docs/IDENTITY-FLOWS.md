@@ -101,6 +101,17 @@ sequenceDiagram
   - Settings: `MCP_PUBLIC_URL` (the front door as clients reach it; a
     public host for parties outside the lab), `MCP_CLIENT_REDIRECT_URIS`
     (for registered clients), `MCP_CIMD_TRUSTED_DOMAINS`.
+- **An outside MCP server with its own authorization server (Enterprise).**
+  `make upstream-mcp NAME=<name> URL=<server> AS=<its authorization server>
+  SCOPES="..."` puts it at the front door as `MCP_PUBLIC_URL/mcp/<name>`. A
+  client signs in at S&V's broker as above; the issuer then signs the user
+  in at that authorization server once (brokered elicitation, PKCE), keeps
+  the token for the user in the STS, and the gateway sends it on each call.
+  The issuer names itself there by its own client ID metadata document,
+  served at `MCP_PUBLIC_URL/oauth-issuer/oauth/client-metadata.json`, when
+  `MCP_UPSTREAM_CIMD=true` (a public front door) and the server supports
+  them, else it registers itself. The authorization server is set per
+  resource, so an outside server can't redirect S&V's users elsewhere.
 - **No open registration (OSS).** Every client gets the one client S&V
   registered, `sv-mcp-client` (public, PKCE S256, loopback redirects only,
   no password grant); the gateway names itself the authorization server.
