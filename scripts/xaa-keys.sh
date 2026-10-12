@@ -7,8 +7,8 @@
 #                                 the broker's key (Keycloak, PS256)
 #   sv-upstream-client-es256.jwks.json  the same, at an upstream that takes no
 #                                 PS256 assertions (NAME_CLIENT_ALG=ES256: Okta)
-#   sv-voucher-client.jwks.json   S&V's client for ID-JAGs at the IdP in
-#                                 XAA_VOUCHER (e.g. Okta's AI agent): the
+#   sv-voucher-client-<name>.jwks.json  S&V's client for ID-JAGs at each IdP
+#                                 in XAA_VOUCHER (e.g. Okta's AI agent): the
 #                                 broker's key, as the gateway signs with it
 #                                 there (NAME_XAA_CLIENT_ALG)
 #   sv-ras-client.jwks.json       S&V's client at Ledgerline's AS
@@ -26,9 +26,10 @@
 out="$LAB_STATE/xaa/keys"; mkdir -p "$out"
 sv_upstream_client_jwks >"$out/sv-upstream-client.jwks.json"
 sv_upstream_client_es256_jwks >"$out/sv-upstream-client-es256.jwks.json"
-if [ -n "$XAA_VOUCHER_IDP" ]; then
-  kc_jwks sv-broker-client "$(idp_setting "$XAA_VOUCHER_IDP" XAA_CLIENT_ALG PS256)" >"$out/sv-voucher-client.jwks.json"
-else rm -f "$out/sv-voucher-client.jwks.json"; fi
+rm -f "$out"/sv-voucher-client*.jwks.json
+for n in $(echo "$XAA_VOUCHER_IDPS" | tr ',' ' '); do
+  kc_jwks sv-broker-client "$(idp_setting "$n" XAA_CLIENT_ALG PS256)" >"$out/sv-voucher-client-$n.jwks.json"
+done
 xaa_client_jwks >"$out/sv-ras-client.jwks.json"
 kc_jwks sterling-vance RS256 >"$out/sv-idp.jwks.json"
 rm -f "$out/sv-workforce.jwks.json"   # earlier labs: S&V's own Keycloak vouched too

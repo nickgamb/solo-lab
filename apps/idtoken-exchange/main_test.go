@@ -27,6 +27,12 @@ func jwtWithExp(exp time.Time) string {
 	return "h." + base64.RawURLEncoding.EncodeToString(p) + ".s"
 }
 
+// jwtFromIdP: an access token for a session the IdP (by alias) signed in.
+func jwtFromIdP(idp string, exp time.Time) string {
+	p, _ := json.Marshal(map[string]any{"idp": idp, "exp": exp.Unix()})
+	return "h." + base64.RawURLEncoding.EncodeToString(p) + ".s"
+}
+
 func jwtFor(iss, sub string, exp time.Time) string {
 	p, _ := json.Marshal(map[string]any{"iss": iss, "sub": sub, "exp": exp.Unix()})
 	return "h." + base64.RawURLEncoding.EncodeToString(p) + ".s"
@@ -258,14 +264,36 @@ func TestUpstreamIDToken(t *testing.T) {
 	}))
 	t.Cleanup(up.Close)
 	x := newExchanger(broker.URL)
-	x.upstream, x.upstreamURL = "gluu", up.URL+"/continuity-upstream"
-	id, source, err := x.idToken(context.Background(), jwtWithExp(time.Now().Add(time.Minute)))
+	x.upstreams, x.upstreamURL = map[string]bool{"gluu": true, "okta": true}, up.URL+"/continuity-upstream"
+	id, source, err := x.idToken(context.Background(), jwtFromIdP("gluu", time.Now().Add(time.Minute)))
 	if err != nil || id != gluuID || source != "gluu" {
 		t.Fatalf("got %q from %q, %v", id, source, err)
 	}
 }
 
-// A sign-in through another IdP: the broker refuses, and so does the gateway.
+// A session from an IdP that doesn't vouch (or none: break-glass) gets the
+// broker's ID token; the upstream endpoint isn't asked.
+func TestBrokerVouchesForOthers(t *testing.T) {
+	var calls int32
+	brokerID := jwtFor("https://idp.sterling.lab/realms/sterling-vance", "bob", time.Now().Add(5*time.Minute))
+	broker := idp(t, &calls, http.StatusOK, `{"refresh_token":"rt-1","issued_token_type":"`+typeRefreshToken+`"}`, brokerID)
+	t.Cleanup(broker.Close)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("upstream asked: %s", r.URL.Path)
+	}))
+	t.Cleanup(up.Close)
+	x := newExchanger(broker.URL)
+	x.upstreams, x.upstreamURL = map[string]bool{"gluu": true}, up.URL
+	for _, at := range []string{jwtFromIdP("auth0", time.Now().Add(time.Minute)), jwtWithExp(time.Now().Add(time.Minute))} {
+		id, source, err := x.idToken(context.Background(), at)
+		if err != nil || id != brokerID || source != x.broker.Name {
+			t.Fatalf("got %q from %q, %v", id, source, err)
+		}
+	}
+}
+
+// The broker refuses the IdP's ID token (no live session from it): so does
+// the gateway.
 func TestUpstreamRefused(t *testing.T) {
 	var calls int32
 	broker := keycloakOK(t, &calls)
@@ -275,8 +303,8 @@ func TestUpstreamRefused(t *testing.T) {
 	}))
 	t.Cleanup(up.Close)
 	x := newExchanger(broker.URL)
-	x.upstream, x.upstreamURL = "gluu", up.URL
-	if _, _, err := x.idToken(context.Background(), jwtWithExp(time.Now().Add(time.Minute))); err == nil || !errors.Is(err, errRefused) {
+	x.upstreams, x.upstreamURL = map[string]bool{"gluu": true}, up.URL
+	if _, _, err := x.idToken(context.Background(), jwtFromIdP("gluu", time.Now().Add(time.Minute))); err == nil || !errors.Is(err, errRefused) {
 		t.Fatalf("want refused, got %v", err)
 	}
 }

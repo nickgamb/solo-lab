@@ -50,14 +50,14 @@ export SOLO_AGENTREGISTRY_LICENSE_KEY="${SOLO_AGENTREGISTRY_LICENSE_KEY:-${SOLO_
 
 export KCTX="kind-$LAB_NAME"
 
-# The user's own IdP vouching in Cross App Access (XAA_VOUCHER): agentgateway's
-# control plane fetches that IdP's keys, through S&V's egress like every
-# other caller of an upstream
-if [ -n "${XAA_VOUCHER_IDP:-}" ]; then
+# IdPs vouching for their own sign-ins in Cross App Access (XAA_VOUCHER):
+# agentgateway's control plane fetches their keys, through S&V's egress like
+# every other caller of an upstream
+if [ -n "${XAA_VOUCHER_IDPS:-}" ]; then
   XAA_EGRESS_EXPORT=", exportTo: [agentgateway-system]"
-  XAA_EGRESS_CALLER="- cluster.local/ns/agentgateway-system/sa/$AGW_RELEASE   # agentgateway's control plane: the voucher's keys (XAA_VOUCHER)"
+  XAA_EGRESS_CALLER="- cluster.local/ns/agentgateway-system/sa/$AGW_RELEASE   # agentgateway's control plane: the vouchers' keys (XAA_VOUCHER)"
 else
-  XAA_EGRESS_EXPORT="" XAA_EGRESS_CALLER="# no gateway: the broker vouches (XAA_VOUCHER)"
+  XAA_EGRESS_EXPORT="" XAA_EGRESS_CALLER="# no gateway: the broker vouches for everyone (XAA_VOUCHER)"
 fi
 export XAA_EGRESS_EXPORT XAA_EGRESS_CALLER
 

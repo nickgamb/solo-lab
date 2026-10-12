@@ -173,25 +173,16 @@ xaa_endpoint() {
   echo "$ep"
 }
 
-# xaa_gateway_apply: ai-gateway's Cross App Access (xaa/ledgerline.yaml): how
-# it reaches Ledgerline's token endpoint (its Keycloak's Service, or a static
-# backend for an AS outside the lab), and who vouches (XAA_VOUCHER): S&V's
-# broker, or the user's own IdP with S&V's key there
-xaa_gateway_apply() {
-  local dir=$1 ep keep n iss cid xcid alg aud d idp
-  ep=$(xaa_endpoint "$LEDGERLINE_AS_TOKEN_URL")
-  keep=" $(echo "$ep" | jq -r .backend.name) "
-  export XAA_AS_REF XAA_AS_HOST XAA_AS_PATH XAA_RESOURCE="https://mcp.$LEDGERLINE_DOMAIN/mcp" XAA_AS_CLIENT_AUTH
-  # S&V at Ledgerline's AS: its key, or a client secret where the AS takes no keys
-  if [ -n "$LEDGERLINE_AS_CLIENT_SECRET" ]; then
-    XAA_AS_CLIENT_AUTH="{clientId: \"$SV_CLIENT_AT_LEDGERLINE\", method: ClientSecretBasic, secretRef: {name: xaa-as-client-secret, key: clientSecret}}"
-  else
-    XAA_AS_CLIENT_AUTH="{clientId: \"$SV_CLIENT_AT_LEDGERLINE\", method: PrivateKeyJwt, privateKeyJwt: {alg: RS256, kid: $SV_XAA_CLIENT_KID, assertionAudience: \"$LEDGERLINE_AS_ISSUER\", signingKeyRef: {name: xaa-client-key, key: signingKey}}}"
-  fi
-  XAA_AS_REF=$(echo "$ep" | jq -c .ref) XAA_AS_HOST=$(echo "$ep" | jq -r .host) XAA_AS_PATH=$(echo "$ep" | jq -r .path)
-  export XAA_IDP_HOST XAA_IDP_PATH XAA_IDP_REF XAA_IDP_ISSUER XAA_IDP_AUDIENCE XAA_IDP_JWKS \
+# xaa_voucher_env <name>: the IdP leg of one voucher (xaa/voucher.yaml):
+# S&V's broker, or an IdP in XAA_VOUCHER with S&V's client and key there.
+# Sets XAA_V and XAA_IDP_*, and XAA_V_ENDPOINT (its token endpoint's backend,
+# if it has one)
+xaa_voucher_env() {
+  local n=$1 un iss cid xcid alg aud d idp
+  export XAA_V=$n XAA_IDP_HOST XAA_IDP_PATH XAA_IDP_REF XAA_IDP_ISSUER XAA_IDP_AUDIENCE XAA_IDP_JWKS \
     XAA_IDP_CLIENT_AUTH XAA_IDP_SCOPES XAA_IDP_SCOPE_LIST XAA_RESOURCES_LINE XAA_IDJAG_MAX_LIFETIME_S
-  if [ -z "$XAA_VOUCHER_IDP" ]; then
+  XAA_V_ENDPOINT=
+  if [ "$n" = broker ]; then
     # S&V's broker vouches, as kagent
     XAA_IDP_HOST=keycloak.sv-identity XAA_IDP_PATH=/realms/sterling-vance/protocol/openid-connect/token
     XAA_IDP_REF='{kind: Service, name: keycloak, namespace: sv-identity, port: 80}'
@@ -201,37 +192,81 @@ xaa_gateway_apply() {
     XAA_IDP_SCOPES='[xaa-ledgerline, research:read]' XAA_IDP_SCOPE_LIST='["xaa-ledgerline", "research:read"]'
     XAA_RESOURCES_LINE='# resource: none (the broker binds the ID-JAG to Ledgerline by audience)'
     XAA_IDJAG_MAX_LIFETIME_S=$MCP_TOKEN_LIFETIME_S   # the broker's, which S&V sets
+    return
+  fi
+  # an IdP that vouches for its own sign-ins: S&V's client there, with S&V's key
+  un=$(echo "$n" | tr '[:lower:]' '[:upper:]')
+  case " $(idp_names) " in *" $n "*) ;; *) die "XAA_VOUCHER: $n isn't in ENTERPRISE_IDP ($ENTERPRISE_IDP)" ;; esac
+  iss=$(_idp_var "$n" ISSUER) cid=$(_idp_var "$n" CLIENT_ID)
+  [ -n "$iss" ] && [ -n "$cid" ] || die "XAA_VOUCHER: $n needs its issuer and S&V's client there (.env)"
+  # S&V's client for ID-JAGs there: its sign-in client, or one of its own
+  xcid=$(idp_setting "$n" XAA_CLIENT_ID "$cid") alg=$(idp_setting "$n" XAA_CLIENT_ALG PS256)
+  [ "$xcid" != "$cid" ] || [ "$(idp_client_auth "$n")" = private_key_jwt ] \
+    || die "XAA_VOUCHER: S&V asks $n for ID-JAGs with its key (private_key_jwt), not a client secret: drop the secret, or set its own client for ID-JAGs (${un}_XAA_CLIENT_ID)"
+  case "$alg" in PS256|RS256) ;; *) die "XAA_VOUCHER: ${un}_XAA_CLIENT_ALG is PS256 or RS256, not $alg" ;; esac
+  d=$(idp_discover "$iss")
+  [ "$(echo "$d" | jq -r .issuer)" = "$iss" ] || die "XAA_VOUCHER: the issuer $n's discovery states is $(echo "$d" | jq -r .issuer)"
+  case "$(idp_setting "$n" XAA_ASSERTION_AUDIENCE issuer)" in
+    issuer) aud=$iss ;;
+    token_endpoint) aud=$(echo "$d" | jq -r .token_endpoint) ;;
+    *) die "XAA_VOUCHER: ${un}_XAA_ASSERTION_AUDIENCE is issuer or token_endpoint" ;;
+  esac
+  idp=$(xaa_endpoint "$(echo "$d" | jq -r .token_endpoint)")
+  XAA_V_ENDPOINT=$(echo "$idp" | jq -r .backend.name)
+  XAA_IDP_HOST=$(echo "$idp" | jq -r .host) XAA_IDP_PATH=$(echo "$idp" | jq -r .path) XAA_IDP_REF=$(echo "$idp" | jq -c .ref)
+  XAA_IDP_JWKS="{url: \"$(echo "$d" | jq -r .jwks_uri)\", cacheDuration: 5m}"
+  XAA_IDP_ISSUER=$iss XAA_IDP_AUDIENCE=$cid
+  XAA_IDP_CLIENT_AUTH="{clientId: \"$xcid\", method: PrivateKeyJwt, privateKeyJwt: {alg: $alg, kid: $(sv_upstream_client_jwks | jq -r '.keys[0].kid'), assertionAudience: \"$aud\", signingKeyRef: {name: xaa-idp-client-key, key: signingKey}}}"
+  XAA_IDP_SCOPES='[research:read]' XAA_IDP_SCOPE_LIST='["research:read"]'
+  XAA_RESOURCES_LINE="resources: [$XAA_RESOURCE]   # Ledgerline's MCP server (RFC 8707)"
+  XAA_IDJAG_MAX_LIFETIME_S=300   # the IdP sets its own; ID-JAGs are short-lived (minutes)
+}
+
+# xaa_gateway_apply: ai-gateway's Cross App Access (xaa/): how it reaches
+# Ledgerline's token endpoint (its Keycloak's Service, or a static backend for
+# an AS outside the lab), and who vouches, per session (XAA_VOUCHER): the IdP
+# that signed the session in when it vouches for its own sign-ins, else
+# S&V's broker. One backend and IdP leg per voucher (voucher.yaml); the
+# caller's route names the voucher and ai-gateway's own route picks its
+# backend (ledgerline.yaml).
+xaa_gateway_apply() {
+  local dir=$1 ep keep n vouchers rules="" providers="" lifetime="0" scopes="" kind
+  ep=$(xaa_endpoint "$LEDGERLINE_AS_TOKEN_URL")
+  keep=" $(echo "$ep" | jq -r .backend.name) "
+  export XAA_AS_REF XAA_AS_HOST XAA_AS_PATH XAA_RESOURCE="https://mcp.$LEDGERLINE_DOMAIN/mcp" XAA_AS_CLIENT_AUTH
+  XAA_AS_REF=$(echo "$ep" | jq -c .ref) XAA_AS_HOST=$(echo "$ep" | jq -r .host) XAA_AS_PATH=$(echo "$ep" | jq -r .path)
+  # S&V at Ledgerline's AS: its key, or a client secret where the AS takes no keys
+  if [ -n "$LEDGERLINE_AS_CLIENT_SECRET" ]; then
+    XAA_AS_CLIENT_AUTH="{clientId: \"$SV_CLIENT_AT_LEDGERLINE\", method: ClientSecretBasic, secretRef: {name: xaa-as-client-secret, key: clientSecret}}"
   else
-    # the user's own IdP vouches: S&V's client there, with S&V's key
-    n=$XAA_VOUCHER_IDP
-    case " $(idp_names) " in *" $n "*) ;; *) die "XAA_VOUCHER=$n isn't in ENTERPRISE_IDP ($ENTERPRISE_IDP)" ;; esac
-    iss=$(_idp_var "$n" ISSUER) cid=$(_idp_var "$n" CLIENT_ID)
-    [ -n "$iss" ] && [ -n "$cid" ] || die "XAA_VOUCHER=$n: its issuer and S&V's client there (.env)"
-    # S&V's client for ID-JAGs there: its sign-in client, or one of its own
-    xcid=${XAA_CLIENT_ID:-$cid} alg=$(idp_setting "$n" XAA_CLIENT_ALG PS256)
-    [ "$xcid" != "$cid" ] || [ "$(idp_client_auth "$n")" = private_key_jwt ] \
-      || die "XAA_VOUCHER=$n: S&V asks for ID-JAGs with its key (private_key_jwt), not a client secret: drop the secret, or set its own client for ID-JAGs (XAA_CLIENT_ID)"
-    case "$alg" in PS256|RS256) ;; *) die "XAA_VOUCHER=$n: $(echo "$n" | tr "[:lower:]" "[:upper:]")_XAA_CLIENT_ALG is PS256 or RS256, not $alg" ;; esac
-    d=$(idp_discover "$iss")
-    [ "$(echo "$d" | jq -r .issuer)" = "$iss" ] || die "XAA_VOUCHER=$n: the issuer its discovery states is $(echo "$d" | jq -r .issuer)"
-    case "$(idp_setting "$n" XAA_ASSERTION_AUDIENCE issuer)" in
-      issuer) aud=$iss ;;
-      token_endpoint) aud=$(echo "$d" | jq -r .token_endpoint) ;;
-      *) die "XAA_VOUCHER=$n: $(echo "$n" | tr "[:lower:]" "[:upper:]")_XAA_ASSERTION_AUDIENCE is issuer or token_endpoint" ;;
-    esac
-    idp=$(xaa_endpoint "$(echo "$d" | jq -r .token_endpoint)")
-    keep="$keep$(echo "$idp" | jq -r .backend.name) "
+    XAA_AS_CLIENT_AUTH="{clientId: \"$SV_CLIENT_AT_LEDGERLINE\", method: PrivateKeyJwt, privateKeyJwt: {alg: RS256, kid: $SV_XAA_CLIENT_KID, assertionAudience: \"$LEDGERLINE_AS_ISSUER\", signingKeyRef: {name: xaa-client-key, key: signingKey}}}"
+  fi
+  if [ -n "$XAA_VOUCHER_IDPS" ]; then
     K create secret generic xaa-idp-client-key -n agentgateway-system --from-file=signingKey="$LAB_STATE/keys/sv-broker-client.key" \
       --dry-run=client -o yaml | K apply -f - >/dev/null
-    XAA_IDP_HOST=$(echo "$idp" | jq -r .host) XAA_IDP_PATH=$(echo "$idp" | jq -r .path) XAA_IDP_REF=$(echo "$idp" | jq -c .ref)
-    XAA_IDP_JWKS="{url: \"$(echo "$d" | jq -r .jwks_uri)\", cacheDuration: 5m}"
-    XAA_IDP_ISSUER=$iss XAA_IDP_AUDIENCE=$cid
-    XAA_IDP_CLIENT_AUTH="{clientId: \"$xcid\", method: PrivateKeyJwt, privateKeyJwt: {alg: $alg, kid: $(sv_upstream_client_jwks | jq -r '.keys[0].kid'), assertionAudience: \"$aud\", signingKeyRef: {name: xaa-idp-client-key, key: signingKey}}}"
-    XAA_IDP_SCOPES='[research:read]' XAA_IDP_SCOPE_LIST='["research:read"]'
-    XAA_RESOURCES_LINE="resources: [$XAA_RESOURCE]   # Ledgerline's MCP server (RFC 8707)"
-    XAA_IDJAG_MAX_LIFETIME_S=300   # the IdP sets its own; ID-JAGs are short-lived (minutes)
   fi
-  apply_tmpl "$dir/xaa/ledgerline.yaml" || die "XAA: the route and its checks"
+  # the IdPs that vouch, then the broker for every other session
+  vouchers="$(echo "$XAA_VOUCHER_IDPS" | tr ',' ' ') broker"
+  for n in $vouchers; do
+    xaa_voucher_env "$n"
+    [ -z "$XAA_V_ENDPOINT" ] || keep="$keep$XAA_V_ENDPOINT "
+    apply_tmpl "$dir/xaa/voucher.yaml" || die "XAA: the backend and IdP leg for $n"
+    rules="$rules{matches: [{path: {type: PathPrefix, value: /xaa-vouched/ledgerline}$([ "$n" = broker ] || echo ", headers: [{name: x-xaa-voucher, value: $n}]")}], backendRefs: [{group: $AGW_BACKEND_GROUP, kind: $AGW_BACKEND_KIND, name: xaa-ledgerline-$n}]}, "
+    providers="$providers{issuer: \"$XAA_IDP_ISSUER\", audiences: [\"$LEDGERLINE_AS_ISSUER\"], validation: {requiredClaims: [aud, exp, sub]}, jwks: {remote: $XAA_IDP_JWKS}}, "
+    lifetime="(jwt.iss == \"$XAA_IDP_ISSUER\" ? $XAA_IDJAG_MAX_LIFETIME_S : $lifetime)"
+    scopes="$scopes$(echo "$XAA_IDP_SCOPE_LIST" | jq -r '.[]') "
+  done
+  export XAA_VOUCHED_RULES="[${rules%, }]" XAA_AS_PROVIDERS="[${providers%, }]" XAA_IDJAG_LIFETIME_CEL="$lifetime" \
+    XAA_SCOPE_LIST; XAA_SCOPE_LIST=$(echo "$scopes" | tr ' ' '\n' | { grep -v '^$' || true; } | sort -u | jq -R . | jq -sc .)
+  apply_tmpl "$dir/xaa/ledgerline.yaml" || die "XAA: the routes and their checks"
+  # vouchers no longer named, and earlier labs' single backend and IdP leg
+  for kind in "$AGW_BACKEND_KIND" httproute "$AGW_POLICY_KIND"; do
+    for n in $(K get "$kind" -n agentgateway-system -l lab.solo.io/xaa-voucher -o jsonpath='{range .items[*]}{.metadata.labels.lab\.solo\.io/xaa-voucher}{"\n"}{end}' | sort -u); do
+      case " $vouchers " in *" $n "*) ;; *) K delete "$kind" -n agentgateway-system -l "lab.solo.io/xaa-voucher=$n" >/dev/null ;; esac
+    done
+  done
+  K delete "$AGW_BACKEND_KIND" xaa-ledgerline -n agentgateway-system --ignore-not-found >/dev/null
+  K delete httproute,"$AGW_POLICY_KIND" xaa-idp -n agentgateway-system --ignore-not-found >/dev/null
   # earlier labs: a lane that listed Ledgerline's tools without a user
   K delete httproute xaa-ledgerline-discovery -n agentgateway-system --ignore-not-found >/dev/null
   K delete "$AGW_POLICY_KIND" xaa-ledgerline-discovery -n agentgateway-system --ignore-not-found >/dev/null
@@ -240,7 +275,7 @@ xaa_gateway_apply() {
   for n in $(K get "$AGW_BACKEND_KIND" -n agentgateway-system -l lab.solo.io/xaa-endpoint -o name); do
     case "$keep" in *" ${n##*/} "*) ;; *) K delete -n agentgateway-system "$n" >/dev/null ;; esac
   done
-  [ -n "$XAA_VOUCHER_IDP" ] || K delete secret xaa-idp-client-key -n agentgateway-system --ignore-not-found >/dev/null
+  [ -n "$XAA_VOUCHER_IDPS" ] || K delete secret xaa-idp-client-key -n agentgateway-system --ignore-not-found >/dev/null
 }
 
 # jwks_of <cert>: the public half of a lab key, as a JWKS with its RFC 7638 kid

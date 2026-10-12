@@ -54,7 +54,7 @@ lab_image "$KC_IDJAG" tools/keycloak-idjag/build.sh
 # Its realm names Ledgerline's authorization server as the ID-JAG audience
 # (RESOURCE_AS). Identity Brokering API v2: the requesting app may read the
 # tokens an upstream IdP issued for the user's session, so that IdP can
-# vouch for them in Cross App Access (XAA_VOUCHER=idp).
+# vouch for its own sign-ins in Cross App Access (XAA_VOUCHER).
 KC_IMAGE="localhost:${LAB_REGISTRY_PORT}/$KC_IDJAG" \
   deploy_keycloak sv-identity "$SV_DOMAIN" https-sterling "$D/realm-sterling-vance.json" \
   token-exchange-standard,identity-assertion-jwt,identity-brokering-api:v2

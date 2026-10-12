@@ -30,9 +30,9 @@ An IdP without an issuer is left out of the chain.
 | `okta,gluu,keycloak,contingency` (experimental) | `descope` | `okta` | Okta | Okta | Ledgerline's Descope |
 | `ping,keycloak,contingency` | `keycloak` | `broker` | Ping | S&V's broker | Ledgerline's Keycloak |
 
-When S&V's broker vouches, after a failover Bob signs in at the next IdP,
-and the broker vouches for the same broker account. When an IdP vouches,
-only its sign-ins reach Ledgerline.
+After a failover Bob signs in at the next IdP, which vouches for that
+sign-in if `XAA_VOUCHER` lists it; otherwise the broker vouches, for the
+same broker account.
 
 ## Settings
 
@@ -107,14 +107,16 @@ once, in its own section, and `.env` picks one of each (`XAA_VOUCHER`,
 
 ### An IdP that vouches
 
-`XAA_VOUCHER=<name>` has that IdP issue the ID-JAG instead of the broker
+`XAA_VOUCHER=<names>` (comma-separated) has each IdP listed issue the
+ID-JAG for its own sign-ins; the broker vouches for every other session
 ([IDENTITY-FLOWS.md](IDENTITY-FLOWS.md#2-cross-app-access-id-jag-to-a-saas)).
-Only its sign-ins reach Ledgerline. It needs:
+An IdP left off still signs people in, with the broker vouching for them.
+Each IdP listed needs:
 
 - S&V's client for ID-JAGs there: its sign-in client (`NAME_CLIENT_ID`), or
-  one of its own (`XAA_CLIENT_ID`). It authenticates with
-  `private_key_jwt`, the broker's key (`sv-voucher-client.jwks.json` from
-  `make xaa-keys`) signed `NAME_XAA_CLIENT_ALG` (`PS256` or `RS256`, default
+  one of its own (`NAME_XAA_CLIENT_ID`). It authenticates with
+  `private_key_jwt`, the broker's key (`sv-voucher-client-<name>.jwks.json`
+  from `make xaa-keys`) signed `NAME_XAA_CLIENT_ALG` (`PS256` or `RS256`, default
   `PS256`), for `NAME_XAA_ASSERTION_AUDIENCE` (`issuer`, the default, or
   `token_endpoint`).
 - The token exchange grant for an ID-JAG (`requested_token_type`
@@ -123,7 +125,8 @@ Only its sign-ins reach Ledgerline. It needs:
   `https://mcp.ledgerline.lab/mcp`
 - ID-JAGs issued under `NAME_ISSUER`, signed with keys at its `jwks_uri`,
   living 300 s at most, `client_id` S&V's client at Ledgerline's AS
-- Ledgerline's AS trusting it as an ID-JAG issuer
+- Ledgerline's AS trusting it as an ID-JAG issuer, and the broker too for
+  the sessions the broker vouches for
 
 After a change, run `make layer-45 layer-47 layer-80` (the broker releases
 that IdP's ID token to `kagent`; the gateway's control plane fetches its
@@ -334,9 +337,9 @@ OKTA_CLIENT_ID=<the AI agent's client ID>
 - **AI agent** (Directory > AI Agents): S&V's requesting app. Registering
   it with **Create a new OIDC app linked to this AI agent** makes S&V's
   sign-in app, with the agent's client ID (`OKTA_CLIENT_ID`; then
-  `XAA_CLIENT_ID` stays unset). Its public keys:
+  `OKTA_XAA_CLIENT_ID` stays unset). Its public keys:
   `sv-upstream-client-es256.jwks.json` (the broker's sign-in) and
-  `sv-voucher-client.jwks.json` (the gateway's ID-JAG requests, RS256,
+  `sv-voucher-client-okta.jwks.json` (the gateway's ID-JAG requests, RS256,
   `OKTA_XAA_CLIENT_ALG`, for Okta's token endpoint,
   `OKTA_XAA_ASSERTION_AUDIENCE`). Redirect URI: the broker's
   (`https://idp.sterling.lab/realms/sterling-vance/broker/okta/endpoint`).

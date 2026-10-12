@@ -50,11 +50,18 @@ spec:
   parentRefs: [{name: ai-gateway, sectionName: http}]
   hostnames: ["mcp.${SV_DOMAIN}"]
   rules:
+  # the MCP calls: on to ai-gateway's own route for the session's voucher
+  # (xaa/ledgerline.yaml), with the voucher and the ID token set below
   - matches:
     - path: {type: PathPrefix, value: /mcp/ledgerline}
+    filters:
+    - type: URLRewrite
+      urlRewrite: {path: {type: ReplacePrefixMatch, replacePrefixMatch: /xaa-vouched/ledgerline}}
+    backendRefs: [{kind: Service, name: ai-gateway, port: 80}]
+  - matches:
     - path: {type: PathPrefix, value: /.well-known/oauth-protected-resource/mcp/ledgerline}
     - path: {type: PathPrefix, value: /.well-known/oauth-authorization-server/mcp/ledgerline}
-    backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: xaa-ledgerline}]
+    backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: xaa-ledgerline-broker}]
 ---
 apiVersion: ${AGW_POLICY_API}
 kind: ${AGW_POLICY_KIND}
@@ -118,8 +125,11 @@ spec:
         - 'source.identity.namespace == "kgateway-system" && source.identity.serviceAccount == "edge" && jwt.azp == "sv-mcp-client" && "advisors" in jwt.groups'
     # the same assurance rule as the firm's agents' way to Ledgerline
     ${ASSURANCE_POINT_OPEN}ledgerline-research${ASSURANCE_POINT_CLOSE}
-    # the subject of the ID-JAG exchange, as for the firm's agents
-    # (xaa/ledgerline.yaml): Bob's ID token from S&V's broker
+    # the subject of the ID-JAG exchange and its voucher, as for the firm's
+    # agents (xaa/ledgerline.yaml)
+    transformation:
+      request:
+        set: [{name: x-xaa-voucher, value: 'has(jwt.idp) ? string(jwt.idp) : "broker"'}]
     extProc:
       backendRef: {kind: Service, name: idtoken-exchange, port: 8080}
       failureMode: FailClosed
