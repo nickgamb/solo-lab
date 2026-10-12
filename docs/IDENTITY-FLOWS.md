@@ -262,8 +262,8 @@ Three settings in `config/lab.env` (`scripts/idp.sh`):
 | Setting | Values | Decides |
 | --- | --- | --- |
 | `ENTERPRISE_IDP` | `auth0,keycloak,contingency` (default), `gluu,auth0,keycloak,contingency`, `okta,keycloak`, ...; any order | S&V's IdPs, which sign Bob in, in failover order ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md)); `keycloak` is the Keycloak S&V runs itself (`https://login.sterling.lab`) |
-| `RESOURCE_AS` | `keycloak` (default), `gluu`, any name with `LEDGERLINE_<NAME>_ISSUER` | Ledgerline's authorization server |
-| `XAA_VOUCHER` | `broker` (default), or an IdP in `ENTERPRISE_IDP` that issues ID-JAGs (`gluu`) | who vouches for Bob to Ledgerline (issues the ID-JAG) |
+| `RESOURCE_AS` | `keycloak` (default), `gluu`, `auth0` (experimental), any name with `LEDGERLINE_<NAME>_ISSUER` | Ledgerline's authorization server |
+| `XAA_VOUCHER` | `broker` (default), or an IdP in `ENTERPRISE_IDP` that issues ID-JAGs (`gluu`; `okta`, experimental) | who vouches for Bob to Ledgerline (issues the ID-JAG) |
 
 Each is configured by name ([IDPS.md](IDPS.md)).
 
@@ -368,9 +368,10 @@ sequenceDiagram
     assertion audience the AS's issuer, key `.lab/keys/sv-xaa-client.key`).
     Only the gateway holds those credentials. With `XAA_VOUCHER=<idp>`
     the ID-JAG is requested at that IdP's token endpoint as S&V's client
-    there (`<IDP>_CLIENT_ID`), with `private_key_jwt` signed by the broker's
-    PS256 key (Secret `xaa-idp-client-key`), scope `research:read` and
-    `resource` Ledgerline's MCP server (RFC 8707).
+    there (`<IDP>_XAA_CLIENT_ID`, default `<IDP>_CLIENT_ID`), with
+    `private_key_jwt` by the broker's key (Secret `xaa-idp-client-key`,
+    `<IDP>_XAA_CLIENT_ALG`), scope `research:read` and `resource`
+    Ledgerline's MCP server (RFC 8707).
   - Both token requests go out through ai-gateway's own routes, so its
     policies apply to them. Only ai-gateway may call these routes.
     - IdP leg, `/xaa-legs/ledgerline/idp/token` (route and policy

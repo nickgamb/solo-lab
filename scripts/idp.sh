@@ -8,7 +8,8 @@
 #                   settings (config/lab.env, docs/IDPS.md).
 #   ID-JAG          S&V's broker vouches for every S&V user (one issuer for
 #                   the apps they reach by Cross App Access), whichever of
-#                   S&V's IdPs signed them in.
+#                   S&V's IdPs signed them in; or the user's own IdP does
+#                   (XAA_VOUCHER).
 #   RESOURCE_AS     Ledgerline's authorization server, by its LEDGERLINE_NAME_*
 #                   settings: Ledgerline's own Keycloak (in the lab) or another.
 SV_ISSUER="https://idp.$SV_DOMAIN/realms/sterling-vance"
@@ -107,6 +108,8 @@ ras_env() {
   if ! ras_external; then
     [ "${LEDGERLINE_AS_ISSUER%/}" = "${LEDGERLINE_KEYCLOAK_ISSUER%/}" ] \
       || die "a lab issuer for Ledgerline's AS must be Ledgerline's own Keycloak ($LEDGERLINE_KEYCLOAK_ISSUER)"
+    [ "$LEDGERLINE_AS_AUDIENCE" = ledgerline-research ] \
+      || die "Ledgerline's own Keycloak names its server ledgerline-research, not $LEDGERLINE_AS_AUDIENCE"
     # Ledgerline's own Keycloak (demos/bob installs it after this runs)
     LEDGERLINE_AS_TOKEN_URL="${LEDGERLINE_AS_ISSUER%/}/protocol/openid-connect/token"
     LEDGERLINE_AS_JWKS_URI="http://keycloak.ledgerline-identity.svc/realms/ledgerline/protocol/openid-connect/certs"
@@ -167,7 +170,7 @@ xaa_endpoint() {
 # backend for an AS outside the lab), and who vouches (XAA_VOUCHER): S&V's
 # broker, or the user's own IdP with S&V's key there
 xaa_gateway_apply() {
-  local dir=$1 ep keep n iss cid d idp
+  local dir=$1 ep keep n iss cid xcid alg aud d idp
   ep=$(xaa_endpoint "$LEDGERLINE_AS_TOKEN_URL")
   keep=" $(echo "$ep" | jq -r .backend.name) "
   export XAA_AS_REF XAA_AS_HOST XAA_AS_PATH XAA_RESOURCE="https://mcp.$LEDGERLINE_DOMAIN/mcp"
@@ -188,11 +191,20 @@ xaa_gateway_apply() {
     # the user's own IdP vouches: S&V's client there, with S&V's key
     n=$XAA_VOUCHER_IDP
     case " $(idp_names) " in *" $n "*) ;; *) die "XAA_VOUCHER=$n isn't in ENTERPRISE_IDP ($ENTERPRISE_IDP)" ;; esac
-    [ "$(idp_client_auth "$n")" = private_key_jwt ] || die "XAA_VOUCHER=$n: S&V authenticates there with its key (private_key_jwt), not a client secret"
     iss=$(_idp_var "$n" ISSUER) cid=$(_idp_var "$n" CLIENT_ID)
     [ -n "$iss" ] && [ -n "$cid" ] || die "XAA_VOUCHER=$n: its issuer and S&V's client there (.env)"
+    # S&V's client for ID-JAGs there: its sign-in client, or one of its own
+    xcid=$(idp_setting "$n" XAA_CLIENT_ID "$cid") alg=$(idp_setting "$n" XAA_CLIENT_ALG PS256)
+    [ "$xcid" != "$cid" ] || [ "$(idp_client_auth "$n")" = private_key_jwt ] \
+      || die "XAA_VOUCHER=$n: S&V asks for ID-JAGs with its key (private_key_jwt), not a client secret: drop the secret, or set its own client for ID-JAGs ($(echo "$n" | tr "[:lower:]" "[:upper:]")_XAA_CLIENT_ID)"
+    case "$alg" in PS256|RS256) ;; *) die "XAA_VOUCHER=$n: $(echo "$n" | tr "[:lower:]" "[:upper:]")_XAA_CLIENT_ALG is PS256 or RS256, not $alg" ;; esac
     d=$(idp_discover "$iss")
     [ "$(echo "$d" | jq -r .issuer)" = "$iss" ] || die "XAA_VOUCHER=$n: the issuer its discovery states is $(echo "$d" | jq -r .issuer)"
+    case "$(idp_setting "$n" XAA_ASSERTION_AUDIENCE issuer)" in
+      issuer) aud=$iss ;;
+      token_endpoint) aud=$(echo "$d" | jq -r .token_endpoint) ;;
+      *) die "XAA_VOUCHER=$n: $(echo "$n" | tr "[:lower:]" "[:upper:]")_XAA_ASSERTION_AUDIENCE is issuer or token_endpoint" ;;
+    esac
     idp=$(xaa_endpoint "$(echo "$d" | jq -r .token_endpoint)")
     keep="$keep$(echo "$idp" | jq -r .backend.name) "
     K create secret generic xaa-idp-client-key -n agentgateway-system --from-file=signingKey="$LAB_STATE/keys/sv-broker-client.key" \
@@ -200,7 +212,7 @@ xaa_gateway_apply() {
     XAA_IDP_HOST=$(echo "$idp" | jq -r .host) XAA_IDP_PATH=$(echo "$idp" | jq -r .path) XAA_IDP_REF=$(echo "$idp" | jq -c .ref)
     XAA_IDP_JWKS="{url: \"$(echo "$d" | jq -r .jwks_uri)\", cacheDuration: 5m}"
     XAA_IDP_ISSUER=$iss XAA_IDP_AUDIENCE=$cid
-    XAA_IDP_CLIENT_AUTH="{clientId: $cid, method: PrivateKeyJwt, privateKeyJwt: {alg: PS256, kid: $(sv_upstream_client_jwks | jq -r '.keys[0].kid'), assertionAudience: \"$iss\", signingKeyRef: {name: xaa-idp-client-key, key: signingKey}}}"
+    XAA_IDP_CLIENT_AUTH="{clientId: \"$xcid\", method: PrivateKeyJwt, privateKeyJwt: {alg: $alg, kid: $(sv_upstream_client_jwks | jq -r '.keys[0].kid'), assertionAudience: \"$aud\", signingKeyRef: {name: xaa-idp-client-key, key: signingKey}}}"
     XAA_IDP_SCOPES='[research:read]' XAA_IDP_SCOPE_LIST='["research:read"]'
     XAA_RESOURCES_LINE="resources: [$XAA_RESOURCE]   # Ledgerline's MCP server (RFC 8707)"
     XAA_IDJAG_MAX_LIFETIME_S=300   # the IdP sets its own; ID-JAGs are short-lived (minutes)
@@ -266,14 +278,17 @@ ledgerline_realm() {
 }
 
 # ledgerline_research: filters ledgerline/research.yaml for an AS outside the
-# lab: the MCP server and its waypoint accept tokens from it
+# lab: the MCP server and its gateway accept tokens from it, for the audience
+# it names Ledgerline's server by (LEDGERLINE_NAME_AUDIENCE)
 ledgerline_research() {
   if ! ras_external; then cat; return; fi
   yq '
     (select(.kind == "MCPServer") | .spec.deployment.env) |= (
-      .RESEARCH_ISSUER = strenv(LEDGERLINE_AS_ISSUER) | .RESEARCH_JWKS_URL = strenv(LEDGERLINE_AS_JWKS_URI))
+      .RESEARCH_ISSUER = strenv(LEDGERLINE_AS_ISSUER) | .RESEARCH_JWKS_URL = strenv(LEDGERLINE_AS_JWKS_URI)
+      | .RESEARCH_AUDIENCE = strenv(LEDGERLINE_AS_AUDIENCE))
     | (select(.metadata.name == "research-callers") | .spec.traffic.jwtAuthentication.providers[0]) |= (
-      .issuer = strenv(LEDGERLINE_AS_ISSUER) | .jwks.remote = {"url": strenv(LEDGERLINE_AS_JWKS_URI), "cacheDuration": "5m"})'
+      .issuer = strenv(LEDGERLINE_AS_ISSUER) | .audiences = [strenv(LEDGERLINE_AS_AUDIENCE)]
+      | .jwks.remote = {"url": strenv(LEDGERLINE_AS_JWKS_URI), "cacheDuration": "5m"})'
 }
 
 # ledgerline_egress_hosts: internet hosts Ledgerline's own services reach: its

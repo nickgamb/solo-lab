@@ -19,17 +19,19 @@ Any combination works. A fresh clone runs `keycloak,contingency` (S&V's own
 two, in the lab) and Ledgerline's own Keycloak, with nothing outside the lab.
 An IdP without an issuer is left out of the chain.
 
-| `ENTERPRISE_IDP` | `RESOURCE_AS` | Bob signs in at | Redeems |
-| --- | --- | --- | --- |
-| `keycloak,contingency` (a fresh clone) | `keycloak` | S&V's Keycloak | Ledgerline's Keycloak |
-| `auth0,keycloak,contingency` | `keycloak` | Auth0 | Ledgerline's Keycloak |
-| `gluu,auth0,keycloak,contingency` | `gluu` | Gluu (passkey) | Ledgerline's Gluu |
-| `okta,keycloak` | `keycloak` | Okta | Ledgerline's Keycloak |
-| `ping,keycloak,contingency` | `keycloak` | Ping | Ledgerline's Keycloak |
+| `ENTERPRISE_IDP` | `RESOURCE_AS` | `XAA_VOUCHER` | Bob signs in at | Vouches | Redeems |
+| --- | --- | --- | --- | --- | --- |
+| `keycloak,contingency` (a fresh clone) | `keycloak` | `broker` | S&V's Keycloak | S&V's broker | Ledgerline's Keycloak |
+| `auth0,keycloak,contingency` | `keycloak` | `broker` | Auth0 | S&V's broker | Ledgerline's Keycloak |
+| `gluu,auth0,keycloak,contingency` | `gluu` | `broker` | Gluu (passkey) | S&V's broker | Ledgerline's Gluu |
+| `gluu,auth0,keycloak,contingency` | `gluu` | `gluu` | Gluu (passkey) | S&V's Gluu | Ledgerline's Gluu |
+| `okta,keycloak` | `keycloak` | `broker` | Okta | S&V's broker | Ledgerline's Keycloak |
+| `okta,keycloak` (experimental) | `auth0` | `okta` | Okta | Okta | Ledgerline's Auth0 |
+| `ping,keycloak,contingency` | `keycloak` | `broker` | Ping | S&V's broker | Ledgerline's Keycloak |
 
-By default S&V's broker vouches for Bob in every case. After a failover he
-signs in at the next IdP, and the broker vouches for the same broker
-account.
+When S&V's broker vouches, after a failover Bob signs in at the next IdP,
+and the broker vouches for the same broker account. When an IdP vouches,
+only its sign-ins reach Ledgerline.
 
 ## Settings
 
@@ -91,11 +93,15 @@ vouches for everyone, whichever IdP signed them in.
 ([IDENTITY-FLOWS.md](IDENTITY-FLOWS.md#2-cross-app-access-id-jag-to-a-saas)).
 Only its sign-ins reach Ledgerline. It needs:
 
-- S&V's client there with `private_key_jwt` (the broker's PS256 key,
-  `sv-upstream-client.jwks.json`) and the token exchange grant for an
-  ID-JAG (`requested_token_type`
-  `urn:ietf:params:oauth:token-type:id-jag`), audience Ledgerline's AS
-  issuer, scope `research:read`, `resource`
+- S&V's client for ID-JAGs there: its sign-in client (`NAME_CLIENT_ID`), or
+  one of its own (`NAME_XAA_CLIENT_ID`). It authenticates with
+  `private_key_jwt`, the broker's key (`sv-voucher-client.jwks.json` from
+  `make xaa-keys`) signed `NAME_XAA_CLIENT_ALG` (`PS256` or `RS256`, default
+  `PS256`), for `NAME_XAA_ASSERTION_AUDIENCE` (`issuer`, the default, or
+  `token_endpoint`).
+- The token exchange grant for an ID-JAG (`requested_token_type`
+  `urn:ietf:params:oauth:token-type:id-jag`) from the sign-in's ID token,
+  audience Ledgerline's AS issuer, scope `research:read`, `resource`
   `https://mcp.ledgerline.lab/mcp`
 - ID-JAGs issued under `NAME_ISSUER`, signed with keys at its `jwks_uri`,
   living 300 s at most, `client_id` S&V's client at Ledgerline's AS
@@ -293,6 +299,32 @@ OKTA_CLIENT_ID=<S&V's client there>
   directory type for it. As the primary, Okta provisions no broker accounts;
   as a failover, it receives no attributes.
 
+### Okta vouches (experimental)
+
+`XAA_VOUCHER=okta` ([An IdP that vouches](#an-idp-that-vouches)). Okta's org
+authorization server issues ID-JAGs (Cross App Access), so `OKTA_ISSUER` is
+the org URL (`https://<org>.okta.com`, no `/oauth2/...` path), for sign-in
+too: the ID-JAG's issuer, and that of the ID token it is made from.
+
+```
+XAA_VOUCHER=okta
+OKTA_XAA_CLIENT_ID=<the AI agent's client ID>
+```
+
+- **AI agent** (Directory > AI Agents): S&V's requesting app. Its
+  credential is a public key, `sv-voucher-client.jwks.json` (RS256,
+  `OKTA_XAA_CLIENT_ALG`); client assertions name Okta's token endpoint
+  (`OKTA_XAA_ASSERTION_AUDIENCE`).
+  - **User access:** S&V's sign-in app (`OKTA_CLIENT_ID`), with the Okta
+    authorization server.
+  - **Resource connections:** Ledgerline's app, with S&V's client ID at
+    Ledgerline's AS (`LEDGERLINE_NAME_CLIENT_ID`, the ID-JAG's `client_id`),
+    resource `https://mcp.ledgerline.lab/mcp` and scope `research:read`.
+- **Ledgerline's app** (Applications, Machine Assignments > Cross App
+  Access): the issuer URL of Ledgerline's AS and scope `research:read`.
+
+ID-JAGs live 300 s, and their `sub` is the user's Okta ID.
+
 ## Ping Identity (`ping`)
 
 ```
@@ -352,6 +384,29 @@ LEDGERLINE_GLUU_CLIENT_ID=<S&V's client there>
 
 Its trusted issuer is S&V's broker, by `sv-idp.jwks.json`, or with
 `XAA_VOUCHER=gluu` S&V's Gluu, by its `jwks_uri`.
+
+### Auth0 as Ledgerline's AS (experimental)
+
+Auth0 redeems ID-JAGs from an Okta that vouches (`XAA_VOUCHER=okta`), in a
+tenant of Ledgerline's own (not S&V's Auth0).
+
+```
+RESOURCE_AS=auth0
+LEDGERLINE_AUTH0_ISSUER=https://<Ledgerline's tenant>/
+LEDGERLINE_AUTH0_CLIENT_ID=<S&V's client there>
+```
+
+- **Trust in Okta:** an Okta Workforce enterprise connection to Okta's
+  Ledgerline app, with Cross App Access as the resource application. Auth0
+  doesn't create users from an ID-JAG: each user signs in through that
+  connection once first.
+- **S&V's client:** Cross App Access on, `private_key_jwt` with
+  `sv-ras-client.jwks.json`, enabled on that connection.
+- **API:** identifier `https://mcp.ledgerline.lab/mcp`
+  (`LEDGERLINE_AUTH0_AUDIENCE`), the resource the ID-JAG names; permission
+  `research:read`; token expiration 300 s.
+
+The issuer ends in `/`, as Auth0's discovery states it.
 
 ### Another AS
 
