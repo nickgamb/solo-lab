@@ -58,14 +58,10 @@ spec:
               resourceAuthorizationServer:
                 backendRef: {kind: Service, name: ai-gateway, port: 80}
                 path: /xaa-legs/ledgerline/as/token
-                clientAuth:
-                  clientId: ${SV_CLIENT_AT_LEDGERLINE}     # S&V's registration at Ledgerline
-                  method: PrivateKeyJwt
-                  privateKeyJwt:
-                    alg: RS256
-                    kid: ${SV_XAA_CLIENT_KID}
-                    assertionAudience: ${LEDGERLINE_AS_ISSUER}            # the AS by its identifier (RFC 7523bis)
-                    signingKeyRef: {name: xaa-client-key, key: signingKey}
+                # S&V's registration at Ledgerline: private_key_jwt, the AS by its
+                # identifier as assertion audience (RFC 7523bis); or a client
+                # secret where the AS takes no keys
+                clientAuth: ${XAA_AS_CLIENT_AUTH}
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute

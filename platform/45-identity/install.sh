@@ -24,10 +24,14 @@ step "Sterling & Vance Keycloak $KEYCLOAK_VERSION (sv-identity)"
 # (private_key_jwt): a PS256 realm key used for nothing else, stable
 # (.lab/keys).
 . "$LAB_ROOT/scripts/idp.sh"
+# An ES256 key too, for an upstream that takes no PS256 assertions (Okta).
 realm_signing_key sv-broker-client
+ec_signing_key sv-broker-client-es256
 secret_apply sv-identity kc-secrets \
   SV_BROKER_CLIENT_KEY="$(pem_body "$LAB_STATE/keys/sv-broker-client.key")" \
   SV_BROKER_CLIENT_CERT="$(pem_body "$LAB_STATE/keys/sv-broker-client.crt")" \
+  SV_BROKER_CLIENT_EC_KEY="$(pem_body "$LAB_STATE/keys/sv-broker-client-es256.key")" \
+  SV_BROKER_CLIENT_EC_PUB="$(pem_body "$LAB_STATE/keys/sv-broker-client-es256.pub")" \
   KC_BOOTSTRAP_ADMIN_USERNAME=admin \
   KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret SV_KC_ADMIN_PASSWORD)" \
   SV_KAGENT_CLIENT_SECRET="$(lab_secret SV_KAGENT_CLIENT_SECRET)" \

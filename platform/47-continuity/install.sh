@@ -143,11 +143,12 @@ desired=$({ for n in $CHAIN; do
   assurance=$(idp_setting "$n" ASSURANCE '{"default": "AAL1"}')
   echo "$assurance" | jq -e . >/dev/null 2>&1 || die "$(echo "$n" | tr '[:lower:]' '[:upper:]')_ASSURANCE isn't JSON"
   jq -nc --arg n "$n" --arg iss "$(_idp_var "$n" ISSUER)" --arg cid "$(_idp_var "$n" CLIENT_ID)" \
-    --arg auth "$(idp_client_auth "$n")" --argjson dir "$dir" --argjson assurance "$assurance" \
+    --arg auth "$(idp_client_auth "$n")" --arg alg "$(idp_setting "$n" CLIENT_ALG PS256)" --arg oscopes "$(idp_setting "$n" SCOPES "")" --argjson dir "$dir" --argjson assurance "$assurance" \
     --arg gclaim "$(idp_setting "$n" GROUPS_CLAIM groups)" --arg display "$(idp_setting "$n" DISPLAY_NAME "$n")" '{name: $n,
     displayName: $display, type: "oidc",
     oidc: ({issuer: $iss, clientID: $cid, clientAuth: $auth}
-      + (if $auth == "private_key_jwt" then {clientAssertionSigningAlg: "PS256"} else {clientSecretRef: {name: "upstream-\($n)"}} end)),
+      + (if $oscopes != "" then {scopes: ($oscopes | split(" ") | map(select(. != "")))} else {} end)
+      + (if $auth == "private_key_jwt" then {clientAssertionSigningAlg: $alg} else {clientSecretRef: {name: "upstream-\($n)"}} end)),
     failoverWhen: {unreachable: true, serverError: true, invalidDiscovery: true, latencyAboveMs: 1500},
     assurance: $assurance,
     groups: {claim: $gclaim}}

@@ -735,6 +735,31 @@
         }
       },
       {
+        "name": "upstream-client-es256",
+        "providerId": "ecdsa-generated",
+        "subComponents": {},
+        "config": {
+          "priority": [
+            "100"
+          ],
+          "enabled": [
+            "true"
+          ],
+          "active": [
+            "true"
+          ],
+          "ecdsaEllipticCurveKey": [
+            "P-256"
+          ],
+          "ecdsaPrivateKey": [
+            "${SV_BROKER_CLIENT_EC_KEY}"
+          ],
+          "ecdsaPublicKey": [
+            "${SV_BROKER_CLIENT_EC_PUB}"
+          ]
+        }
+      },
+      {
         "name": "upstream-client-ps256",
         "providerId": "rsa",
         "subComponents": {},

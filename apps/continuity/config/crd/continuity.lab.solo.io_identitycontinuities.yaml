@@ -577,9 +577,11 @@ spec:
                           default: PS256
                           description: |-
                             The algorithm of the realm key kept for client assertions alone (the
-                            token-signing key uses RS256, so it is never used here).
+                            token-signing key uses RS256, so it is never used here): PS256, or
+                            ES256 for an upstream that takes no PS256 assertions.
                           enum:
                           - PS256
+                          - ES256
                           type: string
                         clientAuth:
                           default: client_secret_post
