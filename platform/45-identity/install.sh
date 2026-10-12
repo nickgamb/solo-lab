@@ -42,7 +42,8 @@ secret_apply sv-identity kc-secrets \
   SV_CLIENT_AT_LEDGERLINE="$SV_CLIENT_AT_LEDGERLINE" \
   SV_CONTINUITY_CLIENT_SECRET="$(lab_secret SV_CONTINUITY_CLIENT_SECRET)" \
   SV_CONTINUITY_SYNC_CLIENT_SECRET="$(lab_secret SV_CONTINUITY_SYNC_CLIENT_SECRET)" \
-  SV_OBSERVATORY_CLIENT_SECRET="$(lab_secret SV_OBSERVATORY_CLIENT_SECRET)"
+  SV_OBSERVATORY_CLIENT_SECRET="$(lab_secret SV_OBSERVATORY_CLIENT_SECRET)" \
+  SV_MCP_ISSUER_CLIENT_SECRET="$(lab_secret SV_MCP_ISSUER_CLIENT_SECRET)"
 # S&V's broker is the enterprise IdP for Cross App Access: it vouches for
 # every S&V user to the apps they reach that way (Ledgerline), so it must
 # ISSUE ID-JAGs: Keycloak 26.7.5 +

@@ -160,6 +160,22 @@ fi
 check 'http": 40[13]|isError": true'            "the front door with a token for another app (kagent): refused" observability $FRONT call whoami '{}' --token "$BOB"
 DANA_CLIENT=$(mcp_client_token dana dana-demo | jq -r '.access_token // empty') || DANA_CLIENT=""
 check 'http": 40[13]|isError": true'            "an AI client for a platform engineer (not an advisor): refused" observability $FRONT call whoami '{}' --token "$DANA_CLIENT"
+# Enterprise: agentgateway's OAuth issuer is the authorization server: the
+# resource names itself, its metadata is the issuer's, any MCP client
+# registers itself (or names itself by a client ID metadata document)
+if [ "$AGW_EDITION" = enterprise ]; then
+  asm=$(K exec -n observability probe -- sh -c "curl -s -m 10 https://mcp.$SV_DOMAIN/.well-known/oauth-authorization-server/mcp/bob-workspace" 2>&1) || asm=""
+  if [ "$prm" = "$FRONT" ] && [ "$(echo "$asm" | jq -r '.issuer // empty' 2>/dev/null)" = "$FRONT" ] \
+     && echo "$asm" | jq -e '(.registration_endpoint | test("/oauth-issuer/register$")) and .client_id_metadata_document_supported == true' >/dev/null 2>&1; then
+    res ok "the issuer is the authorization server: metadata for $FRONT, open registration, client ID metadata documents"
+  else res no "the issuer is the authorization server, with open registration and client ID metadata documents" "${asm:0:160}"; fi
+  ISSUER_CLIENT=$(issuer_client_token bob bob-demo | jq -r '.access_token // empty') || ISSUER_CLIENT=""
+  if [ -z "$ISSUER_CLIENT" ]; then res no "an AI client registers itself and signs Bob in through the issuer" "no token"
+  else
+    check '\"acting_for\": \"bob@.*\"audience\": \"bob-workspace\"' \
+                                                "an AI client that registered itself, signed in through the issuer: whoami acts as bob" observability $FRONT call whoami '{}' --token "$ISSUER_CLIENT"
+  fi
+fi
 
 XAA=http://ai-gateway.agentgateway-system/xaa/ledgerline/mcp
 # Ledgerline's account for Bob: its own user ID (its own Keycloak), or a token

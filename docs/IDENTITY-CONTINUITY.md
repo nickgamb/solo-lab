@@ -386,7 +386,7 @@ routing:
     when: 'request.uri.matches("[?&]resource=https(%3A|:)(%2F|/){2}mcp.sterling.lab(%2F|/)mcp(%2F|/)ledgerline")'
     idps: [gluu, keycloak]
   - name: ai-clients
-    when: 'request.uri.matches("[?&]client_id=sv-mcp-client(&|$)")'
+    when: 'request.uri.matches("[?&]client_id=sv-mcp-(client|issuer)(&|$)")'
     idps: [keycloak]
 ```
 

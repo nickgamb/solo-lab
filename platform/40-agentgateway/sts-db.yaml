@@ -1,0 +1,35 @@
+# The STS's database (Enterprise): the OAuth issuer's sign-in state and the
+# tokens it holds, shared by every controller replica, so a sign-in that
+# starts on one finishes on another, and kept across restarts (the chart's
+# default is SQLite in each pod). CloudNativePG, as for OpenFGA (layer 48).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata: {name: sts-db, namespace: agentgateway-system}
+spec:
+  instances: 2
+  bootstrap:
+    initdb: {database: sts, owner: sts}
+  storage: {size: 1Gi}
+  failoverDelay: 15
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 384Mi}
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: topology.kubernetes.io/zone
+    podAntiAffinityType: preferred
+---
+# Only the controller (the STS), the instances replicating, and the operator.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: sts-db-callers, namespace: agentgateway-system}
+spec:
+  selector: {matchLabels: {cnpg.io/cluster: sts-db}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/agentgateway-system/sa/${AGW_RELEASE}
+        - cluster.local/ns/agentgateway-system/sa/sts-db
+        - cluster.local/ns/cnpg-system/sa/cnpg-cloudnative-pg

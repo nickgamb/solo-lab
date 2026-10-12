@@ -42,7 +42,10 @@ Both editions run the rest of the lab the same way: MCP federation and
 per-tool authorization, token exchange and Cross App Access toward tools,
 prompt guards, provider failover, cost per call, API keys and format
 translation, MCP guardrails, and the MCP sign-in front door for AI clients
-(agentgateway's MCP authorization). Cross App Access uses agentgateway's
+(agentgateway's MCP authorization). On Enterprise, agentgateway's OAuth
+issuer is the front door's authorization server, so any MCP client registers
+itself or names itself by a client ID metadata document; OSS hands every
+client the one S&V registered. Cross App Access uses agentgateway's
 `crossAppAccess` (one backend, S&V's broker vouching, a fresh ID-JAG per
 call, verified on the gateway's own routes), with the lab's
 `idtoken-exchange` supplying the ID token from the broker

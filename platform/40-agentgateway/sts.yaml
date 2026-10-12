@@ -25,3 +25,20 @@ spec:
       policy:
         matchExpressions:
         - 'source.identity.namespace == "sv-mcp"'
+---
+# The STS's OAuth issuer: the authorization server for AI clients at the
+# firm's front door (KGW_OAUTH_ISSUER_CONFIG, values-enterprise.yaml), on the
+# ai-gateway under /oauth-issuer only: discovery, registration, sign-in and
+# its callbacks. Nothing else on the STS's port is reachable this way, and no
+# bearer token is required here (a client has none until it signs in).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: oauth-issuer, namespace: agentgateway-system}
+spec:
+  parentRefs: [{name: ai-gateway, sectionName: http}]
+  # the front door, and the gateway itself: it reads the issuer's metadata
+  # here (through the mesh), never from the STS's port directly
+  hostnames: ["mcp.${SV_DOMAIN}", "ai-gateway.agentgateway-system.svc.cluster.local"]
+  rules:
+  - matches: [{path: {type: PathPrefix, value: /oauth-issuer}}]
+    backendRefs: [{name: ${AGW_RELEASE}, port: 7777}]

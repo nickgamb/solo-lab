@@ -68,6 +68,9 @@ step "Sterling & Vance: workspace, front door, agent, Cross App Access"
 xaa_secrets
 K delete secret ledgerline-client -n agentgateway-system --ignore-not-found >/dev/null   # earlier labs: a shared secret
 MCP_EXCHANGE_WORKSPACE=$(mcp_exchange bob-workspace); export MCP_EXCHANGE_WORKSPACE
+# the front door's authorization server for AI clients (scripts/idp.sh)
+MCP_CLIENT_AUTH_BOB_WORKSPACE=$(mcp_client_auth bob-workspace) MCP_CLIENT_AUTH_LEDGERLINE=$(mcp_client_auth ledgerline)
+export MCP_CLIENT_AUTH_BOB_WORKSPACE MCP_CLIENT_AUTH_LEDGERLINE
 # the relationship guard's key to S&V's OpenFGA (layer 48)
 secret_apply agentgateway-system openfga-guard token="$(lab_secret SV_OPENFGA_KEY)"
 apply_tmpl "$D"/manifests/*.yaml
@@ -84,6 +87,9 @@ K delete "$AGW_PARAMS_KIND" mcp-waypoint -n sv-mcp --ignore-not-found >/dev/null
 K delete deploy,service,serviceaccount mcp-guard -n sv-mcp --ignore-not-found >/dev/null
 # Cross App Access on ai-gateway: S&V's broker vouches for Bob
 xaa_gateway_apply "$D/manifests"
+# the front door's MCP resources, registered with agentgateway's OAuth issuer
+# (Enterprise): AI clients sign in through it (manifests/issuer/)
+mcp_issuer_resources "$D/manifests" bob-workspace ledgerline
 # earlier labs: the token requests went through xaa-relay
 K delete deploy,service,serviceaccount -n agentgateway-system xaa-relay --ignore-not-found >/dev/null
 K delete authorizationpolicy xaa-relay-callers -n agentgateway-system --ignore-not-found >/dev/null

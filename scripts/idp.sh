@@ -89,6 +89,52 @@ mcp_exchange() {
   fi
 }
 
+# mcp_issuer_metadata <path>: the protected-resource metadata for an MCP
+# resource at MCP_PUBLIC_URL/mcp/<path> with agentgateway's OAuth issuer
+# (Enterprise) as its authorization server, at the resource's own URL. The
+# gateway reads the issuer's metadata through itself (the mesh), never from
+# the STS's port directly (platform/40-agentgateway/sts.yaml).
+mcp_issuer_metadata() {
+  jq -nc --arg url "$MCP_PUBLIC_URL/mcp/$1" --arg proxy "http://ai-gateway.agentgateway-system.svc.cluster.local/oauth-issuer" \
+    '{"agentgateway.dev/issuer-proxy": $proxy, resource: $url, authorizationServers: [$url],
+      scopesSupported: ["openid", "profile", "email"], bearerMethodsSupported: ["header"]}'
+}
+
+# mcp_issuer_resources <dir> <path>...: register the front door's MCP
+# resources with the issuer (Enterprise; <dir>/issuer/resource.yaml), and
+# remove the registrations of any other (all of them on OSS)
+mcp_issuer_resources() {
+  local dir=$1 r kind; shift
+  if [ "$AGW_EDITION" = enterprise ]; then
+    for r in "$@"; do
+      ISSUER_RESOURCE=$r ISSUER_RESOURCE_METADATA=$(mcp_issuer_metadata "$r") apply_tmpl "$dir/issuer/resource.yaml" \
+        || die "the issuer's registration for $r"
+    done
+  fi
+  for kind in "$AGW_BACKEND_KIND" httproute "$AGW_POLICY_KIND"; do
+    for r in $(K get "$kind" -n agentgateway-system -l lab.solo.io/issuer-resource -o jsonpath='{range .items[*]}{.metadata.labels.lab\.solo\.io/issuer-resource}{"\n"}{end}' 2>/dev/null | sort -u); do
+      [ "$AGW_EDITION" = enterprise ] && case " $* " in *" $r "*) continue ;; esac
+      K delete "$kind" -n agentgateway-system -l "lab.solo.io/issuer-resource=$r" >/dev/null
+    done
+  done
+}
+
+# mcp_client_auth <path>: how the front door names the authorization server
+# for an MCP resource at MCP_PUBLIC_URL/mcp/<path> (agentgateway
+# jwtAuthentication.mcp, YAML flow). Enterprise: agentgateway's OAuth issuer,
+# which takes any MCP client (dynamic registration, client ID metadata
+# documents, or registered) and signs it in through S&V's broker. OSS: the
+# gateway hands every client the one S&V registered at the broker.
+mcp_client_auth() {
+  local url="$MCP_PUBLIC_URL/mcp/$1"
+  if [ "$AGW_EDITION" = enterprise ]; then
+    jq -nc --argjson md "$(mcp_issuer_metadata "$1")" '{resourceMetadata: $md}'
+  else
+    jq -nc '{provider: "Keycloak", clientId: "sv-mcp-client",
+      resourceMetadata: {scopesSupported: ["openid", "profile", "email"], bearerMethodsSupported: ["header"]}}'
+  fi
+}
+
 # ras_external: whether Ledgerline's AS is one the lab reaches over the
 # internet, not its own Keycloak
 ras_external() { ! idp_internal "$LEDGERLINE_AS_ISSUER"; }

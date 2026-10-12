@@ -67,27 +67,48 @@ sequenceDiagram
   C->>G: initialize, no token
   G-->>C: 401, WWW-Authenticate: resource_metadata
   C->>G: protected-resource metadata, then authorization-server metadata
-  G-->>C: authorization server: the gateway; authorize and token: the fabric; client: sv-mcp-client
-  C->>F: authorize (PKCE, loopback redirect)
-  F->>I: redirect to the IdP that is primary now
+  G-->>C: authorization server: the resource itself; its metadata: agentgateway's OAuth issuer (Enterprise)
+  C->>G: register (dynamic registration), or a client ID metadata document URL as client ID
+  C->>G: authorize at the issuer (PKCE, loopback redirect)
+  G->>F: the issuer signs Bob in at the broker, as sv-mcp-issuer
+  F->>I: redirect to the IdP the routing rule names (S&V's own, with MFA)
   I-->>F: Bob signed in
-  F-->>C: code, then Bob's access token (aud ai-gateway)
+  F-->>G: code; the issuer redeems it
+  G-->>C: code, then the broker's access token for Bob (aud ai-gateway)
   C->>G: tools/call, Authorization: Bob's access token
   G->>G: verify, client and groups, assurance gate, tool allowlist
   G->>G: mint the server its own token for this call (or an ID-JAG toward Ledgerline)
 ```
 
-- **Sign-in redirects to the primary IdP.** A client with no token gets a
+- **Any MCP client signs in (Enterprise).** A client with no token gets a
   401 pointing at the protected-resource metadata (agentgateway's MCP
-  authorization, `traffic.jwtAuthentication.mcp`), which names the gateway
-  as authorization server. The gateway's metadata sends authorize and token
-  requests to the identity fabric, which redirects to whichever of S&V's
-  IdPs is primary. After a failover the same URL lands at the next IdP.
-- **No open registration.** Every client gets the one client S&V
+  authorization, `traffic.jwtAuthentication.mcp`), which names the resource
+  as its own authorization server. Its authorization-server metadata is
+  agentgateway's OAuth issuer's (the STS, `/oauth-issuer` on the front
+  door): the client registers itself (dynamic registration), names itself
+  by a client ID metadata document (an HTTPS URL as its client ID, PKCE
+  only, no refresh token), or uses one S&V registered. The issuer signs the
+  user in at S&V's broker as its own client there, `sv-mcp-issuer`, and
+  hands the client the broker's token; it signs no tokens of its own.
+  - The issuer takes a resource only from a backend's MCP authentication,
+    so each front-door resource has a registration backend that serves its
+    metadata and takes no calls (`demos/bob/manifests/issuer/`); the
+    front door's routes keep enforcing. The gateway reads the issuer's
+    metadata through itself, never from the STS's port directly.
+  - The issuer's state lives in the STS's database (PostgreSQL,
+    `platform/40-agentgateway/sts-db.yaml`), so a sign-in that starts on
+    one controller replica finishes on another.
+  - Settings: `MCP_PUBLIC_URL` (the front door as clients reach it; a
+    public host for parties outside the lab), `MCP_CLIENT_REDIRECT_URIS`
+    (for registered clients), `MCP_CIMD_TRUSTED_DOMAINS`.
+- **No open registration (OSS).** Every client gets the one client S&V
   registered, `sv-mcp-client` (public, PKCE S256, loopback redirects only,
-  no password grant).
+  no password grant); the gateway names itself the authorization server.
+- **Sign-in goes where the routing rule says.** AI clients' sign-ins
+  (`sv-mcp-client` or `sv-mcp-issuer`) go to S&V's own IdP, with MFA; after
+  a failover, to the next.
 - **The same checks as the firm's agents.** A fabric JWT with audience
-  `ai-gateway`, through the edge, from `sv-mcp-client`, for a user in
+  `ai-gateway`, through the edge, from `sv-mcp-client` or `sv-mcp-issuer`, for a user in
   `advisors`; the same assurance rules (`advisor-workspace`,
   `ledgerline-research`) and per-tool allowlist. The server gets a token
   minted for that call alone, or Ledgerline an ID-JAG made for it; Bob's
@@ -495,8 +516,10 @@ outside S&V, through the edge):
 | Case | Expected |
 | --- | --- |
 | no token | 401 with `resource_metadata` |
-| the protected-resource metadata | names the gateway as authorization server |
+| the protected-resource metadata | names the authorization server |
+| Enterprise: the resource's authorization-server metadata | the issuer's: open registration, client ID metadata documents |
 | Bob signed in as `sv-mcp-client`, `whoami` on Bob's workspace | `acting_for: bob`, issuer the gateway's minter |
+| Enterprise: a client that registered itself, Bob signed in through the issuer, `whoami` | `acting_for: bob` |
 | `export_book` | refused |
 | Bob's kagent token (another client) | refused |
 | Dana (not in `advisors`) | refused |

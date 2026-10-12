@@ -35,5 +35,5 @@ spec:
       idps: [gluu, keycloak]
     - name: ai-clients
       description: AI clients outside the mesh (Claude Code, IDEs) sign in at the IdP S&V runs itself, with MFA
-      when: 'request.uri.matches("[?&]client_id=sv-mcp-client(&|$)")'
+      when: 'request.uri.matches("[?&]client_id=sv-mcp-(client|issuer)(&|$)")'
       idps: [keycloak]
