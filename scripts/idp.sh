@@ -142,33 +142,79 @@ xaa_secrets() {
     --dry-run=client -o yaml | K apply -f - >/dev/null
 }
 
-# xaa_gateway_apply: ai-gateway's Cross App Access (xaa/ledgerline.yaml), with
-# how it reaches Ledgerline's token endpoint: its Keycloak's Service, or a
-# static backend for an AS outside the lab
-xaa_gateway_apply() {
-  local dir=$1 ep
-  ep=$(jq -cn --arg u "$LEDGERLINE_AS_TOKEN_URL" --arg grp "$AGW_BACKEND_GROUP" --arg kind "$AGW_BACKEND_KIND" '
+# xaa_endpoint <https URL>: a static TLS backend on ai-gateway for an
+# endpoint of an authorization server (the lab CA for one under .lab), and how
+# a route reaches it: {ref, host, path, backend}
+xaa_endpoint() {
+  local ep
+  ep=$(jq -cn --arg u "$1" --arg grp "$AGW_BACKEND_GROUP" --arg kind "$AGW_BACKEND_KIND" '
     ($u | capture("^https://(?<host>[^/:]+)(:(?<port>[0-9]+))?(?<path>/.*)?$")) as $c
     | if $c == null then error("not an https URL: \($u)") else . end
     | ("xaa-" + ($c.host | gsub("[.]"; "-"))) as $n
     | {ref: {group: $grp, kind: $kind, name: $n}, host: $c.host, path: $c.path,
-       backend: {name: $n, host: $c.host, port: ($c.port // "443" | tonumber)}}') || die "XAA: Ledgerline's token endpoint"
+       backend: {name: $n, host: $c.host, port: ($c.port // "443" | tonumber)}}') || die "XAA: $1"
   echo "$ep" | jq -c --arg api "$AGW_BACKEND_API" --arg kind "$AGW_BACKEND_KIND" --arg tld "$LAB_TLD" '.backend
     | {apiVersion: $api, kind: $kind,
        metadata: {name: .name, namespace: "agentgateway-system", labels: {"lab.solo.io/xaa-endpoint": "true"}},
        spec: {static: {host: .host, port: .port},
               policies: {tls: ({sni: .host} + if (.host | endswith(".\($tld)")) then {caCertificateRefs: [{name: "lab-ca-bundle"}]} else {} end)}}}' \
-    | K apply -f - >/dev/null || die "XAA: Ledgerline's endpoint backend"
-  XAA_AS_REF=$(echo "$ep" | jq -c .ref) XAA_AS_HOST=$(echo "$ep" | jq -r .host) XAA_AS_PATH=$(echo "$ep" | jq -r .path) \
-    apply_tmpl "$dir/xaa/ledgerline.yaml" || die "XAA: the route and its checks"
+    | K apply -f - >/dev/null || die "XAA: the backend for $1"
+  echo "$ep"
+}
+
+# xaa_gateway_apply: ai-gateway's Cross App Access (xaa/ledgerline.yaml): how
+# it reaches Ledgerline's token endpoint (its Keycloak's Service, or a static
+# backend for an AS outside the lab), and who vouches (XAA_VOUCHER): S&V's
+# broker, or the user's own IdP with S&V's key there
+xaa_gateway_apply() {
+  local dir=$1 ep keep n iss cid d idp
+  ep=$(xaa_endpoint "$LEDGERLINE_AS_TOKEN_URL")
+  keep=" $(echo "$ep" | jq -r .backend.name) "
+  export XAA_AS_REF XAA_AS_HOST XAA_AS_PATH XAA_RESOURCE="https://mcp.$LEDGERLINE_DOMAIN/mcp"
+  XAA_AS_REF=$(echo "$ep" | jq -c .ref) XAA_AS_HOST=$(echo "$ep" | jq -r .host) XAA_AS_PATH=$(echo "$ep" | jq -r .path)
+  export XAA_IDP_HOST XAA_IDP_PATH XAA_IDP_REF XAA_IDP_ISSUER XAA_IDP_AUDIENCE XAA_IDP_JWKS \
+    XAA_IDP_CLIENT_AUTH XAA_IDP_SCOPES XAA_IDP_SCOPE_LIST XAA_RESOURCES_LINE XAA_IDJAG_MAX_LIFETIME_S
+  if [ -z "$XAA_VOUCHER_IDP" ]; then
+    # S&V's broker vouches, as kagent
+    XAA_IDP_HOST=keycloak.sv-identity XAA_IDP_PATH=/realms/sterling-vance/protocol/openid-connect/token
+    XAA_IDP_REF='{kind: Service, name: keycloak, namespace: sv-identity, port: 80}'
+    XAA_IDP_ISSUER="https://idp.$SV_DOMAIN/realms/sterling-vance" XAA_IDP_AUDIENCE=kagent
+    XAA_IDP_JWKS="{backendRef: $XAA_IDP_REF, jwksPath: /realms/sterling-vance/protocol/openid-connect/certs, cacheDuration: 5m}"
+    XAA_IDP_CLIENT_AUTH='{clientId: kagent, method: ClientSecretBasic, secretRef: {name: kagent-client, key: clientSecret}}'
+    XAA_IDP_SCOPES='[xaa-ledgerline, research:read]' XAA_IDP_SCOPE_LIST='["xaa-ledgerline", "research:read"]'
+    XAA_RESOURCES_LINE='# resource: none (the broker binds the ID-JAG to Ledgerline by audience)'
+    XAA_IDJAG_MAX_LIFETIME_S=$MCP_TOKEN_LIFETIME_S   # the broker's, which S&V sets
+  else
+    # the user's own IdP vouches: S&V's client there, with S&V's key
+    n=$XAA_VOUCHER_IDP
+    case " $(idp_names) " in *" $n "*) ;; *) die "XAA_VOUCHER=$n isn't in ENTERPRISE_IDP ($ENTERPRISE_IDP)" ;; esac
+    [ "$(idp_client_auth "$n")" = private_key_jwt ] || die "XAA_VOUCHER=$n: S&V authenticates there with its key (private_key_jwt), not a client secret"
+    iss=$(_idp_var "$n" ISSUER) cid=$(_idp_var "$n" CLIENT_ID)
+    [ -n "$iss" ] && [ -n "$cid" ] || die "XAA_VOUCHER=$n: its issuer and S&V's client there (.env)"
+    d=$(idp_discover "$iss")
+    [ "$(echo "$d" | jq -r .issuer)" = "$iss" ] || die "XAA_VOUCHER=$n: the issuer its discovery states is $(echo "$d" | jq -r .issuer)"
+    idp=$(xaa_endpoint "$(echo "$d" | jq -r .token_endpoint)")
+    keep="$keep$(echo "$idp" | jq -r .backend.name) "
+    K create secret generic xaa-idp-client-key -n agentgateway-system --from-file=signingKey="$LAB_STATE/keys/sv-broker-client.key" \
+      --dry-run=client -o yaml | K apply -f - >/dev/null
+    XAA_IDP_HOST=$(echo "$idp" | jq -r .host) XAA_IDP_PATH=$(echo "$idp" | jq -r .path) XAA_IDP_REF=$(echo "$idp" | jq -c .ref)
+    XAA_IDP_JWKS="{url: \"$(echo "$d" | jq -r .jwks_uri)\", cacheDuration: 5m}"
+    XAA_IDP_ISSUER=$iss XAA_IDP_AUDIENCE=$cid
+    XAA_IDP_CLIENT_AUTH="{clientId: $cid, method: PrivateKeyJwt, privateKeyJwt: {alg: PS256, kid: $(sv_upstream_client_jwks | jq -r '.keys[0].kid'), assertionAudience: \"$iss\", signingKeyRef: {name: xaa-idp-client-key, key: signingKey}}}"
+    XAA_IDP_SCOPES='[research:read]' XAA_IDP_SCOPE_LIST='["research:read"]'
+    XAA_RESOURCES_LINE="resources: [$XAA_RESOURCE]   # Ledgerline's MCP server (RFC 8707)"
+    XAA_IDJAG_MAX_LIFETIME_S=300   # the IdP sets its own; ID-JAGs are short-lived (minutes)
+  fi
+  apply_tmpl "$dir/xaa/ledgerline.yaml" || die "XAA: the route and its checks"
   # earlier labs: a lane that listed Ledgerline's tools without a user
   K delete httproute xaa-ledgerline-discovery -n agentgateway-system --ignore-not-found >/dev/null
   K delete "$AGW_POLICY_KIND" xaa-ledgerline-discovery -n agentgateway-system --ignore-not-found >/dev/null
   K delete "$AGW_BACKEND_KIND" xaa-ledgerline-catalog -n agentgateway-system --ignore-not-found >/dev/null
-  # an endpoint no longer used
+  # endpoints no longer used
   for n in $(K get "$AGW_BACKEND_KIND" -n agentgateway-system -l lab.solo.io/xaa-endpoint -o name); do
-    [ "${n##*/}" = "$(echo "$ep" | jq -r .backend.name)" ] || K delete -n agentgateway-system "$n" >/dev/null
+    case "$keep" in *" ${n##*/} "*) ;; *) K delete -n agentgateway-system "$n" >/dev/null ;; esac
   done
+  [ -n "$XAA_VOUCHER_IDP" ] || K delete secret xaa-idp-client-key -n agentgateway-system --ignore-not-found >/dev/null
 }
 
 # jwks_of <cert>: the public half of a lab key, as a JWKS with its RFC 7638 kid

@@ -48,10 +48,12 @@ secret_apply sv-identity kc-secrets \
 KC_IDJAG=$(kc_idjag_image)
 lab_image "$KC_IDJAG" tools/keycloak-idjag/build.sh
 # Its realm names Ledgerline's authorization server as the ID-JAG audience
-# (RESOURCE_AS).
+# (RESOURCE_AS). Identity Brokering API v2: the requesting app may read the
+# tokens an upstream IdP issued for the user's session, so that IdP can
+# vouch for them in Cross App Access (XAA_VOUCHER=idp).
 KC_IMAGE="localhost:${LAB_REGISTRY_PORT}/$KC_IDJAG" \
   deploy_keycloak sv-identity "$SV_DOMAIN" https-sterling "$D/realm-sterling-vance.json" \
-  token-exchange-standard,identity-assertion-jwt
+  token-exchange-standard,identity-assertion-jwt,identity-brokering-api:v2
 wait_for "https://idp.$SV_DOMAIN discovery" 30 3 \
   sh -c "curl -sf --cacert '$LAB_CA_DIR/ca.crt' https://idp.$SV_DOMAIN/realms/sterling-vance/.well-known/openid-configuration >/dev/null"
 ok "issuer https://idp.$SV_DOMAIN/realms/sterling-vance  (admin: see .lab/secrets.env)"

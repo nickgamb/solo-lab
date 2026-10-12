@@ -15,6 +15,11 @@
 // in the user's session, then that refresh token for the ID token (exchange,
 // below). The broker issues them only for a live session of that user, so the
 // ID token belongs to the same sign-in.
+//
+// With UPSTREAM_IDP set, the user's own IdP vouches instead: the ID token is
+// the one that IdP issued for the user's sign-in, which the broker keeps with
+// the session and hands only to kagent (the continuity-upstream endpoint in
+// tools/keycloak-idjag). A sign-in through another IdP is refused.
 package main
 
 import (
@@ -66,8 +71,11 @@ type op struct {
 // exchanger turns access tokens into ID tokens, caching each for a while.
 type exchanger struct {
 	broker op // S&V's broker, as kagent
-	hc     *http.Client
-	now    func() time.Time
+	// upstream: the IdP whose ID token is the subject ("": the broker's);
+	// upstreamURL: the broker's endpoint for it, .../continuity-upstream
+	upstream, upstreamURL string
+	hc                    *http.Client
+	now                   func() time.Time
 
 	mu    sync.Mutex
 	cache map[[32]byte]cached
@@ -92,7 +100,7 @@ func (x *exchanger) idToken(ctx context.Context, accessToken string) (id, source
 	x.mu.Lock()
 	if c, ok := x.cache[key]; ok && now.Before(c.exp) {
 		x.mu.Unlock()
-		return c.idToken, x.broker.Name, nil
+		return c.idToken, x.source(), nil
 	}
 	for k, c := range x.cache { // small and short-lived: prune on the way
 		if !now.Before(c.exp) {
@@ -102,7 +110,7 @@ func (x *exchanger) idToken(ctx context.Context, accessToken string) (id, source
 	x.mu.Unlock()
 
 	if id, err = x.exchange(ctx, accessToken); err != nil {
-		return "", x.broker.Name, err
+		return "", x.source(), err
 	}
 	// cache until the earlier of the two expiries, less a little slack
 	if exp := earliest(expiry(id), expiry(accessToken)).Add(-10 * time.Second); exp.After(now) {
@@ -110,7 +118,15 @@ func (x *exchanger) idToken(ctx context.Context, accessToken string) (id, source
 		x.store(key, cached{idToken: id, exp: exp}, now)
 		x.mu.Unlock()
 	}
-	return id, x.broker.Name, nil
+	return id, x.source(), nil
+}
+
+// source: who issued the ID token.
+func (x *exchanger) source() string {
+	if x.upstream != "" {
+		return x.upstream
+	}
+	return x.broker.Name
 }
 
 // store caches c under key, keeping at most maxCached entries: expired ones
@@ -162,7 +178,8 @@ func (x *exchanger) exchange(ctx context.Context, accessToken string) (string, e
 		return "", fmt.Errorf("token endpoint issued %q, not a refresh token", rt.IssuedTokenType)
 	}
 	var out struct {
-		IDToken string `json:"id_token"`
+		IDToken     string `json:"id_token"`
+		AccessToken string `json:"access_token"`
 	}
 	if err := x.tokenRequest(ctx, x.broker, url.Values{
 		"grant_type":    {"refresh_token"},
@@ -171,8 +188,31 @@ func (x *exchanger) exchange(ctx context.Context, accessToken string) (string, e
 	}, &out); err != nil {
 		return "", err
 	}
+	if x.upstream != "" {
+		return x.upstreamIDToken(ctx, out.AccessToken)
+	}
 	if out.IDToken == "" {
 		return "", errors.New("token endpoint returned no ID token")
+	}
+	return out.IDToken, nil
+}
+
+// upstreamIDToken: the ID token x.upstream issued for the sign-in behind
+// kagent's access token (in the same session), from the broker as kagent.
+func (x *exchanger) upstreamIDToken(ctx context.Context, accessToken string) (string, error) {
+	if accessToken == "" {
+		return "", errors.New("token endpoint returned no access token")
+	}
+	at := x.broker
+	at.Name, at.TokenURL = x.upstream, strings.TrimSuffix(x.upstreamURL, "/")+"/"+url.PathEscape(x.upstream)+"/id-token"
+	var out struct {
+		IDToken string `json:"id_token"`
+	}
+	if err := x.tokenRequest(ctx, at, url.Values{"token": {accessToken}}, &out); err != nil {
+		return "", err
+	}
+	if out.IDToken == "" {
+		return "", fmt.Errorf("%s: no ID token", x.upstream)
 	}
 	return out.IDToken, nil
 }
@@ -272,7 +312,8 @@ func main() {
 		slog.Error("CA_FILE", "err", err)
 		os.Exit(1)
 	}
-	x := &exchanger{broker: broker, hc: hc, now: time.Now, cache: map[[32]byte]cached{}}
+	x := &exchanger{broker: broker, hc: hc, now: time.Now, cache: map[[32]byte]cached{},
+		upstream: os.Getenv("UPSTREAM_IDP"), upstreamURL: env("UPSTREAM_URL", "http://keycloak.sv-identity/realms/sterling-vance/continuity-upstream")}
 
 	health := &http.Server{Addr: env("HEALTH_LISTEN", ":8081"), ReadHeaderTimeout: 5 * time.Second,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })}
@@ -291,7 +332,7 @@ func main() {
 	srv := grpc.NewServer()
 	extproc.RegisterExternalProcessorServer(srv, &processor{x: x})
 	go func() {
-		slog.Info("listening (ext_proc)", "addr", lis.Addr().String(), "broker", broker.TokenURL, "client_id", broker.ClientID)
+		slog.Info("listening (ext_proc)", "addr", lis.Addr().String(), "broker", broker.TokenURL, "client_id", broker.ClientID, "vouches", x.source())
 		if err := srv.Serve(lis); err != nil {
 			slog.Error("server", "err", err)
 			os.Exit(1)

@@ -125,7 +125,9 @@
         "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "https://kagent.${SV_DOMAIN}/*",
         "standard.token.exchange.enabled": "true",
-        "standard.token.exchange.enableRefreshRequestedTokenType": "SAME_SESSION"
+        "standard.token.exchange.enableRefreshRequestedTokenType": "SAME_SESSION",
+        "external.token.enabled": "${XAA_EXTERNAL_TOKENS}",
+        "external.token.idp": "${XAA_VOUCHER_IDP}"
       },
       "protocolMappers": [
         {
