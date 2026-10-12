@@ -127,7 +127,7 @@
         "standard.token.exchange.enabled": "true",
         "standard.token.exchange.enableRefreshRequestedTokenType": "SAME_SESSION",
         "external.token.enabled": "${XAA_EXTERNAL_TOKENS}",
-        "external.token.idp": "${XAA_VOUCHER_IDP}"
+        "external.token.idp": "${XAA_VOUCHER_IDPS_KC}"
       },
       "protocolMappers": [
         {

@@ -177,7 +177,11 @@ code=$(K exec -n sv-agents probe-bob-assistant -- curl -s -m 10 -o /dev/null -w 
   http://ai-gateway.agentgateway-system/xaa-legs/ledgerline/as/token -d 'grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=a.b.c' 2>/dev/null) || code=""
 case "$code" in 401|403) res ok "Bob's agent asks Ledgerline's token endpoint through the gateway's leg: refused ($code)" ;;
   *) res no "Bob's agent asks Ledgerline's token endpoint through the gateway's leg: refused" "HTTP ${code:-no answer}" ;; esac
-if [ -z "$XAA_VOUCHER_IDP" ]; then
+# who vouches for Bob's session: the IdP that signed him in when it vouches for
+# its own sign-ins (XAA_VOUCHER), else S&V's broker
+BOB_IDP=$(echo "$BOB" | cut -d. -f2 | python3 -c 'import base64,json,sys; s=sys.stdin.read().strip(); print(json.loads(base64.urlsafe_b64decode(s+"="*(-len(s)%4))).get("idp","") if s else "")' 2>/dev/null) || BOB_IDP=""
+case ",$XAA_VOUCHER_IDPS," in *",$BOB_IDP,"*) [ -n "$BOB_IDP" ] && BOB_VOUCHER=$BOB_IDP || BOB_VOUCHER=broker ;; *) BOB_VOUCHER=broker ;; esac
+if [ "$BOB_VOUCHER" = broker ]; then
   check "$ACCOUNT"                                "account_info: Ledgerline's own account for Bob"  $AGENT $XAA call account_info '{}' --token "$BOB"
   check "$ACCOUNT"                                "an AI client at S&V's front door, for Bob: Ledgerline's own account, through S&V's gateway" observability https://mcp.$SV_DOMAIN/mcp/ledgerline call account_info '{}' --token "$CLIENT"
   # the ID-JAG the gateway verified at the Ledgerline leg (ai-gateway's access
@@ -227,12 +231,11 @@ if last:
     else res no "Ledgerline's token lives no longer than the ID-JAG it was given" "${ll_life:-no token in the log of Ledgerline gateway}s"; fi
   fi
 else
-  # the user's own IdP vouches (XAA_VOUCHER): only a sign-in through it reaches
-  # Ledgerline, and a script can't make one there (its passkey, on the internet)
-  check 'http": 40[13]|isError": true|refused' "a sign-in that didn't come through $XAA_VOUCHER_IDP: no ID-JAG, Ledgerline refused" $AGENT $XAA call account_info '{}' --token "$BOB"
-  for c in "account_info: Ledgerline's own account for Bob" "an AI client at S&V's front door, for Bob" "ID-JAG from $XAA_VOUCHER_IDP, verified at S&V's egress" \
+  # Bob's own IdP vouches for his sign-in (XAA_VOUCHER): a sign-in through it
+  # is by hand (its passkey or MFA, on the internet)
+  for c in "account_info: Ledgerline's own account for Bob" "an AI client at S&V's front door, for Bob" "ID-JAG from $BOB_VOUCHER, verified at S&V's egress" \
            "sector_outlook through XAA" "another user's ID token is replaced: still Bob" "a fresh ID-JAG for every call to Ledgerline"; do
-    skipped "$c (XAA_VOUCHER=$XAA_VOUCHER_IDP: needs a sign-in through $XAA_VOUCHER_IDP, by hand)"
+    skipped "$c ($BOB_VOUCHER vouches for this sign-in: by hand)"
   done
 fi
 # Ledgerline's server records any ID token that reaches it: none may

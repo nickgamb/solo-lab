@@ -73,8 +73,9 @@ S&V's client at S&V's Gluu also has:
 - `LEDGERLINE_GLUU_CLIENT_ID` as the ID-JAG's `client_id`
 
 Ledgerline's Gluu lists S&V's Gluu among its trusted ID-JAG issuers, by its
-`jwks_uri`. Only sign-ins through Gluu reach Ledgerline; after failover to
-the next IdP, Bob's calls to Ledgerline are refused until Gluu is back.
+`jwks_uri`, and S&V's broker, which vouches for every session another IdP
+signed in: after failover to the next IdP, the broker (or that IdP, if
+`XAA_VOUCHER` lists it) vouches for Bob until Gluu is back.
 
 ## S&V's Gluu
 

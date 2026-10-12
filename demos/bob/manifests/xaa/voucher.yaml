@@ -1,0 +1,98 @@
+# Cross App Access through one voucher (${XAA_V}): S&V's broker, or an IdP in
+# XAA_VOUCHER that vouches for its own sign-ins (config/lab.env). Rendered once
+# per voucher by xaa_gateway_apply (scripts/idp.sh); ledgerline.yaml picks the
+# voucher for each call from the session's IdP.
+#
+# The backend: Ledgerline's MCP server, with the ID-JAG from this voucher and
+# Ledgerline's token from its AS (agentgateway crossAppAccess).
+apiVersion: ${AGW_BACKEND_API}
+kind: ${AGW_BACKEND_KIND}
+metadata:
+  name: xaa-ledgerline-${XAA_V}
+  namespace: agentgateway-system
+  labels: {lab.solo.io/xaa-voucher: "${XAA_V}"}
+spec:
+  mcp:
+    targets:
+    - name: ledgerline-research
+      static:
+        host: mcp.${LEDGERLINE_DOMAIN}
+        port: 443
+        path: /mcp
+        protocol: StreamableHTTP
+        policies:
+          tls:
+            sni: mcp.${LEDGERLINE_DOMAIN}
+            caCertificateRefs: [{name: lab-ca-bundle}]
+          auth:
+            crossAppAccess:
+              subjectToken:
+                source: {header: {name: x-id-token}}
+                tokenType: IdToken
+              audience: ${LEDGERLINE_AS_ISSUER}                # Ledgerline's AS: the ID-JAG is for it alone
+              ${XAA_RESOURCES_LINE}
+              scopes: ${XAA_IDP_SCOPES}                   # the approved connection, requested from the voucher
+              accessTokenScopes: [research:read]          # what Ledgerline's token may do
+              cache: {inMemory: {maxEntries: 0}}          # a fresh ID-JAG and Ledgerline token per call
+              identityProvider:
+                backendRef: {kind: Service, name: ai-gateway, port: 80}
+                path: /xaa-legs/ledgerline/idp/${XAA_V}/token
+                clientAuth: ${XAA_IDP_CLIENT_AUTH}         # S&V's client at the voucher
+              resourceAuthorizationServer:
+                backendRef: {kind: Service, name: ai-gateway, port: 80}
+                path: /xaa-legs/ledgerline/as/token
+                # S&V's registration at Ledgerline: private_key_jwt, the AS by its
+                # identifier as assertion audience (RFC 7523bis); or a client
+                # secret where the AS takes no keys
+                clientAuth: ${XAA_AS_CLIENT_AUTH}
+---
+# ---- the IdP leg: ID token -> ID-JAG at this voucher ------------------------
+# Only a token exchange for an ID-JAG for Ledgerline's AS, within the
+# connection's scopes and resource, goes out, and only for an ID token this
+# voucher issued to S&V's client there (verified).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: xaa-idp-${XAA_V}
+  namespace: agentgateway-system
+  labels: {lab.solo.io/xaa-voucher: "${XAA_V}"}
+spec:
+  parentRefs: [{name: ai-gateway, sectionName: http}]
+  rules:
+  - matches: [{path: {type: Exact, value: /xaa-legs/ledgerline/idp/${XAA_V}/token}, method: POST}]
+    filters:
+    - type: URLRewrite
+      urlRewrite: {hostname: "${XAA_IDP_HOST}", path: {type: ReplaceFullPath, replaceFullPath: "${XAA_IDP_PATH}"}}
+    backendRefs: [${XAA_IDP_REF}]
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata:
+  name: xaa-idp-${XAA_V}
+  namespace: agentgateway-system
+  labels: {lab.solo.io/xaa-voucher: "${XAA_V}"}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: xaa-idp-${XAA_V}}]
+  traffic:
+    buffer: {request: {maxBytes: 65536, failureMode: FailClosed}}
+    jwtAuthentication:
+      mode: Strict
+      location: {expression: 'form.decode(request.body).subject_token'}
+      providers:
+      - issuer: ${XAA_IDP_ISSUER}
+        audiences: [${XAA_IDP_AUDIENCE}]
+        jwks:
+          remote: ${XAA_IDP_JWKS}
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+        - >-
+          source.identity.namespace == "agentgateway-system" && source.identity.serviceAccount == "ai-gateway"
+          && form.decode(request.body).with(f,
+               f.grant_type == "urn:ietf:params:oauth:grant-type:token-exchange"
+               && f.requested_token_type == "urn:ietf:params:oauth:token-type:id-jag"
+               && f.subject_token_type == "urn:ietf:params:oauth:token-type:id_token"
+               && f.audience == "${LEDGERLINE_AS_ISSUER}"
+               && (!("resource" in f) || f.resource == "${XAA_RESOURCE}")
+               && f.scope.split(" ").all(s, s in ${XAA_IDP_SCOPE_LIST}))
