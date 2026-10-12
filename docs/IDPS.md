@@ -88,6 +88,23 @@ browser to them, and every call S&V makes to it goes out from the lab.
 An upstream needs no token exchange or ID-JAG setup while S&V's broker
 vouches for everyone, whichever IdP signed them in.
 
+### Cross App Access with parties outside the lab
+
+Any IdP that vouches works with any AS that redeems: each is configured
+once, in its own section, and `.env` picks one of each (`XAA_VOUCHER`,
+`RESOURCE_AS`). In order:
+
+1. `make xaa-keys`, with `XAA_VOUCHER` set in `.env`, then register the
+   keys each party's section names.
+2. Ledgerline's AS, as its section says. Its issuer is the ID-JAG's
+   audience.
+3. The IdP that vouches, as its section says, naming that issuer and S&V's
+   client ID at the AS.
+4. `.env`, then `make layer-45 layer-47 layer-80` and
+   `./demos/bob/install.sh`.
+5. Sign in at `https://kagent.sterling.lab` through that IdP, ask Bob's
+   assistant which Ledgerline account he is using, and `make xaa-logs`.
+
 ### An IdP that vouches
 
 `XAA_VOUCHER=<name>` has that IdP issue the ID-JAG instead of the broker
@@ -446,23 +463,6 @@ LEDGERLINE_DESCOPE_CLIENT_SECRET=<its secret>
 
 The ID-JAG names the resource's issuer, not the project-level audience the
 tenant page shows.
-
-### Okta to Descope, end to end
-
-1. `make xaa-keys`, then register in Okta, on the AI agent:
-   `sv-upstream-client-es256.jwks.json` and `sv-voucher-client.jwks.json`
-   (with `XAA_VOUCHER=okta` in `.env`, so it is written).
-2. In Descope: the resource, the tenant's Cross-App Access (Okta's issuer
-   trusted), S&V's client and the policy, as above.
-3. In Okta: the AI agent and its linked app (redirect URI, groups claim,
-   authentication policy), Ledgerline's app with Cross App Access (the
-   resource's issuer, the tenant ID, `research:read`), the resource
-   connection (S&V's client ID at Descope), users assigned to both apps.
-4. `.env` (`.env.example` lists the settings), then
-   `make layer-45 layer-47 layer-80` and `./demos/bob/install.sh`.
-5. Sign in at `https://kagent.sterling.lab` through Okta and ask Bob's
-   assistant which Ledgerline account he is using; `make xaa-logs` has the
-   trail.
 
 ### Another AS
 
