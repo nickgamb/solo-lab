@@ -35,14 +35,16 @@ if [ "$ED" = enterprise ]; then
   # sign-in through S&V's broker as sv-mcp-issuer (layer 45), at the
   # broker's public URL in the browser and its Service for the token
   MCP_ISSUER_CONFIG=$(_S=$(lab_secret SV_MCP_ISSUER_CLIENT_SECRET) jq -nc \
-    --arg url "$MCP_PUBLIC_URL" --arg dom "$SV_DOMAIN" --arg redirects "$MCP_CLIENT_REDIRECT_URIS" --arg trusted "$MCP_CIMD_TRUSTED_DOMAINS" '{
+    --arg url "$MCP_PUBLIC_URL" --arg dom "$SV_DOMAIN" --arg redirects "$MCP_CLIENT_REDIRECT_URIS" --arg trusted "$MCP_CIMD_TRUSTED_DOMAINS" \
+    --argjson upcimd "$MCP_UPSTREAM_CIMD" '{
       downstream_server: {name: "sterling-vance", client_id: "sv-mcp-issuer", client_secret: $ENV._S,
         authorize_url: "https://idp.\($dom)/realms/sterling-vance/protocol/openid-connect/auth",
         token_url: "http://keycloak.sv-identity.svc/realms/sterling-vance/protocol/openid-connect/token",
         scopes: ["openid", "profile", "email"]},
       gateway_config: {base_url: "\($url)/oauth-issuer"},
       incoming_clients: {allowed_redirect_uris: ($redirects | split(" ") | map(select(. != "")))},
-      client_id_metadata: {enabled: true, trusted_domains: ($trusted | split(" ") | map(select(. != "")))}}')
+      client_id_metadata: {enabled: true, trusted_domains: ($trusted | split(" ") | map(select(. != "")))}}
+      + if $upcimd then {upstream_client_id_metadata: {enabled: true, client_name: "Sterling & Vance (agentgateway)"}} else {} end')
   export MCP_ISSUER_CONFIG
 fi
 values_for "$D" values "$ED"

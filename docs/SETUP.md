@@ -131,11 +131,13 @@ count, host ports, party domains, registry port; `config/oss.env` and
 | `xaa-logs` | the Cross App Access trail (both token requests, claims, checks), tokens redacted: `make xaa-logs SINCE=2h` |
 | `routes` | where sign-ins go now: each routing rule's IdP, and where a browser app, an AI client and an AI client for Ledgerline land |
 | `xaa-keys` | the public keys other parties register, in `.lab/xaa/keys/`: S&V's clients at upstream IdPs and at Ledgerline, S&V's broker (`sv-idp.jwks.json`, for an AS outside the lab), Ledgerline's SSO client at S&V's broker |
+| `upstream-mcp` | an outside MCP server at the front door, signed in at its own authorization server (Enterprise): `make upstream-mcp NAME=x URL=https://… AS=https://… SCOPES="a b"`; `upstream-mcp-remove NAME=x` removes it ([IDENTITY-FLOWS.md](IDENTITY-FLOWS.md)) |
 | `status` | pods, the active IdP, URLs |
 | `preflight` | tools, Docker resources, free ports, `*.lab` DNS, Ollama and its model |
 | `help` | every target, with its one-line description |
 | `down` | delete the cluster (keeps caches and the CA) |
 | `nuke` | delete the cluster and every `lab-*` container and volume: registry caches, the local registry with every image built into it, lab DNS (`make up` recreates them) |
+| `aws-up`, `aws-sync`, `aws-run-<target>`, `aws-ssh`, `aws-stop`, `aws-start`, `aws-status`, `aws-down` | the lab on one EC2 instance under public names ([AWS.md](AWS.md)) |
 
 ## Layout
 
@@ -143,7 +145,8 @@ count, host ports, party domains, registry port; `config/oss.env` and
 config/          lab shape (lab.env) and edition pins (oss.env, enterprise.env)
 cluster/         kind config template
 scripts/         cluster lifecycle, DNS, CA, machine setup, preflight, helpers (lib.sh),
-                 status, reset, llm, tour
+                 status, reset, llm, tour, outside MCP servers (upstream-mcp.sh),
+                 the lab on AWS (aws.sh)
 platform/NN-*/   one install.sh per layer, applied in order by make platform
 demos/           each story: install.sh, verify.sh, manifests, agents, tools
 apps/observatory Observatory: Go server (server/) and React UI (web/)

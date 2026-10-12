@@ -1,0 +1,71 @@
+# An outside MCP server at the firm's front door whose own authorization server
+# signs each user in (Enterprise: agentgateway's OAuth issuer, brokered
+# elicitation): ${MCP_PUBLIC_URL}/mcp/${UPSTREAM_RESOURCE} ->
+# https://${UPSTREAM_MCP_HOST}${UPSTREAM_MCP_PATH}. Rendered by
+# scripts/upstream-mcp.sh (make upstream-mcp).
+#
+# A client signs in at S&V's broker as with any front-door resource; then the
+# issuer signs the user in at the server's authorization server
+# (${UPSTREAM_AS}) and keeps that token for the user. With
+# MCP_UPSTREAM_CIMD=true the issuer names itself there by its own client ID
+# metadata document, when that server supports them.
+apiVersion: ${AGW_BACKEND_API}
+kind: ${AGW_BACKEND_KIND}
+metadata:
+  name: upstream-${UPSTREAM_RESOURCE}
+  namespace: agentgateway-system
+  labels: {lab.solo.io/upstream-resource: "${UPSTREAM_RESOURCE}"}
+spec:
+  mcp:
+    targets:
+    - name: upstream
+      static: {host: "${UPSTREAM_MCP_HOST}", port: 443, path: "${UPSTREAM_MCP_PATH}", protocol: StreamableHTTP}
+  policies:
+    tls: {sni: "${UPSTREAM_MCP_HOST}", caCertificateRefs: [{name: lab-ca-bundle}]}
+    mcp:
+      authentication:
+        mode: Strict
+        issuer: https://idp.${SV_DOMAIN}/realms/sterling-vance
+        audiences: [ai-gateway]
+        jwks:
+          backendRef: {kind: Service, name: keycloak, namespace: sv-identity, port: 80}
+          jwksPath: /realms/sterling-vance/protocol/openid-connect/certs
+          cacheDuration: 5m
+        resourceMetadata: ${UPSTREAM_RESOURCE_METADATA}
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata:
+  name: upstream-${UPSTREAM_RESOURCE}
+  namespace: agentgateway-system
+  labels: {lab.solo.io/upstream-resource: "${UPSTREAM_RESOURCE}"}
+spec:
+  targetRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: upstream-${UPSTREAM_RESOURCE}}]
+  backend:
+    entElicitation:
+      brokered:
+        mcpResourcePath: /mcp/${UPSTREAM_RESOURCE}
+        chainedAuth:
+          oauth:
+            baseUrl: ${UPSTREAM_AS}
+            scopes: ${UPSTREAM_SCOPES}
+            clientName: "${UPSTREAM_NAME}"
+    entTokenExchange:
+      solo:
+        elicitation: {}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: upstream-${UPSTREAM_RESOURCE}
+  namespace: agentgateway-system
+  labels: {lab.solo.io/upstream-resource: "${UPSTREAM_RESOURCE}"}
+spec:
+  parentRefs: [{name: ai-gateway, sectionName: http}]
+  hostnames: ["mcp.${SV_DOMAIN}"]
+  rules:
+  - matches:
+    - path: {type: PathPrefix, value: /mcp/${UPSTREAM_RESOURCE}}
+    - path: {type: PathPrefix, value: /.well-known/oauth-protected-resource/mcp/${UPSTREAM_RESOURCE}}
+    - path: {type: PathPrefix, value: /.well-known/oauth-authorization-server/mcp/${UPSTREAM_RESOURCE}}
+    backendRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: upstream-${UPSTREAM_RESOURCE}}]
