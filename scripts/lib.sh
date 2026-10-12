@@ -452,6 +452,16 @@ realm_signing_key() {
   fi
 }
 pem_body() { grep -v -- '-----' "$1" | tr -d '\n'; }
+# ec_signing_key <name>: a lab EC P-256 key (PKCS#8) in .lab/keys, made if
+# missing, with its public half (X.509 SubjectPublicKeyInfo) beside it
+ec_signing_key() {
+  local d="$LAB_STATE/keys"; mkdir -p "$d"; chmod 700 "$d"
+  if [ ! -s "$d/$1.key" ]; then
+    openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$d/$1.key" >/dev/null 2>&1
+    chmod 600 "$d/$1.key"
+  fi
+  [ -s "$d/$1.pub" ] || openssl pkey -in "$d/$1.key" -pubout -out "$d/$1.pub" >/dev/null 2>&1
+}
 
 # deploy_keycloak <ns> <domain> <listener> <realm.json> [features]
 # One Keycloak per party; see platform/45-identity/keycloak.yaml. The realm

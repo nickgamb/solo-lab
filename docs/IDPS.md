@@ -27,6 +27,7 @@ An IdP without an issuer is left out of the chain.
 | `gluu,auth0,keycloak,contingency` | `gluu` | `gluu` | Gluu (passkey) | S&V's Gluu | Ledgerline's Gluu |
 | `okta,keycloak` | `keycloak` | `broker` | Okta | S&V's broker | Ledgerline's Keycloak |
 | `okta,keycloak` (experimental) | `auth0` | `okta` | Okta | Okta | Ledgerline's Auth0 |
+| `okta,gluu,keycloak,contingency` (experimental) | `descope` | `okta` | Okta | Okta | Ledgerline's Descope |
 | `ping,keycloak,contingency` | `keycloak` | `broker` | Ping | S&V's broker | Ledgerline's Keycloak |
 
 When S&V's broker vouches, after a failover Bob signs in at the next IdP,
@@ -288,13 +289,15 @@ OKTA_CLIENT_ID=<S&V's client there>
 ```
 
 - **S&V's client:** an OIDC web app integration, client authentication with
-  a public key (`sv-upstream-client.jwks.json`), Authorization Code with PKCE
-  required.
-- **Groups:** a `groups` claim on the authorization server, filtered to S&V's
-  groups.
+  a public key, Authorization Code with PKCE required. Okta takes no PS256
+  client assertions, so the broker signs ES256 (`OKTA_CLIENT_ALG`) with a
+  key of its own: register `sv-upstream-client-es256.jwks.json`.
+- **Groups:** a `groups` claim in the app's ID token (Sign On, OpenID Connect
+  ID Token, groups claim filter), sent for scope `groups`
+  (`OKTA_SCOPES`, default `openid email profile groups`).
 - **Assurance:** `acr` from its authentication policies. `urn:okta:loa:2fa:any`
   is AAL2, `phr` phishing-resistant, `phrh` phishing-resistant and
-  hardware-bound (AAL3).
+  hardware-bound (AAL3). Without a requested `acr`, `amr` `mfa` is AAL2.
 - **Directory:** none. Okta's Users API isn't SCIM, and the sync has no
   directory type for it. As the primary, Okta provisions no broker accounts;
   as a failover, it receives no attributes.
@@ -308,20 +311,29 @@ too: the ID-JAG's issuer, and that of the ID token it is made from.
 
 ```
 XAA_VOUCHER=okta
-XAA_CLIENT_ID=<the AI agent's client ID>
+OKTA_CLIENT_ID=<the AI agent's client ID>
 ```
 
-- **AI agent** (Directory > AI Agents): S&V's requesting app. Its
-  credential is a public key, `sv-voucher-client.jwks.json` (RS256,
-  `OKTA_XAA_CLIENT_ALG`); client assertions name Okta's token endpoint
-  (`OKTA_XAA_ASSERTION_AUDIENCE`).
-  - **User access:** S&V's sign-in app (`OKTA_CLIENT_ID`), with the Okta
-    authorization server.
+- **AI agent** (Directory > AI Agents): S&V's requesting app. Registering
+  it with **Create a new OIDC app linked to this AI agent** makes S&V's
+  sign-in app, with the agent's client ID (`OKTA_CLIENT_ID`; then
+  `XAA_CLIENT_ID` stays unset). Its public keys:
+  `sv-upstream-client-es256.jwks.json` (the broker's sign-in) and
+  `sv-voucher-client.jwks.json` (the gateway's ID-JAG requests, RS256,
+  `OKTA_XAA_CLIENT_ALG`, for Okta's token endpoint,
+  `OKTA_XAA_ASSERTION_AUDIENCE`). Redirect URI: the broker's
+  (`https://idp.sterling.lab/realms/sterling-vance/broker/okta/endpoint`).
   - **Resource connections:** Ledgerline's app, with S&V's client ID at
     Ledgerline's AS (`LEDGERLINE_NAME_CLIENT_ID`, the ID-JAG's `client_id`),
     resource `https://mcp.ledgerline.lab/mcp` and scope `research:read`.
-- **Ledgerline's app** (Applications, Machine Assignments > Cross App
-  Access): the issuer URL of Ledgerline's AS and scope `research:read`.
+- **Ledgerline's app** (Applications, Machine Assignments > Callers > Cross
+  App Access): the issuer of Ledgerline's AS, its tenant ID if it names one
+  (sent as `aud_tenant`), and scope `research:read`.
+- **Users** are assigned to both apps.
+
+- **Authentication policy** of the agent's app: one its users can meet
+  (Okta's default for new apps requires a phishing-resistant,
+  device-bound factor).
 
 ID-JAGs live 300 s, and their `sub` is the user's Okta ID.
 
@@ -354,7 +366,7 @@ The same for every AS:
 | Item | Value |
 | --- | --- |
 | Trusted ID-JAG issuer | the voucher only, by its keys: S&V's broker (`https://idp.sterling.lab/realms/sterling-vance`), or the IdP in `XAA_VOUCHER` |
-| S&V's client | `LEDGERLINE_NAME_CLIENT_ID`, `private_key_jwt` RS256, JWKS `sv-ras-client.jwks.json` from `make xaa-keys` |
+| S&V's client | `LEDGERLINE_NAME_CLIENT_ID`, `private_key_jwt` RS256, JWKS `sv-ras-client.jwks.json` from `make xaa-keys`; or a client secret (`LEDGERLINE_NAME_CLIENT_SECRET`) at an AS that takes no client keys |
 | Grant type | `urn:ietf:params:oauth:grant-type:jwt-bearer`; assertion reuse refused; assertion lifetime at most 300 s |
 | Subject | the ID-JAG's `sub` (the user's broker account) mapped to Ledgerline's user, or its verified `email` |
 | Access token | JWT; `aud` `ledgerline-research`; `scope` `research:read` when requested (a space-separated string, a list, or a list written as a string); `client_id` S&V's client; `user_name` or `email`; living no longer than the ID-JAG it was issued for (`MCP_TOKEN_LIFETIME`); no refresh token |
@@ -407,6 +419,50 @@ LEDGERLINE_AUTH0_CLIENT_ID=<S&V's client there>
   `research:read`; token expiration 300 s.
 
 The issuer ends in `/`, as Auth0's discovery states it.
+
+### Descope as Ledgerline's AS (experimental)
+
+Descope redeems ID-JAGs from any IdP it trusts (Okta, with
+`XAA_VOUCHER=okta`, or another).
+
+```
+RESOURCE_AS=descope
+LEDGERLINE_DESCOPE_ISSUER=https://api.descope.com/v1/apps/agentic/<project>/<resource>
+LEDGERLINE_DESCOPE_CLIENT_ID=<S&V's client there>
+LEDGERLINE_DESCOPE_CLIENT_SECRET=<its secret>
+```
+
+- **Resource:** type MCP server, URI `https://mcp.ledgerline.lab/mcp`
+  (`LEDGERLINE_DESCOPE_AUDIENCE`), scope `research:read`. Its issuer is
+  `LEDGERLINE_DESCOPE_ISSUER`, the ID-JAG's audience.
+- **Tenant** (Authentication Methods, SSO, Cross-App Access): ID-JAGs
+  allowed, the vouching IdP's issuer trusted, JIT provisioning on. Its
+  tenant ID is the ID-JAG's `aud_tenant`.
+- **S&V's client:** a client of that resource. Descope's token endpoint
+  takes client secrets only.
+- **Policy:** a rule granting that client `research:read` on the resource
+  (Machine-to-Machine and Delegated access). Without one, Descope grants
+  only `profile email`.
+
+The ID-JAG names the resource's issuer, not the project-level audience the
+tenant page shows.
+
+### Okta to Descope, end to end
+
+1. `make xaa-keys`, then register in Okta, on the AI agent:
+   `sv-upstream-client-es256.jwks.json` and `sv-voucher-client.jwks.json`
+   (with `XAA_VOUCHER=okta` in `.env`, so it is written).
+2. In Descope: the resource, the tenant's Cross-App Access (Okta's issuer
+   trusted), S&V's client and the policy, as above.
+3. In Okta: the AI agent and its linked app (redirect URI, groups claim,
+   authentication policy), Ledgerline's app with Cross App Access (the
+   resource's issuer, the tenant ID, `research:read`), the resource
+   connection (S&V's client ID at Descope), users assigned to both apps.
+4. `.env` (`.env.example` lists the settings), then
+   `make layer-45 layer-47 layer-80` and `./demos/bob/install.sh`.
+5. Sign in at `https://kagent.sterling.lab` through Okta and ask Bob's
+   assistant which Ledgerline account he is using; `make xaa-logs` has the
+   trail.
 
 ### Another AS
 

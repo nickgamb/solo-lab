@@ -373,8 +373,9 @@ type OIDCUpstream struct {
 	// +kubebuilder:default=client_secret_post
 	ClientAuth string `json:"clientAuth,omitempty"`
 	// The algorithm of the realm key kept for client assertions alone (the
-	// token-signing key uses RS256, so it is never used here).
-	// +kubebuilder:validation:Enum=PS256
+	// token-signing key uses RS256, so it is never used here): PS256, or
+	// ES256 for an upstream that takes no PS256 assertions.
+	// +kubebuilder:validation:Enum=PS256;ES256
 	// +kubebuilder:default=PS256
 	ClientAssertionSigningAlg string `json:"clientAssertionSigningAlg,omitempty"`
 	// The client secret, for client_secret_post and client_secret_basic. A

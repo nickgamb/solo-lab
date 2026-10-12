@@ -139,10 +139,18 @@ xaa_env() {
   export SV_XAA_CLIENT_CERT SV_XAA_CLIENT_KID SV_CLIENT_AT_LEDGERLINE
 }
 
-# xaa_secrets: S&V's key for Ledgerline's AS, kept with its egress gateway
+# xaa_secrets: S&V's key for Ledgerline's AS, kept with its egress gateway,
+# and its client secret there for an AS that takes no keys
+# (LEDGERLINE_NAME_CLIENT_SECRET)
 xaa_secrets() {
   K create secret generic xaa-client-key -n agentgateway-system --from-file=signingKey="$LAB_STATE/keys/sv-xaa-client.key" \
     --dry-run=client -o yaml | K apply -f - >/dev/null
+  if [ -n "$LEDGERLINE_AS_CLIENT_SECRET" ]; then
+    K create secret generic xaa-as-client-secret -n agentgateway-system --from-literal=clientSecret="$LEDGERLINE_AS_CLIENT_SECRET" \
+      --dry-run=client -o yaml | K apply -f - >/dev/null
+  else
+    K delete secret xaa-as-client-secret -n agentgateway-system --ignore-not-found >/dev/null
+  fi
 }
 
 # xaa_endpoint <https URL>: a static TLS backend on ai-gateway for an
@@ -173,7 +181,13 @@ xaa_gateway_apply() {
   local dir=$1 ep keep n iss cid xcid alg aud d idp
   ep=$(xaa_endpoint "$LEDGERLINE_AS_TOKEN_URL")
   keep=" $(echo "$ep" | jq -r .backend.name) "
-  export XAA_AS_REF XAA_AS_HOST XAA_AS_PATH XAA_RESOURCE="https://mcp.$LEDGERLINE_DOMAIN/mcp"
+  export XAA_AS_REF XAA_AS_HOST XAA_AS_PATH XAA_RESOURCE="https://mcp.$LEDGERLINE_DOMAIN/mcp" XAA_AS_CLIENT_AUTH
+  # S&V at Ledgerline's AS: its key, or a client secret where the AS takes no keys
+  if [ -n "$LEDGERLINE_AS_CLIENT_SECRET" ]; then
+    XAA_AS_CLIENT_AUTH="{clientId: \"$SV_CLIENT_AT_LEDGERLINE\", method: ClientSecretBasic, secretRef: {name: xaa-as-client-secret, key: clientSecret}}"
+  else
+    XAA_AS_CLIENT_AUTH="{clientId: \"$SV_CLIENT_AT_LEDGERLINE\", method: PrivateKeyJwt, privateKeyJwt: {alg: RS256, kid: $SV_XAA_CLIENT_KID, assertionAudience: \"$LEDGERLINE_AS_ISSUER\", signingKeyRef: {name: xaa-client-key, key: signingKey}}}"
+  fi
   XAA_AS_REF=$(echo "$ep" | jq -c .ref) XAA_AS_HOST=$(echo "$ep" | jq -r .host) XAA_AS_PATH=$(echo "$ep" | jq -r .path)
   export XAA_IDP_HOST XAA_IDP_PATH XAA_IDP_REF XAA_IDP_ISSUER XAA_IDP_AUDIENCE XAA_IDP_JWKS \
     XAA_IDP_CLIENT_AUTH XAA_IDP_SCOPES XAA_IDP_SCOPE_LIST XAA_RESOURCES_LINE XAA_IDJAG_MAX_LIFETIME_S
@@ -250,6 +264,19 @@ kc_jwks() {
 # sv_upstream_client_jwks: S&V's client at an upstream IdP: the broker's key
 # (PS256, as S&V's Keycloak publishes it)
 sv_upstream_client_jwks() { kc_jwks sv-broker-client PS256; }
+# sv_upstream_client_es256_jwks: the broker's ES256 key, for an upstream that
+# takes no PS256 client assertions (NAME_CLIENT_ALG=ES256: Okta); kid as
+# Keycloak makes it (SHA-256 of the public key info)
+sv_upstream_client_es256_jwks() {
+  ec_signing_key sv-broker-client-es256
+  openssl pkey -pubin -in "$LAB_STATE/keys/sv-broker-client-es256.pub" -outform DER | python3 -c '
+import base64, hashlib, json, sys
+der = sys.stdin.buffer.read()
+pt = der[-65:]                       # uncompressed point: 04 || x || y
+b = lambda x: base64.urlsafe_b64encode(x).rstrip(b"=").decode()
+kid = b(hashlib.sha256(der).digest())
+print(json.dumps({"keys": [{"kty": "EC", "crv": "P-256", "x": b(pt[1:33]), "y": b(pt[33:]), "kid": kid, "use": "sig", "alg": "ES256"}]}, indent=2))'
+}
 
 # workforce_realm <realm.json>: S&V's workforce IdP, with S&V's client keys
 workforce_realm() {

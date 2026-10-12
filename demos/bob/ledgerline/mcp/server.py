@@ -22,7 +22,9 @@ AUDIENCE = os.environ.get("RESEARCH_AUDIENCE", "ledgerline-research")
 SCOPE = os.environ.get("RESEARCH_SCOPE", "research:read")
 CLIENTS = set(os.environ.get("RESEARCH_CLIENTS", "sterling-vance-kagent").split())
 ISSUER = os.environ["RESEARCH_ISSUER"]
-JWKS = jwt.PyJWKClient(os.environ["RESEARCH_JWKS_URL"], cache_keys=True, lifespan=300)
+# a user agent of its own: some AS fronts refuse Python's default one
+JWKS = jwt.PyJWKClient(os.environ["RESEARCH_JWKS_URL"], cache_keys=True, lifespan=300,
+                       headers={"User-Agent": "ledgerline-research/1"})
 # asymmetric algorithms only: the key comes from the AS's published JWKS
 ALGORITHMS = ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512"]
 _auth = contextvars.ContextVar("authorization", default="")

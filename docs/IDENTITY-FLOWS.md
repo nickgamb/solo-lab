@@ -262,7 +262,7 @@ Three settings in `config/lab.env` (`scripts/idp.sh`):
 | Setting | Values | Decides |
 | --- | --- | --- |
 | `ENTERPRISE_IDP` | `auth0,keycloak,contingency` (default), `gluu,auth0,keycloak,contingency`, `okta,keycloak`, ...; any order | S&V's IdPs, which sign Bob in, in failover order ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md)); `keycloak` is the Keycloak S&V runs itself (`https://login.sterling.lab`) |
-| `RESOURCE_AS` | `keycloak` (default), `gluu`, `auth0` (experimental), any name with `LEDGERLINE_<NAME>_ISSUER` | Ledgerline's authorization server |
+| `RESOURCE_AS` | `keycloak` (default), `gluu`, `auth0` or `descope` (experimental), any name with `LEDGERLINE_<NAME>_ISSUER` | Ledgerline's authorization server |
 | `XAA_VOUCHER` | `broker` (default), or an IdP in `ENTERPRISE_IDP` that issues ID-JAGs (`gluu`; `okta`, experimental) | who vouches for Bob to Ledgerline (issues the ID-JAG) |
 
 Each is configured by name ([IDPS.md](IDPS.md)).
@@ -365,7 +365,9 @@ sequenceDiagram
     (`maxEntries: 0`), so each call asks for both again. S&V
     authenticates at the broker as `kagent` (its client secret), and at
     Ledgerline's AS with `private_key_jwt` (client `sterling-vance-kagent`,
-    assertion audience the AS's issuer, key `.lab/keys/sv-xaa-client.key`).
+    assertion audience the AS's issuer, key `.lab/keys/sv-xaa-client.key`),
+    or a client secret at an AS that takes no client keys
+    (`LEDGERLINE_<NAME>_CLIENT_SECRET`, Secret `xaa-as-client-secret`).
     Only the gateway holds those credentials. With `XAA_VOUCHER=<idp>`
     the ID-JAG is requested at that IdP's token endpoint as S&V's client
     there (`XAA_CLIENT_ID`, default `<IDP>_CLIENT_ID`), with

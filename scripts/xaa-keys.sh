@@ -5,6 +5,8 @@
 #
 #   sv-upstream-client.jwks.json  S&V's client at an upstream IdP (e.g. Gluu):
 #                                 the broker's key (Keycloak, PS256)
+#   sv-upstream-client-es256.jwks.json  the same, at an upstream that takes no
+#                                 PS256 assertions (NAME_CLIENT_ALG=ES256: Okta)
 #   sv-voucher-client.jwks.json   S&V's client for ID-JAGs at the IdP in
 #                                 XAA_VOUCHER (e.g. Okta's AI agent): the
 #                                 broker's key, as the gateway signs with it
@@ -23,6 +25,7 @@
 # runs before make up, so they can be registered before the lab is built
 out="$LAB_STATE/xaa/keys"; mkdir -p "$out"
 sv_upstream_client_jwks >"$out/sv-upstream-client.jwks.json"
+sv_upstream_client_es256_jwks >"$out/sv-upstream-client-es256.jwks.json"
 if [ -n "$XAA_VOUCHER_IDP" ]; then
   kc_jwks sv-broker-client "$(idp_setting "$XAA_VOUCHER_IDP" XAA_CLIENT_ALG PS256)" >"$out/sv-voucher-client.jwks.json"
 else rm -f "$out/sv-voucher-client.jwks.json"; fi
