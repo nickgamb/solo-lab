@@ -331,6 +331,10 @@ OKTA_CLIENT_ID=<the AI agent's client ID>
   (sent as `aud_tenant`), and scope `research:read`.
 - **Users** are assigned to both apps.
 
+- **Authentication policy** of the agent's app: one its users can meet
+  (Okta's default for new apps requires a phishing-resistant,
+  device-bound factor).
+
 ID-JAGs live 300 s, and their `sub` is the user's Okta ID.
 
 ## Ping Identity (`ping`)
@@ -437,7 +441,28 @@ LEDGERLINE_DESCOPE_CLIENT_SECRET=<its secret>
 - **S&V's client:** a client of that resource. Descope's token endpoint
   takes client secrets only.
 - **Policy:** a rule granting that client `research:read` on the resource
-  (Machine-to-Machine and Delegated access).
+  (Machine-to-Machine and Delegated access). Without one, Descope grants
+  only `profile email`.
+
+The ID-JAG names the resource's issuer, not the project-level audience the
+tenant page shows.
+
+### Okta to Descope, end to end
+
+1. `make xaa-keys`, then register in Okta, on the AI agent:
+   `sv-upstream-client-es256.jwks.json` and `sv-voucher-client.jwks.json`
+   (with `XAA_VOUCHER=okta` in `.env`, so it is written).
+2. In Descope: the resource, the tenant's Cross-App Access (Okta's issuer
+   trusted), S&V's client and the policy, as above.
+3. In Okta: the AI agent and its linked app (redirect URI, groups claim,
+   authentication policy), Ledgerline's app with Cross App Access (the
+   resource's issuer, the tenant ID, `research:read`), the resource
+   connection (S&V's client ID at Descope), users assigned to both apps.
+4. `.env` (`.env.example` lists the settings), then
+   `make layer-45 layer-47 layer-80` and `./demos/bob/install.sh`.
+5. Sign in at `https://kagent.sterling.lab` through Okta and ask Bob's
+   assistant which Ledgerline account he is using; `make xaa-logs` has the
+   trail.
 
 ### Another AS
 
