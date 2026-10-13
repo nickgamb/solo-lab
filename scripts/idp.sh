@@ -429,7 +429,7 @@ metadata:
   labels: {istio.io/use-waypoint: egress-waypoint, lab.solo.io/egress: ledgerline}
 spec:
   hosts: [$h]
-  exportTo: [., ledgerline, ledgerline-identity]
+  exportTo: [., ledgerline, ledgerline-identity, agentgateway-system]
   location: MESH_EXTERNAL
   resolution: DNS
   ports: [{name: tls, number: 443, protocol: TLS}]
