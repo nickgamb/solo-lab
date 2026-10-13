@@ -143,7 +143,7 @@ expect '^[0-9]+s$' "$T becomes active" "$(within 20 is_active "$T")"
 expect "^$T\$" "broker redirector -> $T" "$(redirector)"
 expect "^https://login\.$SV_DOMAIN/realms/workforce/protocol/openid-connect/auth\?.*broker%2F$T%2Fendpoint" \
   "browser sign-in goes straight to S&V's own Keycloak, back to /broker/$T/endpoint" "$(login_lands)"
-tok=$(sso_token bob bob-demo | jq -r '.access_token // empty') || tok=""   # no token: the check below fails
+tok=$(sso_token bob "$LAB_PASSWORD_BOB" | jq -r '.access_token // empty') || tok=""   # no token: the check below fails
 expect "^$BOB_ID $T\$" "Bob signs in there: his S&V user, session from $T" \
   "$(echo "$tok" | jq -rR 'split(".")[1] | gsub("-";"+") | gsub("_";"/") | @base64d | fromjson | "\(.sub) \(.idp)"' 2>/dev/null)"
 unset tok
@@ -157,7 +157,7 @@ if [ -n "$NNS" ]; then
   expect "^$NEXT\$" "broker redirector -> $NEXT" "$(redirector)"
   expect "^https://login-dr\.$SV_DOMAIN/realms/contingency/protocol/openid-connect/auth\?.*broker%2F$NEXT%2Fendpoint" \
     "browser sign-in goes to S&V's contingency IdP, back to /broker/$NEXT/endpoint" "$(login_lands)"
-  tok=$(sso_token bob bob-demo | jq -r '.access_token // empty') || tok=""
+  tok=$(sso_token bob "$LAB_PASSWORD_BOB" | jq -r '.access_token // empty') || tok=""
   expect "^$BOB_ID $NEXT\$" "Bob signs in there with his password: the same S&V user, session from $NEXT" \
     "$(echo "$tok" | jq -rR 'split(".")[1] | gsub("-";"+") | gsub("_";"/") | @base64d | fromjson | "\(.sub) \(.idp)"' 2>/dev/null)"
   unset tok

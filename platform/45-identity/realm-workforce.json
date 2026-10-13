@@ -102,7 +102,7 @@
       "credentials": [
         {
           "type": "password",
-          "value": "bob-demo",
+          "value": "${LAB_PASSWORD_BOB}",
           "temporary": false
         },
         {
@@ -130,7 +130,7 @@
       "credentials": [
         {
           "type": "password",
-          "value": "carol-demo",
+          "value": "${LAB_PASSWORD_CAROL}",
           "temporary": false
         },
         {
@@ -167,7 +167,7 @@
       "credentials": [
         {
           "type": "password",
-          "value": "dana-demo",
+          "value": "${LAB_PASSWORD_DANA}",
           "temporary": false
         },
         {

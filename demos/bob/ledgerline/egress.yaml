@@ -18,7 +18,10 @@ kind: PeerAuthentication
 metadata: {name: strict, namespace: ledgerline-egress}
 spec: {mtls: {mode: STRICT}}
 ---
-# Ledgerline's MCP server (its AS's keys)
+# Ledgerline's MCP server (its AS's keys). The mesh sends every caller of a
+# host through the egress its ServiceEntry names, so this one also carries
+# agentgateway's control plane (the keys behind Ledgerline's gateway policy)
+# and S&V's gateway (ID-JAGs redeemed at the AS's token endpoint).
 apiVersion: security.istio.io/v1
 kind: AuthorizationPolicy
 metadata: {name: egress-callers, namespace: ledgerline-egress}
@@ -30,3 +33,5 @@ spec:
     - source:
         principals:
         - cluster.local/ns/ledgerline/sa/ledgerline-research
+        - cluster.local/ns/agentgateway-system/sa/${AGW_RELEASE}
+        - cluster.local/ns/agentgateway-system/sa/ai-gateway

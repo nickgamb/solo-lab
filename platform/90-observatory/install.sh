@@ -26,18 +26,19 @@ secret_apply ops-identity kc-secrets \
   KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret OPS_KC_ADMIN_PASSWORD)" \
   OBSERVATORY_CLIENT_SECRET="$(lab_secret OBSERVATORY_CLIENT_SECRET)" \
   GRAFANA_CLIENT_SECRET="$(lab_secret OPS_GRAFANA_CLIENT_SECRET)" \
-  KIALI_CLIENT_SECRET="$(lab_secret OPS_KIALI_CLIENT_SECRET)"
+  KIALI_CLIENT_SECRET="$(lab_secret OPS_KIALI_CLIENT_SECRET)" \
+  LAB_PASSWORD_OPS="$LAB_PASSWORD_OPS"
 deploy_keycloak ops-identity "$OPS_DOMAIN" https-ops "$D/realm-ops.json"
 secret_apply observatory observatory-oidc client-secret="$(lab_secret OBSERVATORY_CLIENT_SECRET)"
 # its S&V service account, for Agent Substrate's status from kagent
 secret_apply observatory kagent-client client-secret="$(lab_secret SV_OBSERVATORY_CLIENT_SECRET)"
-ok "issuer https://idp.$OPS_DOMAIN/realms/ops  (admin: ops / ops-demo)"
+ok "issuer https://idp.$OPS_DOMAIN/realms/ops  (admin: ops / $(password_hint ops))"
 
 step "Platform UIs on the edge, behind the admins' sign-in"
 secret_apply observability grafana-sso client-secret="$(lab_secret OPS_GRAFANA_CLIENT_SECRET)"
 secret_apply kiali kiali-sso client-secret="$(lab_secret OPS_KIALI_CLIENT_SECRET)"
 apply_tmpl "$D/platform-uis.yaml"
-ok "https://grafana.$OPS_DOMAIN  https://kiali.$OPS_DOMAIN  (ops / ops-demo)"
+ok "https://grafana.$OPS_DOMAIN  https://kiali.$OPS_DOMAIN  (ops / $(password_hint ops))"
 
 # The Solo UI (the management chart), when any of kagent, agentgateway or
 # Istio runs Enterprise: S&V's console for them, at https://kagent.$SV_DOMAIN,
@@ -62,7 +63,7 @@ if [ "$SOLO_UI_KAGENT$SOLO_UI_AGENTGATEWAY$SOLO_UI_MESH" != falsefalsefalse ]; t
   export ISTIO_CLUSTER
   values_for "$D" values-solo-ui enterprise
   helm_up solo-management "$ENT_ISTIO_UI_CHART" "$ENT_ISTIO_UI_VERSION" solo-enterprise "${VALS[@]}"
-  ok "https://kagent.$SV_DOMAIN  (S&V's sign-in: bob / bob-demo; platform admins see every product)"
+  ok "https://kagent.$SV_DOMAIN  (S&V's sign-in: bob / $(password_hint bob); platform admins see every product)"
 fi
 
 step "Observatory"

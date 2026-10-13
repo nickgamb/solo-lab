@@ -17,7 +17,8 @@
 #
 # Settings (.env): AWS_PROFILE, AWS_REGION, AWS_NAME, AWS_INSTANCE_TYPE,
 # AWS_DISK_GB, AWS_HTTPS_CIDRS, AWS_LAB_TLD, AWS_ENV (extra .env lines for
-# the instance; or a file, .lab/aws/env).
+# the instance; or a file, .lab/aws/env). The people's passwords there are the
+# instance's own (.lab/aws/passwords.env), not the documented ones.
 . "$(dirname "$0")/lib.sh"
 
 AWS_PROFILE=${AWS_PROFILE:-solo-lab}
@@ -167,6 +168,14 @@ sync_lab() {
     if [ -n "${OPENAI_API_KEY:-}" ]; then p=openai; elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then p=anthropic; else p=; fi
   fi
   [ "$fb" = ollama ] && fb=
+  # the people's passwords: its own, not the documented ones (made once, kept
+  # in .lab/aws/passwords.env)
+  local pw="$AWS_DIR/passwords.env" u
+  if [ ! -s "$pw" ]; then
+    ( umask 077; for u in BOB CAROL DANA OPS ALICE; do
+        echo "LAB_PASSWORD_$u=$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | cut -c1-20)"
+      done >"$pw" )
+  fi
   # this .env, then what makes it the public lab
   {
     [ -f "$LAB_ROOT/.env" ] && cat "$LAB_ROOT/.env"
@@ -177,6 +186,7 @@ sync_lab() {
     echo "LAB_CERT_ISSUER=letsencrypt"
     [ -n "$p" ] && echo "LLM_PROVIDER=$p"
     echo "LLM_FALLBACK=$fb"
+    cat "$pw"
     [ -n "${AWS_ENV:-}" ] && printf '%s\n' "$AWS_ENV"
     [ -f "$AWS_DIR/env" ] && cat "$AWS_DIR/env"
     echo "# <<< scripts/aws.sh"

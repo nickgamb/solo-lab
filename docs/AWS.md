@@ -49,7 +49,11 @@ LAB_TLD=<ip-dashed>.sslip.io      # or AWS_LAB_TLD
 LAB_LISTEN_ADDRESS=0.0.0.0        # the edge listens on the instance's address
 LAB_CERT_ISSUER=letsencrypt       # each party's hostnames, by HTTP-01
 LLM_PROVIDER=openai               # in place of ollama, when .env has the key
+LAB_PASSWORD_BOB=...              # the people's passwords, the instance's own
 ```
+
+Those passwords are made once, into `.lab/aws/passwords.env`: on a lab
+anyone can reach, the documented ones would open it to anyone.
 
 It then runs `make machine-setup` there (the lab's names resolve to the
 instance itself) and `make up`, with the output followed here. A dropped

@@ -18,7 +18,7 @@
       "lastName": "Chen",
       "enabled": true,
       "emailVerified": true,
-      "credentials": [{ "type": "password", "value": "alice-demo", "temporary": false }]
+      "credentials": [{ "type": "password", "value": "${LAB_PASSWORD_ALICE}", "temporary": false }]
     }
   ],
   "clients": [

@@ -15,9 +15,9 @@ probe_ran() { echo "$1" | jq -e 'has("http")' >/dev/null 2>&1; }
 
 . "$LAB_ROOT/scripts/idp.sh"
 prefer_tier keycloak   # Bob signs in through S&V's own IdP, which a script can drive
-BOB=$(sso_token bob bob-demo | jq -r '.access_token // empty') || BOB=""
+BOB=$(sso_token bob "$LAB_PASSWORD_BOB" | jq -r '.access_token // empty') || BOB=""
 [ -n "$BOB" ] || die "could not sign Bob in"
-ALICE=$(user_token alice-identity alice alice-portal "" alice alice-demo) || ALICE=""
+ALICE=$(user_token alice-identity alice alice-portal "" alice "$LAB_PASSWORD_ALICE") || ALICE=""
 [ -n "$ALICE" ] || die "could not sign Alice in (alice-portal, password grant)"
 probe_pod "$KAGENT_UI_NS" "$KAGENT_UI_SA"; probe_pod sv-agents
 AS="https://as.$ALICE_DOMAIN"; CA=(--cacert "$LAB_TRUST")
@@ -28,7 +28,7 @@ ask_bob() {  # ask_bob <question> -> the agent's last reply (what the UI shows),
 }
 alice_decides() {  # alice_decides approved|denied: waits for her next pending ask
   local p fam kind
-  ALICE=$(user_token alice-identity alice alice-portal "" alice alice-demo) || ALICE=""   # 5-minute tokens
+  ALICE=$(user_token alice-identity alice alice-portal "" alice "$LAB_PASSWORD_ALICE") || ALICE=""   # 5-minute tokens
   [ -n "$ALICE" ] || { echo "no token for Alice"; return; }
   for _ in $(seq 1 60); do
     p=$(with_bearer "$ALICE" curl -s "${CA[@]}" "$AS/owner/pending")
@@ -71,7 +71,7 @@ r=$(ask_with_alice denied "Sell 200 shares of Alice's AAPL. Use execute_trade wi
 expect '^operation/tier3 ' "held per operation, and Alice denied it" "$r"
 # what happened, from Alice's own ledger rather than the model's words: her
 # denial is recorded and the trade never touched her account
-ALICE=$(user_token alice-identity alice alice-portal "" alice alice-demo) || ALICE=""
+ALICE=$(user_token alice-identity alice alice-portal "" alice "$LAB_PASSWORD_ALICE") || ALICE=""
 l=$(with_bearer "$ALICE" curl -s "${CA[@]}" "$AS/owner/ledger" | jq -r '[.[] | select(.tier == "tier3")] | group_by(.family)
   | max_by(map(.ts) | max) // [] | map(.kind) | if index("denied") and (index("touched") | not) then "denied, never executed" else join(",") end' 2>&1) || true
 expect '^denied, never executed' "Alice's ledger: the trade was denied and never executed" "$l"
@@ -94,7 +94,7 @@ expect 'http": 40[13]' "another S&V workload can't use Bob's agent's adapter at 
 # call her vault (relationships.yaml; OpenFGA, checked at the gateway)
 probe_pod sv-agents bob-assistant
 RELS="$LAB_ROOT/demos/bob-to-alice/relationships.yaml"; on_exit "apply_tmpl $RELS"
-BOB=$(sso_token bob bob-demo | jq -r '.access_token // empty') || BOB=""
+BOB=$(sso_token bob "$LAB_PASSWORD_BOB" | jq -r '.access_token // empty') || BOB=""
 K delete rel alice-vault-holds-c-1001 -n sv-identity >/dev/null
 for _ in $(seq 1 15); do
   o=$(probe_exec sv-agents/probe-bob-assistant http://ai-gateway.agentgateway-system/mcp/alice-vault call get_positions '{}' --token "$BOB" 2>&1 | tail -1) || true

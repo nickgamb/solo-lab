@@ -73,7 +73,8 @@ the primary.
 | `ops` | `ops-demo` | realm `ops` for the Observatory, Grafana and Kiali; S&V's break-glass platform admin at the broker, the only sign-in when every IdP is down |
 | `alice` | `alice-demo` | Alice, in her own realm |
 
-Those passwords and one-time codes are S&V's own Keycloak's. At Auth0 the
+Those passwords and one-time codes are S&V's own Keycloak's; `.env` sets
+others (`LAB_PASSWORD_BOB`, `_CAROL`, `_DANA`, `_OPS`, `_ALICE`). At Auth0 the
 passwords are the ones you set ([IDPS.md](IDPS.md#auth0-auth0)). The
 `export_book` tool needs S&V's `compliance` group, which has no users. To try
 it, add one to `compliance` at the broker (realm `sterling-vance`).

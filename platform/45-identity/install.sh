@@ -34,6 +34,7 @@ secret_apply sv-identity kc-secrets \
   SV_BROKER_CLIENT_EC_PUB="$(pem_body "$LAB_STATE/keys/sv-broker-client-es256.pub")" \
   KC_BOOTSTRAP_ADMIN_USERNAME=admin \
   KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret SV_KC_ADMIN_PASSWORD)" \
+  LAB_PASSWORD_OPS="$LAB_PASSWORD_OPS" \
   SV_KAGENT_CLIENT_SECRET="$(lab_secret SV_KAGENT_CLIENT_SECRET)" \
   SV_AI_GATEWAY_CLIENT_SECRET="$(lab_secret SV_AI_GATEWAY_CLIENT_SECRET)" \
   MCP_TOKEN_LIFETIME_S="$MCP_TOKEN_LIFETIME_S" \
@@ -89,14 +90,15 @@ secret_apply sv-workforce kc-secrets \
   SV_WORKFORCE_DIRECTORY_SECRET="$(lab_secret SV_WORKFORCE_DIRECTORY_SECRET)" \
   SV_WORKFORCE_TOTP_BOB="$(lab_secret SV_WORKFORCE_TOTP_BOB)" \
   SV_WORKFORCE_TOTP_CAROL="$(lab_secret SV_WORKFORCE_TOTP_CAROL)" \
-  SV_WORKFORCE_TOTP_DANA="$(lab_secret SV_WORKFORCE_TOTP_DANA)"
+  SV_WORKFORCE_TOTP_DANA="$(lab_secret SV_WORKFORCE_TOTP_DANA)" \
+  LAB_PASSWORD_BOB="$LAB_PASSWORD_BOB" LAB_PASSWORD_CAROL="$LAB_PASSWORD_CAROL" LAB_PASSWORD_DANA="$LAB_PASSWORD_DANA"
 mkdir -p "$LAB_STATE/realm"
 workforce_realm "$D/realm-workforce.json" >"$LAB_STATE/realm/realm-workforce.json"
 KC_HOST=login \
   deploy_keycloak sv-workforce "$SV_DOMAIN" https-sterling "$LAB_STATE/realm/realm-workforce.json"
 wait_for "https://login.$SV_DOMAIN discovery" 30 3 \
   sh -c "curl -sf --cacert '$LAB_TRUST' https://login.$SV_DOMAIN/realms/workforce/.well-known/openid-configuration >/dev/null"
-ok "issuer https://login.$SV_DOMAIN/realms/workforce  (bob / bob-demo + make totp; admin: see .lab/secrets.env)"
+ok "issuer https://login.$SV_DOMAIN/realms/workforce  (bob / $(password_hint bob) + make totp; admin: see .lab/secrets.env)"
 
 step "Sterling & Vance contingency IdP, Keycloak $KEYCLOAK_VERSION (sv-contingency)"
 # The IdP S&V keeps for when its own is down (contingency in ENTERPRISE_IDP):
@@ -107,13 +109,14 @@ step "Sterling & Vance contingency IdP, Keycloak $KEYCLOAK_VERSION (sv-contingen
 secret_apply sv-contingency kc-secrets \
   KC_BOOTSTRAP_ADMIN_USERNAME=admin \
   KC_BOOTSTRAP_ADMIN_PASSWORD="$(lab_secret SV_CONTINGENCY_KC_ADMIN_PASSWORD)" \
-  SV_CONTINGENCY_DIRECTORY_SECRET="$(lab_secret SV_CONTINGENCY_DIRECTORY_SECRET)"
+  SV_CONTINGENCY_DIRECTORY_SECRET="$(lab_secret SV_CONTINGENCY_DIRECTORY_SECRET)" \
+  LAB_PASSWORD_BOB="$LAB_PASSWORD_BOB" LAB_PASSWORD_CAROL="$LAB_PASSWORD_CAROL" LAB_PASSWORD_DANA="$LAB_PASSWORD_DANA"
 contingency_realm "$D/realm-contingency.json" >"$LAB_STATE/realm/realm-contingency.json"
 KC_HOST=login-dr \
   deploy_keycloak sv-contingency "$SV_DOMAIN" https-sterling "$LAB_STATE/realm/realm-contingency.json"
 wait_for "https://login-dr.$SV_DOMAIN discovery" 30 3 \
   sh -c "curl -sf --cacert '$LAB_TRUST' https://login-dr.$SV_DOMAIN/realms/contingency/.well-known/openid-configuration >/dev/null"
-ok "issuer https://login-dr.$SV_DOMAIN/realms/contingency  (bob / bob-demo; admin: see .lab/secrets.env)"
+ok "issuer https://login-dr.$SV_DOMAIN/realms/contingency  (bob / $(password_hint bob); admin: see .lab/secrets.env)"
 
 step "Client secrets, in the namespace that uses each"
 # kgateway OAuth2 (edge SSO for kagent) lives with the kagent route
