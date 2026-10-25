@@ -46,6 +46,8 @@ routes: ## where sign-ins go now: each routing rule's IdP, and where sample sign
 	@./scripts/routes.sh
 xaa-keys: ## public keys other parties register: S&V clients (private_key_jwt), S&V IdP, Ledgerline SSO client
 	@./scripts/xaa-keys.sh
+netpol: ## render every namespace's no-internet policy again (after the nodes' addresses change, e.g. Docker restarted)
+	@bash -c '. scripts/lib.sh && need_cluster && refresh_no_internet'
 totp: ## one-time code for signing in at S&V's own Keycloak as bob (or: make totp EMPLOYEE=carol)
 	@bash -c '. scripts/lib.sh && totp_code $(or $(EMPLOYEE),bob)'
 upstream-mcp: ## an outside MCP server at the front door, signed in at its own AS (Enterprise): make upstream-mcp NAME=x URL=https://... AS=https://... SCOPES="a b"
@@ -78,4 +80,4 @@ aws-down: ## terminate the instance; keeps the address so the names stay (ALL=1 
 help:
 	@awk 'BEGIN{FS=":.*## "} /^## ----/{printf "\n\033[1m%s\033[0m\n", substr($$0,9)} /^[a-zA-Z%_-]+:.*## /{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-.PHONY: machine-setup up cluster platform down nuke verify bob-verify alice-verify continuity-verify observatory-verify tour reset llm xaa-logs xaa-keys routes totp upstream-mcp upstream-mcp-remove status preflight aws-up aws-sync aws-ssh aws-stop aws-start aws-status aws-down help
+.PHONY: machine-setup up cluster platform down nuke verify bob-verify alice-verify continuity-verify observatory-verify tour reset llm xaa-logs xaa-keys routes netpol totp upstream-mcp upstream-mcp-remove status preflight aws-up aws-sync aws-ssh aws-stop aws-start aws-status aws-down help

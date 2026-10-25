@@ -247,6 +247,9 @@ case "$cmd" in
     ip_or_die; ensure_sg >/dev/null
     wait_for "SSH on $IP" 60 5 R true
     wait_for "the cluster back" 60 10 R "kubectl get nodes >/dev/null 2>&1"
+    # the nodes can come back on other addresses: every no-internet policy
+    # follows the API server to its new one
+    R "cd $REMOTE && make netpol >/dev/null" || warn "make netpol on the instance failed: the mesh's pods may not reach the API server (make aws-run-netpol)"
     ok "$id running"; status ;;
   status) status ;;
   down)

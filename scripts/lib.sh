@@ -342,13 +342,29 @@ deny_internet_pods() {
   local ns=$1 app; shift
   for app in "$@"; do _no_internet "$ns" "no-internet-$app" "{matchLabels: {app: $app}}"; done
 }
+# refresh_no_internet: render every no-internet policy in the cluster again,
+# keeping each one's pod selector (a cluster set up before the API server was
+# reached on the kind network's subnet, or after the nodes' addresses changed)
+refresh_no_internet() {
+  local ns name sel
+  K get networkpolicy -A -o json | jq -r '.items[] | select(.metadata.name | test("^no-internet(-|$)"))
+    | [.metadata.namespace, .metadata.name, (.spec.podSelector | tojson)] | @tsv' |
+  while IFS=$'\t' read -r ns name sel; do _no_internet "$ns" "$name" "$sel"; echo "$ns/$name"; done
+}
 _no_internet() {  # _no_internet <ns> <policy name> <podSelector>
-  local pods svcs api cfg
+  local pods svcs api nodes cfg
   cfg=$(K -n kube-system get cm kubeadm-config -o jsonpath='{.data.ClusterConfiguration}')
   pods=$(echo "$cfg" | awk '/podSubnet/{print $2}')
   svcs=$(echo "$cfg" | awk '/serviceSubnet/{print $2}')
   api=$(K get endpointslice -n default -l kubernetes.io/service-name=kubernetes -o jsonpath='{.items[0].endpoints[0].addresses[0]}')
   [ -n "$api" ] || die "no API server address (endpointslice default/kubernetes)"
+  # The API server is reached on the kind network's subnet, not only the
+  # address it has now: Docker hands the node containers their addresses
+  # again when it restarts them (Docker Desktop restarting, an instance
+  # stopped and started), and the control plane can come back on another one.
+  nodes=$(docker network inspect kind --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null | tr ' ' '\n' | grep -m1 '\.' || true)
+  api="{ipBlock: {cidr: $api/32}}"
+  if [ -n "$nodes" ]; then api="$api, {ipBlock: {cidr: $nodes}}"; fi
   K apply -f - >/dev/null <<YAML
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -361,7 +377,7 @@ spec:
     - ipBlock: {cidr: ${pods:-10.244.0.0/16}}
     - ipBlock: {cidr: ${svcs:-10.96.0.0/16}}
     - ipBlock: {cidr: 240.240.0.0/16}      # Istio's ServiceEntry addresses (egress waypoint)
-  - to: [{ipBlock: {cidr: $api/32}}]
+  - to: [$api]
     ports: [{port: 6443, protocol: TCP}]
 YAML
 }
