@@ -57,8 +57,10 @@ lab_image "$KC_IDJAG" tools/keycloak-idjag/build.sh
 # (RESOURCE_AS). Identity Brokering API v2: the requesting app may read the
 # tokens an upstream IdP issued for the user's session, so that IdP can
 # vouch for its own sign-ins in Cross App Access (XAA_VOUCHER).
+mkdir -p "$LAB_STATE/realm"
+broker_realm "$D/realm-sterling-vance.json" >"$LAB_STATE/realm/realm-sterling-vance.json"
 KC_IMAGE="localhost:${LAB_REGISTRY_PORT}/$KC_IDJAG" \
-  deploy_keycloak sv-identity "$SV_DOMAIN" https-sterling "$D/realm-sterling-vance.json" \
+  deploy_keycloak sv-identity "$SV_DOMAIN" https-sterling "$LAB_STATE/realm/realm-sterling-vance.json" \
   token-exchange-standard,identity-assertion-jwt,identity-brokering-api:v2
 wait_for "https://idp.$SV_DOMAIN discovery" 30 3 \
   sh -c "curl -sf --cacert '$LAB_TRUST' https://idp.$SV_DOMAIN/realms/sterling-vance/.well-known/openid-configuration >/dev/null"

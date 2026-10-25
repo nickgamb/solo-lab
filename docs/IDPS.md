@@ -451,6 +451,7 @@ RESOURCE_AS=descope
 LEDGERLINE_DESCOPE_ISSUER=https://api.descope.com/v1/apps/agentic/<project>/<resource>
 LEDGERLINE_DESCOPE_CLIENT_ID=<S&V's client there>
 LEDGERLINE_DESCOPE_CLIENT_SECRET=<its secret>
+LEDGERLINE_DESCOPE_TENANT=<its tenant ID>
 ```
 
 - **Resource:** type MCP server, URI `https://mcp.ledgerline.lab/mcp`
@@ -458,7 +459,13 @@ LEDGERLINE_DESCOPE_CLIENT_SECRET=<its secret>
   `LEDGERLINE_DESCOPE_ISSUER`, the ID-JAG's audience.
 - **Tenant** (Authentication Methods, SSO, Cross-App Access): ID-JAGs
   allowed, the vouching IdP's issuer trusted, JIT provisioning on. Its
-  tenant ID is the ID-JAG's `aud_tenant`.
+  tenant ID is the ID-JAG's `aud_tenant` (`LEDGERLINE_DESCOPE_TENANT`, which
+  S&V's broker puts in the ID-JAGs it issues, with the server's URL as their
+  `resource`).
+- **S&V's broker** (after a failover, or with `XAA_VOUCHER=broker`): a
+  second trusted issuer on the tenant, `https://idp.sterling.lab/realms/sterling-vance`,
+  with its keys (`sv-idp.jwks.json`) published where Descope can fetch them
+  as its JWKs URL.
 - **S&V's client:** a client of that resource. Descope's token endpoint
   takes client secrets only.
 - **Policy:** a rule granting that client `research:read` on the resource
