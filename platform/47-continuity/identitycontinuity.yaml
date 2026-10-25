@@ -25,15 +25,17 @@ spec:
   # in order, and the first that can sign people in now takes it. A sign-in
   # no rule matches goes to the active tier. The rules belong to S&V's
   # identity team (the Observatory edits them) and survive re-running the
-  # layer.
+  # layer. These two follow the chain: S&V's IdPs whose sign-ins can meet
+  # AAL2, in failover order (install.sh), so people sign in at the primary
+  # while it can.
   routing:
     policy: {apiVersion: ${AGW_POLICY_API}, kind: ${AGW_POLICY_KIND}, namespace: agentgateway-system, name: fabric-routing}
     rules:
     - name: ledgerline
-      description: Sign-ins for Ledgerline Research go to an IdP that meets its assurance rule (AAL2), phishing-resistant first
+      description: Sign-ins for Ledgerline Research go to an IdP that meets its assurance rule (AAL2), in failover order
       when: 'request.uri.matches("[?&]resource=https(%3A|:)(%2F|/){2}mcp.${SV_DOMAIN}(%2F|/)mcp(%2F|/)ledgerline")'
-      idps: [gluu, keycloak]
+      idps: ${SV_AAL2_IDPS}
     - name: ai-clients
-      description: AI clients outside the mesh (Claude Code, IDEs) sign in at the IdP S&V runs itself, with MFA
+      description: AI clients outside the mesh (Claude Code, Codex, IDEs) sign in at an IdP that meets the workspace's assurance rule (AAL2), in failover order
       when: 'request.uri.matches("[?&]client_id=sv-mcp-(client|issuer)(&|$)")'
-      idps: [keycloak]
+      idps: ${SV_AAL2_IDPS}
