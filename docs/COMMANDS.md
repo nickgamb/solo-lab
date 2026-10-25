@@ -93,6 +93,31 @@ and pricing apply as for agents. For Claude Code:
 ANTHROPIC_BASE_URL=https://llm.sterling.lab ANTHROPIC_AUTH_TOKEN="$(grep '^LLM_API_KEY=' .lab/secrets.env | cut -d= -f2-)" NODE_EXTRA_CA_CERTS="$HOME/.solo-lab/ca/ca.crt" claude
 ```
 
+**Connect AI clients to the firm's MCP servers.** Each signs Bob in at S&V's
+front door (Bob's workspace, and Ledgerline through Cross App Access).
+Claude Code registers itself, with the callback the front door allows
+(`MCP_CLIENT_REDIRECT_URIS`), then signs in from `/mcp`:
+
+```bash
+claude mcp add --transport http --scope user --callback-port 6280 sv-workspace https://mcp.sterling.lab/mcp/bob-workspace
+claude mcp add --transport http --scope user --callback-port 6280 ledgerline https://mcp.sterling.lab/mcp/ledgerline
+```
+
+Codex names itself by its client ID metadata document, so it needs no
+registration. In `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.sv-workspace]
+url = "https://mcp.sterling.lab/mcp/bob-workspace"
+
+[mcp_servers.ledgerline]
+url = "https://mcp.sterling.lab/mcp/ledgerline"
+```
+
+then `codex mcp login sv-workspace` and `codex mcp login ledgerline`. Both
+take the lab's CA from `NODE_EXTRA_CA_CERTS` (Claude Code) and
+`CODEX_CA_CERTIFICATE` (Codex), set to `~/.solo-lab/ca/ca.crt`.
+
 ## Identity
 
 | Command | Shows |
