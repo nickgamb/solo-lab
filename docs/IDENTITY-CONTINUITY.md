@@ -384,11 +384,16 @@ routing:
   rules:
   - name: ledgerline
     when: 'request.uri.matches("[?&]resource=https(%3A|:)(%2F|/){2}mcp.sterling.lab(%2F|/)mcp(%2F|/)ledgerline")'
-    idps: [gluu, keycloak]
+    idps: [okta, keycloak]
   - name: ai-clients
     when: 'request.uri.matches("[?&]client_id=sv-mcp-(client|issuer)(&|$)")'
-    idps: [keycloak]
+    idps: [okta, keycloak]
 ```
+
+The install gives both rules S&V's IdPs whose sign-ins can meet AAL2 (their
+declared `assurance`), in failover order: people sign in at the primary while
+it can. A default rule that names an IdP no longer in the chain follows the
+chain again when the layer is re-run.
 
 On every pass the controller resolves each rule to the first IdP in its list
 that can sign people in now (enabled, not drained, configured, healthy, set up

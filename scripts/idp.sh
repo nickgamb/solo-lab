@@ -368,6 +368,20 @@ kid = b(hashlib.sha256(der).digest())
 print(json.dumps({"keys": [{"kty": "EC", "crv": "P-256", "x": b(pt[1:33]), "y": b(pt[33:]), "kid": kid, "use": "sig", "alg": "ES256"}]}, indent=2))'
 }
 
+# broker_realm <realm.json>: S&V's broker. The ID-JAGs it issues name, where
+# Ledgerline's AS expects them, the tenant there (aud_tenant) and Ledgerline's
+# MCP server by its URL (resource, RFC 8707): the AS's token is for that server
+broker_realm() {
+  local res=""
+  case "${LEDGERLINE_AS_AUDIENCE:-}" in https://*) res=$LEDGERLINE_AS_AUDIENCE ;; esac
+  jq --arg t "${LEDGERLINE_AS_TENANT:-}" --arg r "$res" '
+    def claim($n; $v): {name: "\($n) at Ledgerline", protocol: "openid-connect", protocolMapper: "oidc-hardcoded-claim-mapper",
+      config: {"claim.name": $n, "claim.value": $v, "jsonType.label": "String", "access.token.claim": "true",
+        "id.token.claim": "false", "userinfo.token.claim": "false", "introspection.token.claim": "false"}};
+    (.clientScopes[] | select(.name == "xaa-ledgerline") | .protocolMappers) +=
+      ([if $t != "" then claim("aud_tenant"; $t) else empty end] + [if $r != "" then claim("resource"; $r) else empty end])' "$1"
+}
+
 # workforce_realm <realm.json>: S&V's workforce IdP, with S&V's client keys
 workforce_realm() {
   jq --arg jwks "$(sv_upstream_client_jwks | jq -c .)" \

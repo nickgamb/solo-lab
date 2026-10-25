@@ -161,7 +161,7 @@ atenet-router → worker, each hop mTLS.
      the edge (`/v1` only, with an API key). Prompt guards refuse attempts to
      override the agent's instructions and mask card and social security
      numbers in the outgoing prompt and in the answer. With `LLM_FALLBACK`, a
-     failing provider leaves rotation while a second one serves. Its
+     failing provider leaves rotation while the next one serves. Its
      listeners take routes only from `agentgateway-system`, so no other
      namespace can publish a path on it.
    - meridian gateway (agentgateway, Meridian): ext-auth to uma-pep, which

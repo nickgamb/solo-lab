@@ -342,13 +342,69 @@ deny_internet_pods() {
   local ns=$1 app; shift
   for app in "$@"; do _no_internet "$ns" "no-internet-$app" "{matchLabels: {app: $app}}"; done
 }
+# refresh_no_internet: render every no-internet policy in the cluster again,
+# keeping each one's pod selector (a cluster set up before the API server was
+# reached on the kind network's subnet, or after the nodes' addresses changed)
+refresh_no_internet() {
+  local ns name sel
+  K get networkpolicy -A -o json | jq -r '.items[] | select(.metadata.name | test("^no-internet(-|$)"))
+    | [.metadata.namespace, .metadata.name, (.spec.podSelector | tojson)] | @tsv' |
+  while IFS=$'\t' read -r ns name sel; do _no_internet "$ns" "$name" "$sel"; echo "$ns/$name"; done
+}
+# rejoin_valkey: Agent Substrate's valkey cluster keeps its peers' pod
+# addresses; pods that come back with new ones leave it in cluster_state:fail.
+# Introduce every member at its address now (slots and data stay).
+rejoin_valkey() {
+  local i ip ips=""
+  K get statefulset -n ate-system valkey-cluster >/dev/null 2>&1 || return 0
+  K exec -n ate-system valkey-cluster-0 -- valkey-cli cluster info 2>/dev/null | grep -q '^cluster_state:ok' && return 0
+  for i in $(seq 0 $(( $(K get statefulset -n ate-system valkey-cluster -o jsonpath='{.spec.replicas}') - 1 ))); do
+    ips="$ips $(K get pod -n ate-system "valkey-cluster-$i" -o jsonpath='{.status.podIP}')"
+  done
+  for i in $(seq 0 $(( $(echo $ips | wc -w) - 1 ))); do
+    for ip in $ips; do K exec -n ate-system "valkey-cluster-$i" -- valkey-cli cluster meet "$ip" 6379 >/dev/null; done
+  done
+  wait_for "valkey cluster_state:ok" 30 3 sh -c "kubectl --context $KCTX exec -n ate-system valkey-cluster-0 -- valkey-cli cluster info 2>/dev/null | grep -q '^cluster_state:ok'"
+}
+# restore_broker_groups: S&V's broker starts from its realm file, without the
+# profile's groups (the directory sync creates them). The IdPs' group mappers
+# map nothing until they exist, and tokens carry no groups.
+restore_broker_groups() {
+  local g
+  K get identitycontinuity sterling-vance -n sv-identity >/dev/null 2>&1 || return 0
+  for g in $(K get identitycontinuity sterling-vance -n sv-identity -o json | jq -r '.spec.profile.groups[]?'); do
+    kc_admin sv-identity SV_KC_ADMIN_PASSWORD sterling-vance POST /groups -H content-type:application/json \
+      --data "$(jq -nc --arg n "$g" '{name: $n}')" -o /dev/null -w '%{http_code}' | grep -qE '^(201|409)$' \
+      || die "group $g at S&V's broker"
+  done
+}
+# restart_workers: Substrate's worker pods register their address once, when
+# they start. A pod whose containers came back in place (the nodes restarted)
+# has a new address under its old registration, and actors routed to it hang:
+# its Deployment rolls, and the new pods register again.
+restart_workers() {
+  local d
+  for d in $(K get pods -A -l ate.dev/worker-pool -o json | jq -r '.items[]
+      | select(any(.status.containerStatuses[]?; .restartCount > 0))
+      | .metadata as $m | $m.namespace + "/" + ($m.ownerReferences[0].name | sub("-" + $m.labels["pod-template-hash"] + "$"; ""))' 2>/dev/null | sort -u); do
+    K rollout restart -n "${d%/*}" deployment "${d#*/}" >/dev/null && K rollout status -n "${d%/*}" deployment "${d#*/}" --timeout=180s >/dev/null \
+      && ok "worker pool ${d#*/} registered again"
+  done
+}
 _no_internet() {  # _no_internet <ns> <policy name> <podSelector>
-  local pods svcs api cfg
+  local pods svcs api nodes cfg
   cfg=$(K -n kube-system get cm kubeadm-config -o jsonpath='{.data.ClusterConfiguration}')
   pods=$(echo "$cfg" | awk '/podSubnet/{print $2}')
   svcs=$(echo "$cfg" | awk '/serviceSubnet/{print $2}')
   api=$(K get endpointslice -n default -l kubernetes.io/service-name=kubernetes -o jsonpath='{.items[0].endpoints[0].addresses[0]}')
   [ -n "$api" ] || die "no API server address (endpointslice default/kubernetes)"
+  # The API server is reached on the kind network's subnet, not only the
+  # address it has now: Docker hands the node containers their addresses
+  # again when it restarts them (Docker Desktop restarting, an instance
+  # stopped and started), and the control plane can come back on another one.
+  nodes=$(docker network inspect kind --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null | tr ' ' '\n' | grep -m1 '\.' || true)
+  api="{ipBlock: {cidr: $api/32}}"
+  if [ -n "$nodes" ]; then api="$api, {ipBlock: {cidr: $nodes}}"; fi
   K apply -f - >/dev/null <<YAML
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -361,7 +417,7 @@ spec:
     - ipBlock: {cidr: ${pods:-10.244.0.0/16}}
     - ipBlock: {cidr: ${svcs:-10.96.0.0/16}}
     - ipBlock: {cidr: 240.240.0.0/16}      # Istio's ServiceEntry addresses (egress waypoint)
-  - to: [{ipBlock: {cidr: $api/32}}]
+  - to: [$api]
     ports: [{port: 6443, protocol: TCP}]
 YAML
 }
@@ -411,6 +467,8 @@ llm_ready() {
       [ -n "${ANTHROPIC_API_KEY:-}" ] || { echo "no ANTHROPIC_API_KEY"; return 1; }
       curl -sf -m 10 -o /dev/null https://api.anthropic.com/v1/models -H 'anthropic-version: 2023-06-01' -H @- <<<"x-api-key: $ANTHROPIC_API_KEY" \
         || { echo "api.anthropic.com is not answering for this key"; return 1; } ;;
+    bedrock)
+      K get secret llm-bedrock -n agentgateway-system >/dev/null 2>&1 || { echo "no Bedrock credential (make llm)"; return 1; } ;;
     *) echo "no LLM configured (make llm)"; return 1 ;;
   esac
 }

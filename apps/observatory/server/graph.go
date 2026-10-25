@@ -55,17 +55,19 @@ type builder struct {
 	svcWL   map[string][]string // "ns/svc" -> node ids behind it
 	svcObj  map[string]*unstructured.Unstructured
 	hosts   map[string][]string // edge hostname -> node ids behind that route
-	edgeGW  string              // node id of the internet-facing gateway
-	viaHost string              // the edge hostname resolveHost last answered with the edge
-	l4      map[string]float64  // edge id -> mesh connections/s
-	svcWP   map[string]string   // "ns/svc" -> the waypoint its traffic passes
-	gwHosts []string            // listener hostnames of the edge (may be wildcards)
-	names   map[string]string   // party -> display name
-	orders  map[string]int      // party -> declared order
-	envE    map[string]bool     // edges derived from workload env
-	sso     []SSO
-	trusts  []Trust
-	ctl     string // the kagent controller's node
+	// edge hostname -> each route rule's path matches and where it sends them
+	hostPaths map[string][]hostRule
+	edgeGW    string             // node id of the internet-facing gateway
+	viaHost   string             // the edge hostname resolveHost last answered with the edge
+	l4        map[string]float64 // edge id -> mesh connections/s
+	svcWP     map[string]string  // "ns/svc" -> the waypoint its traffic passes
+	gwHosts   []string           // listener hostnames of the edge (may be wildcards)
+	names     map[string]string  // party -> display name
+	orders    map[string]int     // party -> declared order
+	envE      map[string]bool    // edges derived from workload env
+	sso       []SSO
+	trusts    []Trust
+	ctl       string // the kagent controller's node
 }
 
 // SSO is an app signed in at the edge through an OIDC provider.
@@ -91,7 +93,7 @@ func Build(k *Kube, observed []Observed) (Graph, *Index) {
 	b := &builder{k: k, nodes: map[string]*Node{}, edges: map[string]*Edge{}, names: map[string]string{}, orders: map[string]int{}, envE: map[string]bool{},
 		party: map[string]string{}, byOwner: map[string]string{}, byPod: map[string]string{},
 		bySA: map[string][]string{}, svcWL: map[string][]string{}, svcObj: map[string]*unstructured.Unstructured{},
-		hosts: map[string][]string{}, l4: map[string]float64{}, svcWP: map[string]string{}}
+		hosts: map[string][]string{}, hostPaths: map[string][]hostRule{}, l4: map[string]float64{}, svcWP: map[string]string{}}
 	b.namespaces()
 	b.workloads()
 	b.primaries()
@@ -403,6 +405,57 @@ func (b *builder) cluster() {
 	n.Summary["version"] = machines[0]["version"]
 }
 
+// hostRule is one route rule on a hostname: the paths it matches (none: all)
+// and the node ids it sends them to.
+type hostRule struct {
+	paths   []string
+	exact   []bool
+	targets []string
+}
+
+// rulePaths: a route rule's path matches (Exact or PathPrefix).
+func rulePaths(rm map[string]any) (paths []string, exact []bool) {
+	for _, m := range slice(rm, "matches") {
+		pm := obj(m.(map[string]any), "path")
+		if v := str(pm, "value"); v != "" {
+			paths, exact = append(paths, v), append(exact, str(pm, "type") == "Exact")
+		}
+	}
+	return paths, exact
+}
+
+// atURL: where a request for host and path ends up. Of the routes on that
+// host, the rules matching the path; a gateway it only passes through (the
+// edge's route to ai-gateway, then ai-gateway's own) gives way to where the
+// last of them sends it. Without path routes, the host's.
+func (b *builder) atURL(host, path string) []string {
+	var out []string
+	for _, r := range b.hostPaths[host] {
+		match := len(r.paths) == 0
+		for i, p := range r.paths {
+			if r.exact[i] && path == p || !r.exact[i] && (path == p || strings.HasPrefix(path, strings.TrimSuffix(p, "/")+"/")) {
+				match = true
+			}
+		}
+		if match {
+			out = appendUniq(out, r.targets...)
+		}
+	}
+	var end []string
+	for _, id := range out {
+		if n := b.nodes[id]; n == nil || n.Kind != "gateway" {
+			end = append(end, id)
+		}
+	}
+	if len(end) > 0 {
+		return end
+	}
+	if len(out) > 0 {
+		return out
+	}
+	return b.hosts[host]
+}
+
 func (b *builder) routes() {
 	for _, r := range b.k.List("httproutes") {
 		var gws []string
@@ -439,8 +492,10 @@ func (b *builder) routes() {
 						b.edge(gw, t, kind, label, true)
 					}
 				}
+				paths, exact := rulePaths(rm)
 				for _, h := range hostnames {
 					b.hosts[h] = appendUniq(b.hosts[h], targets...)
+					b.hostPaths[h] = append(b.hostPaths[h], hostRule{paths: paths, exact: exact, targets: targets})
 				}
 			}
 		}
@@ -466,8 +521,11 @@ func (b *builder) routeHosts() {
 				if ns == "" {
 					ns = r.GetNamespace()
 				}
+				paths, exact := rulePaths(rule.(map[string]any))
 				for _, h := range slice(r.Object, "spec", "hostnames") {
-					b.hosts[fmt.Sprint(h)] = appendUniq(b.hosts[fmt.Sprint(h)], b.reach(ns+"/"+str(bm, "name"))...)
+					ids := b.reach(ns + "/" + str(bm, "name"))
+					b.hosts[fmt.Sprint(h)] = appendUniq(b.hosts[fmt.Sprint(h)], ids...)
+					b.hostPaths[fmt.Sprint(h)] = append(b.hostPaths[fmt.Sprint(h)], hostRule{paths: paths, exact: exact, targets: ids})
 				}
 			}
 		}
@@ -1127,7 +1185,7 @@ func (b *builder) brokerSignIns() {
 					continue
 				}
 				h := u.Hostname()
-				for _, app := range b.hosts[h] {
+				for _, app := range b.atURL(h, u.Path) {
 					// an IdP federating to the broker (one of the firm's
 					// own, such as its Keycloak) is an identity provider, not an app
 					if n := b.nodes[app]; n != nil && n.Kind == "idp" {
@@ -1163,7 +1221,8 @@ func (b *builder) resolveURL(raw, ns string) []string {
 
 func (b *builder) resolveHost(host, ns string) []string {
 	host = strings.TrimSuffix(host, ".")
-	if host == "" {
+	// .invalid never resolves (RFC 6761): a backend that takes no calls
+	if host == "" || host == "invalid" || strings.HasSuffix(host, ".invalid") {
 		return nil
 	}
 	if b.edgeHost(host) {

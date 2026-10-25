@@ -71,7 +71,7 @@ sequenceDiagram
   C->>G: register (dynamic registration), or a client ID metadata document URL as client ID
   C->>G: authorize at the issuer (PKCE, loopback redirect)
   G->>F: the issuer signs Bob in at the broker, as sv-mcp-issuer
-  F->>I: redirect to the IdP the routing rule names (S&V's own, with MFA)
+  F->>I: redirect to the IdP the routing rule names (the primary, while it meets AAL2)
   I-->>F: Bob signed in
   F-->>G: code; the issuer redeems it
   G-->>C: code, then the broker's access token for Bob (aud ai-gateway)
@@ -116,8 +116,8 @@ sequenceDiagram
   registered, `sv-mcp-client` (public, PKCE S256, loopback redirects only,
   no password grant); the gateway names itself the authorization server.
 - **Sign-in goes where the routing rule says.** AI clients' sign-ins
-  (`sv-mcp-client` or `sv-mcp-issuer`) go to S&V's own IdP, with MFA; after
-  a failover, to the next.
+  (`sv-mcp-client` or `sv-mcp-issuer`) go to the first of S&V's IdPs whose
+  sign-ins can meet AAL2: the primary; after a failover, the next.
 - **The same checks as the firm's agents.** A fabric JWT with audience
   `ai-gateway`, through the edge, from `sv-mcp-client` or `sv-mcp-issuer`, for a user in
   `advisors`; the same assurance rules (`advisor-workspace`,
@@ -294,8 +294,8 @@ Three settings in `config/lab.env` (`scripts/idp.sh`):
 | Setting | Values | Decides |
 | --- | --- | --- |
 | `ENTERPRISE_IDP` | `auth0,keycloak,contingency` (default), `gluu,auth0,keycloak,contingency`, `okta,keycloak`, ...; any order | S&V's IdPs, which sign Bob in, in failover order ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md)); `keycloak` is the Keycloak S&V runs itself (`https://login.sterling.lab`) |
-| `RESOURCE_AS` | `keycloak` (default), `gluu`, `auth0` or `descope` (experimental), any name with `LEDGERLINE_<NAME>_ISSUER` | Ledgerline's authorization server |
-| `XAA_VOUCHER` | `broker` (default), or IdPs in `ENTERPRISE_IDP` that issue ID-JAGs, comma-separated (`gluu`; `okta`, experimental) | who vouches for Bob to Ledgerline (issues the ID-JAG), per session |
+| `RESOURCE_AS` | `keycloak` (default), `gluu`, `auth0` (experimental) or `descope`, any name with `LEDGERLINE_<NAME>_ISSUER` | Ledgerline's authorization server |
+| `XAA_VOUCHER` | `broker` (default), or IdPs in `ENTERPRISE_IDP` that issue ID-JAGs, comma-separated (`gluu`, `okta`) | who vouches for Bob to Ledgerline (issues the ID-JAG), per session |
 
 Each is configured by name ([IDPS.md](IDPS.md)).
 

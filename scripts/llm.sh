@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 # Point the lab's single LLM surface at a provider:
 #   make llm                       # uses LLM_PROVIDER from .env (default ollama)
-#   make llm LLM_PROVIDER=anthropic
+#   make llm LLM_PROVIDER=anthropic   # ollama | anthropic | openai | bedrock
 #   make llm LLM_FALLBACK=anthropic  # fail over to a second provider (or
 #                                    # LLM_FALLBACK=ollama LLM_FALLBACK_MODEL=...)
+#   make llm LLM_PROVIDER=bedrock LLM_FALLBACK=openai,ollama
+#                                    # fallbacks in order; LLM_FALLBACK_MODEL
+#                                    # takes one model each, comma-separated
 # Keys come from .env. Agents never see them: agentgateway injects the
 # credential on the way out.
 . "$(dirname "$0")/lib.sh"
 D="$LAB_ROOT/platform/40-agentgateway/llm"
 need_cluster
 P="${LLM_PROVIDER:-ollama}"
-F="${LLM_FALLBACK:-}"   # a second provider the gateway fails over to (optional)
+F="${LLM_FALLBACK:-}"   # providers the gateway fails over to, in order (optional, comma-separated)
 
 # prepare <provider> [model]: its credential in the cluster and the variables
 # its backend file renders with; sets PREPARED_MODEL (not a subshell: the
@@ -43,7 +46,24 @@ prepare() {
       printf '%s' "$OPENAI_API_KEY" | K create secret generic llm-openai -n agentgateway-system \
         --from-file=Authorization=/dev/stdin --dry-run=client -o yaml | K apply -f - >/dev/null
       PREPARED_MODEL=$OPENAI_MODEL ;;
-    *) die "LLM provider must be ollama | anthropic | openai, not $1" ;;
+    bedrock)
+      export BEDROCK_MODEL="${2:-${BEDROCK_MODEL:-us.anthropic.claude-sonnet-4-6}}"
+      export BEDROCK_REGION="${BEDROCK_REGION:-us-east-1}"
+      # a Bedrock API key, or AWS credentials (the gateway signs with SigV4)
+      if [ -n "${BEDROCK_API_KEY:-}" ]; then
+        printf '%s' "$BEDROCK_API_KEY" | K create secret generic llm-bedrock -n agentgateway-system \
+          --from-file=Authorization=/dev/stdin --dry-run=client -o yaml | K apply -f - >/dev/null
+        export BEDROCK_AUTH='{secretRef: {name: llm-bedrock}}'
+      elif [ -n "${BEDROCK_AWS_ACCESS_KEY_ID:-}" ] && [ -n "${BEDROCK_AWS_SECRET_ACCESS_KEY:-}" ]; then
+        K create secret generic llm-bedrock -n agentgateway-system \
+          --from-literal=accessKey="$BEDROCK_AWS_ACCESS_KEY_ID" --from-literal=secretKey="$BEDROCK_AWS_SECRET_ACCESS_KEY" \
+          ${BEDROCK_AWS_SESSION_TOKEN:+--from-literal=sessionToken="$BEDROCK_AWS_SESSION_TOKEN"} \
+          --dry-run=client -o yaml | K apply -f - >/dev/null
+        export BEDROCK_AUTH='{aws: {secretRef: {name: llm-bedrock}}}'
+      else die "bedrock needs BEDROCK_API_KEY, or BEDROCK_AWS_ACCESS_KEY_ID and BEDROCK_AWS_SECRET_ACCESS_KEY (set them in .env)"
+      fi
+      PREPARED_MODEL=$BEDROCK_MODEL ;;
+    *) die "LLM provider must be ollama | anthropic | openai | bedrock, not $1" ;;
   esac
 }
 # provider <name> <provider>: its backend file as one entry of a provider group
@@ -57,15 +77,19 @@ prepare "$P"; MODEL=$PREPARED_MODEL FMODEL=
 if [ -z "$F" ]; then
   render "$D/$P.yaml" | K apply -f - >/dev/null
 else
-  first=$(provider primary "$P")
-  prepare "$F" "${LLM_FALLBACK_MODEL:-}"; FMODEL=$PREPARED_MODEL
-  [ "$F/$FMODEL" != "$P/$MODEL" ] || die "the fallback is the primary ($P/$MODEL): set LLM_FALLBACK_MODEL"
-  second=$(provider fallback "$F")
+  IFS=, read -r -a FS <<< "$F"; IFS=, read -r -a FMS <<< "${LLM_FALLBACK_MODEL:-}"
+  groups="[{\"providers\": [$(provider primary "$P")]}]"; used=" $P/$MODEL "; FMODEL=
+  for i in "${!FS[@]}"; do
+    prepare "${FS[$i]}" "${FMS[$i]:-}"
+    case "$used" in *" ${FS[$i]}/$PREPARED_MODEL "*) die "${FS[$i]}/$PREPARED_MODEL is already in the chain: set LLM_FALLBACK_MODEL" ;; esac
+    used="$used${FS[$i]}/$PREPARED_MODEL "; FMODEL="${FMODEL:+$FMODEL, }${FS[$i]}/$PREPARED_MODEL"
+    groups=$(jq -c --argjson p "$(provider "fallback$((i + 1))" "${FS[$i]}")" '. + [{providers: [$p]}]' <<< "$groups")
+  done
   # groups in priority order: the gateway uses the first group with a healthy
   # provider, and evicts one that fails (policy.yaml)
-  render "$D/$P.yaml" | yq -o json | jq -c --argjson a "$first" --argjson b "$second" --arg f "$F" \
+  render "$D/$P.yaml" | yq -o json | jq -c --argjson g "$groups" --arg f "${F//,/.}" \
     'del(.spec.ai.provider, .spec.policies) | .metadata.labels["lab.solo.io/llm-fallback"] = $f
-     | .spec.ai.groups = [{providers: [$a]}, {providers: [$b]}]' | K apply -f - >/dev/null
+     | .spec.ai.groups = $g' | K apply -f - >/dev/null
 fi
 # API keys for callers outside the mesh (llm/external.yaml): only their
 # SHA-256 is in the cluster; the key itself is in .lab/secrets.env
@@ -91,5 +115,5 @@ else
   apply_tmpl "$D/route.yaml" "$D/external.yaml"
 fi
 K annotate namespace agentgateway-system lab.solo.io/llm-provider="$P" lab.solo.io/llm-model="$MODEL" \
-  lab.solo.io/llm-fallback="${F:+$F/$FMODEL}" --overwrite >/dev/null
-ok "llm -> $P ($MODEL)${F:+, then $F ($FMODEL)}"
+  lab.solo.io/llm-fallback="$FMODEL" --overwrite >/dev/null
+ok "llm -> $P ($MODEL)${F:+, then $FMODEL}"

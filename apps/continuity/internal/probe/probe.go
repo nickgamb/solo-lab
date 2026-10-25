@@ -3,6 +3,7 @@
 package probe
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -175,12 +176,16 @@ func (p *Prober) Callback(ctx context.Context, authz, clientID, callback string,
 	if err != nil {
 		return CallbackUnknown, "authorization endpoint: no answer"
 	}
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	resp.Body.Close()
 	loc := resp.Header.Get("Location")
 	switch {
 	case resp.StatusCode >= 300 && resp.StatusCode < 400 && strings.HasPrefix(loc, callback):
 		return CallbackRegistered, "the IdP answers at the broker's callback"
+	case resp.StatusCode >= 400 && resp.StatusCode < 500 && silentSignInError(body) != "":
+		// Okta shows prompt=none's answer on its own error page; it checks
+		// the client and callback first (invalid_request otherwise)
+		return CallbackRegistered, "the IdP accepted the client and callback (no session: " + silentSignInError(body) + ")"
 	case resp.StatusCode >= 300 && resp.StatusCode < 400 && (strings.Contains(loc, "/error") || strings.Contains(loc, "error=")):
 		return CallbackRefused, "the IdP sent the request to its error page, not the broker's callback"
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
@@ -189,6 +194,17 @@ func (p *Prober) Callback(ctx context.Context, authz, clientID, callback string,
 		return CallbackUnknown, fmt.Sprintf("authorization endpoint: HTTP %d", resp.StatusCode)
 	}
 	return CallbackUnknown, fmt.Sprintf("HTTP %d without the broker's callback (the IdP may ignore prompt=none)", resp.StatusCode)
+}
+
+// silentSignInError is the error prompt=none ends with when the request
+// itself is valid (OpenID Connect Core 3.1.2.6), if the page names one.
+func silentSignInError(body []byte) string {
+	for _, e := range []string{"login_required", "interaction_required", "consent_required", "account_selection_required"} {
+		if bytes.Contains(body, []byte(e)) {
+			return e
+		}
+	}
+	return ""
 }
 
 func (p *Prober) getJSON(ctx context.Context, url string, v any) (string, error) {

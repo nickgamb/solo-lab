@@ -102,6 +102,14 @@ func TestCallback(t *testing.T) {
 			http.Redirect(w, r, cb+"?error=login_required&state="+q.Get("state"), http.StatusFound)
 		}, CallbackRegistered},
 		{"refused with 400", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusBadRequest) }, CallbackRefused},
+		{"login_required on the IdP's error page", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte("<p>Error Code: login_required</p>"))
+		}, CallbackRegistered},
+		{"invalid_request on the IdP's error page", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte("<p>Error Code: invalid_request</p>"))
+		}, CallbackRefused},
 		{"refused to an error page", func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/error?error=invalid_request", http.StatusFound)
 		}, CallbackRefused},

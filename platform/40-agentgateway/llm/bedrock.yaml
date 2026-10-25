@@ -1,0 +1,14 @@
+apiVersion: ${AGW_BACKEND_API}
+kind: ${AGW_BACKEND_KIND}
+metadata:
+  name: llm
+  namespace: agentgateway-system
+  labels: {lab.solo.io/llm-provider: bedrock}
+spec:
+  ai:
+    provider:
+      bedrock:
+        model: ${BEDROCK_MODEL}
+        region: ${BEDROCK_REGION}
+  policies:
+    auth: ${BEDROCK_AUTH}

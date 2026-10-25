@@ -34,11 +34,11 @@ observatory-verify: ## what the Observatory's admins may and may not change (RBA
 	@./platform/90-observatory/verify.sh
 tour: ## drive every story end to end, paced, to watch live in the Observatory
 	@./scripts/tour.sh
-reset: ## rewind every demo to a first run (grants, terms, agent key, follow-ups, relationships)
+reset: ## rewind every demo to a first run (grants, terms, agent key, follow-ups, relationships, AI clients signed out)
 	@./scripts/reset.sh
 
 ## ---- day to day -------------------------------------------------------------
-llm: ## switch the LLM backend: make llm LLM_PROVIDER=ollama|anthropic|openai
+llm: ## switch the LLM backend: make llm LLM_PROVIDER=ollama|anthropic|openai|bedrock
 	@./scripts/llm.sh
 xaa-logs: ## Cross App Access trail (both token requests, claims, checks), tokens redacted: make xaa-logs SINCE=2h
 	@./scripts/xaa-logs.sh --since $(or $(SINCE),1h)
@@ -46,6 +46,8 @@ routes: ## where sign-ins go now: each routing rule's IdP, and where sample sign
 	@./scripts/routes.sh
 xaa-keys: ## public keys other parties register: S&V clients (private_key_jwt), S&V IdP, Ledgerline SSO client
 	@./scripts/xaa-keys.sh
+heal: ## after the nodes restart (Docker restarted, an instance stopped and started): no-internet policies follow the API server, Substrate's valkey rejoins, its workers register again, S&V's broker gets its groups back
+	@bash -c '. scripts/lib.sh && need_cluster && refresh_no_internet && rejoin_valkey && restart_workers && restore_broker_groups'
 totp: ## one-time code for signing in at S&V's own Keycloak as bob (or: make totp EMPLOYEE=carol)
 	@bash -c '. scripts/lib.sh && totp_code $(or $(EMPLOYEE),bob)'
 upstream-mcp: ## an outside MCP server at the front door, signed in at its own AS (Enterprise): make upstream-mcp NAME=x URL=https://... AS=https://... SCOPES="a b"
@@ -78,4 +80,4 @@ aws-down: ## terminate the instance; keeps the address so the names stay (ALL=1 
 help:
 	@awk 'BEGIN{FS=":.*## "} /^## ----/{printf "\n\033[1m%s\033[0m\n", substr($$0,9)} /^[a-zA-Z%_-]+:.*## /{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-.PHONY: machine-setup up cluster platform down nuke verify bob-verify alice-verify continuity-verify observatory-verify tour reset llm xaa-logs xaa-keys routes totp upstream-mcp upstream-mcp-remove status preflight aws-up aws-sync aws-ssh aws-stop aws-start aws-status aws-down help
+.PHONY: machine-setup up cluster platform down nuke verify bob-verify alice-verify continuity-verify observatory-verify tour reset llm xaa-logs xaa-keys routes heal totp upstream-mcp upstream-mcp-remove status preflight aws-up aws-sync aws-ssh aws-stop aws-start aws-status aws-down help

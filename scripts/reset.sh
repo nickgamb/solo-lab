@@ -6,6 +6,9 @@
 #   Bob's side a fresh agent key (a new, unknown agent) and an empty follow-up list
 #   Relationships  exactly the ones the stories declare (any added or removed since
 #              are put back)
+#   AI clients signed out at the front door (Claude Code, Codex, any MCP
+#              client): their tokens no longer refresh and their sessions end,
+#              so each signs in again at Bob's IdP
 . "$(dirname "$0")/lib.sh"
 need_cluster
 if K get cluster.postgresql.cnpg.io uma-as-db -n alice >/dev/null 2>&1; then
@@ -31,4 +34,21 @@ if K get relm sterling-vance -n sv-identity >/dev/null 2>&1; then
   apply_tmpl "$LAB_ROOT/demos/bob/manifests/06-relationships.yaml"
   K get ns alice >/dev/null 2>&1 && apply_tmpl "$LAB_ROOT/demos/bob-to-alice/relationships.yaml"
   ok "$(K get rel -n sv-identity --no-headers | wc -l | tr -d ' ') relationships"
+fi
+if K get deploy keycloak -n sv-identity >/dev/null 2>&1; then
+  step "AI clients: signed out"
+  ai="sv-mcp-issuer sv-mcp-client" now=$(date +%s) n=0
+  for c in $ai; do
+    id=$(kc_admin sv-identity SV_KC_ADMIN_PASSWORD sterling-vance GET "/clients?clientId=$c" | jq -r '.[0].id // empty')
+    [ -n "$id" ] || continue
+    # tokens issued to it before now no longer refresh; other clients keep theirs
+    kc_admin sv-identity SV_KC_ADMIN_PASSWORD sterling-vance PUT "/clients/$id" -H content-type:application/json \
+      --data "$(kc_admin sv-identity SV_KC_ADMIN_PASSWORD sterling-vance GET "/clients/$id" | jq -c --argjson t "$now" '.notBefore = $t')" >/dev/null
+    # its sessions that no other client shares end, so the next sign-in goes to the IdP
+    for sid in $(kc_admin sv-identity SV_KC_ADMIN_PASSWORD sterling-vance GET "/clients/$id/user-sessions?max=1000" \
+        | jq -r --arg ai "$ai" '($ai | split(" ")) as $a | .[] | select([.clients[]] - $a | length == 0) | .id'); do
+      kc_admin sv-identity SV_KC_ADMIN_PASSWORD sterling-vance DELETE "/sessions/$sid" >/dev/null && n=$((n + 1))
+    done
+  done
+  ok "$n sessions ended; tokens issued to $ai before now no longer refresh"
 fi

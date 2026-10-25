@@ -179,6 +179,10 @@ local_assurance() {
   jq -c --argjson l "$local_json" 'map(. as $t | (($l.tiers // {})[$t.name].assurance) as $a | if $a then .assurance = $a else . end)' <<<"$1"
 }
 desired=$(local_assurance "$desired")
+# the default routing rules' IdPs: those whose sign-ins can meet AAL2, in
+# failover order
+export SV_AAL2_IDPS; SV_AAL2_IDPS=$(jq -c '[.[] | select(.type == "oidc")
+  | select([.assurance.default // "AAL1", (.assurance.levels // [])[].level] | any(. == "AAL2" or . == "AAL3")) | .name]' <<<"$desired")
 # the shape's groups and the workforce's email domains (config/lab.env)
 SHAPE=$(jq -nc --arg g "$SV_GROUPS" --arg d "$SV_EMAIL_DOMAINS" '{groups: ($g | split(",") | map(select(. != ""))), domains: ($d | split(",") | map(select(. != "")))}')
 if ! K get identitycontinuity sterling-vance -n sv-identity >/dev/null 2>&1; then
@@ -231,10 +235,14 @@ else
   fi
 fi
 # the routing policy's gateway follows the edition; the rules stay the
-# identity team's (the defaults only where there are none yet)
+# identity team's (the defaults only where there are none yet). A default
+# rule naming an IdP no longer in the chain follows the chain again.
 want=$(render "$D/identitycontinuity.yaml" | yq -o json -I0 '.spec.routing')
 routing=$(K get idc sterling-vance -n sv-identity -o json | jq -c --argjson w "$want" '(.spec.routing // {}) as $r
-  | {policy: $w.policy, rules: ($r.rules // $w.rules)} as $n | if $n == $r then empty else {spec: {routing: $n}} end')
+  | [.spec.tiers[].name] as $chain
+  | (($r.rules // $w.rules) | map(. as $x | ([$w.rules[] | select(.name == $x.name and .when == $x.when)][0]) as $d
+      | if $d != null and any($x.idps[]; . as $i | $chain | index($i) == null) then $d else $x end)) as $rules
+  | {policy: $w.policy, rules: $rules} as $n | if $n == $r then empty else {spec: {routing: $n}} end')
 if [ -n "$routing" ]; then
   K patch idc sterling-vance -n sv-identity --type merge -p "$routing" >/dev/null
   ok "routing: $(echo "$routing" | jq -r '[.spec.routing.rules[] | "\(.name) -> \(.idps | join(", "))"] | join("; ")')"
