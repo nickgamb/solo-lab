@@ -165,7 +165,7 @@ sync_lab() {
   # no Ollama there: a hosted provider whose key .env has
   local p=${LLM_PROVIDER:-} i fs=() fms=() fb=() fbm=()
   if [ "$p" = ollama ]; then
-    if [ -n "${OPENAI_API_KEY:-}" ]; then p=openai; elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then p=anthropic; else p=; fi
+    if [ -n "${BEDROCK_API_KEY:-}${BEDROCK_AWS_ACCESS_KEY_ID:-}" ]; then p=bedrock; elif [ -n "${OPENAI_API_KEY:-}" ]; then p=openai; elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then p=anthropic; else p=; fi
   fi
   IFS=, read -r -a fs <<<"${LLM_FALLBACK:-}"; IFS=, read -r -a fms <<<"${LLM_FALLBACK_MODEL:-}"
   for i in ${fs[@]+"${!fs[@]}"}; do

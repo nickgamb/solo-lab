@@ -47,7 +47,7 @@ prepare() {
         --from-file=Authorization=/dev/stdin --dry-run=client -o yaml | K apply -f - >/dev/null
       PREPARED_MODEL=$OPENAI_MODEL ;;
     bedrock)
-      export BEDROCK_MODEL="${2:-${BEDROCK_MODEL:-us.amazon.nova-2-lite-v1:0}}"
+      export BEDROCK_MODEL="${2:-${BEDROCK_MODEL:-us.anthropic.claude-sonnet-4-6}}"
       export BEDROCK_REGION="${BEDROCK_REGION:-us-east-1}"
       # a Bedrock API key, or AWS credentials (the gateway signs with SigV4)
       if [ -n "${BEDROCK_API_KEY:-}" ]; then
