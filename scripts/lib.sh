@@ -442,6 +442,8 @@ llm_ready() {
       [ -n "${ANTHROPIC_API_KEY:-}" ] || { echo "no ANTHROPIC_API_KEY"; return 1; }
       curl -sf -m 10 -o /dev/null https://api.anthropic.com/v1/models -H 'anthropic-version: 2023-06-01' -H @- <<<"x-api-key: $ANTHROPIC_API_KEY" \
         || { echo "api.anthropic.com is not answering for this key"; return 1; } ;;
+    bedrock)
+      K get secret llm-bedrock -n agentgateway-system >/dev/null 2>&1 || { echo "no Bedrock credential (make llm)"; return 1; } ;;
     *) echo "no LLM configured (make llm)"; return 1 ;;
   esac
 }

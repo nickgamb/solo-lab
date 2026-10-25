@@ -82,6 +82,7 @@ it takes `list` or `call <tool> '<json args>'`, with `--token <jwt>` and
 | `kubectl --context kind-solo-lab -n kgateway-system logs deploy/edge -f` | the edge (Envoy) |
 | `make llm LLM_PROVIDER=ollama` | point ai-gateway's model route at a provider |
 | `make llm LLM_FALLBACK=anthropic` | add a second provider the model route fails over to |
+| `make llm LLM_PROVIDER=bedrock LLM_FALLBACK=openai,ollama` | Bedrock first, then OpenAI, then Ollama |
 
 **Use the firm's model from your laptop.** `https://llm.sterling.lab/v1` takes
 OpenAI chat completions and Anthropic messages with the key in

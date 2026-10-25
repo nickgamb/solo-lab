@@ -38,7 +38,7 @@ reset: ## rewind every demo to a first run (grants, terms, agent key, follow-ups
 	@./scripts/reset.sh
 
 ## ---- day to day -------------------------------------------------------------
-llm: ## switch the LLM backend: make llm LLM_PROVIDER=ollama|anthropic|openai
+llm: ## switch the LLM backend: make llm LLM_PROVIDER=ollama|anthropic|openai|bedrock
 	@./scripts/llm.sh
 xaa-logs: ## Cross App Access trail (both token requests, claims, checks), tokens redacted: make xaa-logs SINCE=2h
 	@./scripts/xaa-logs.sh --since $(or $(SINCE),1h)

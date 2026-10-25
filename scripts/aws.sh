@@ -163,11 +163,14 @@ sync_lab() {
   [ ${#state[@]} -eq 0 ] || { rsync -az -e "ssh ${SSH_OPTS[*]}" "${state[@]}" "ubuntu@$IP:$REMOTE/.lab/" \
     && R "chmod -R go-rwx $REMOTE/.lab/keys $REMOTE/.lab/secrets.env 2>/dev/null; true"; }
   # no Ollama there: a hosted provider whose key .env has
-  local p=${LLM_PROVIDER:-} fb=${LLM_FALLBACK:-}
+  local p=${LLM_PROVIDER:-} i fs=() fms=() fb=() fbm=()
   if [ "$p" = ollama ]; then
     if [ -n "${OPENAI_API_KEY:-}" ]; then p=openai; elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then p=anthropic; else p=; fi
   fi
-  [ "$fb" = ollama ] && fb=
+  IFS=, read -r -a fs <<<"${LLM_FALLBACK:-}"; IFS=, read -r -a fms <<<"${LLM_FALLBACK_MODEL:-}"
+  for i in ${fs[@]+"${!fs[@]}"}; do
+    [ "${fs[$i]}" = ollama ] || { fb+=("${fs[$i]}"); fbm+=("${fms[$i]:-}"); }
+  done
   # the people's passwords: its own, not the documented ones (made once, kept
   # in .lab/aws/passwords.env)
   local pw="$AWS_DIR/passwords.env" u
@@ -185,7 +188,8 @@ sync_lab() {
     echo "LAB_LISTEN_ADDRESS=0.0.0.0"
     echo "LAB_CERT_ISSUER=letsencrypt"
     [ -n "$p" ] && echo "LLM_PROVIDER=$p"
-    echo "LLM_FALLBACK=$fb"
+    echo "LLM_FALLBACK=$(IFS=,; echo "${fb[*]:-}")"
+    echo "LLM_FALLBACK_MODEL=$(IFS=,; echo "${fbm[*]:-}")"
     cat "$pw"
     [ -n "${AWS_ENV:-}" ] && printf '%s\n' "$AWS_ENV"
     [ -f "$AWS_DIR/env" ] && cat "$AWS_DIR/env"
