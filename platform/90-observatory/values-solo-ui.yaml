@@ -29,6 +29,8 @@ ui:
   publicUrl: https://kagent.${SV_DOMAIN}
   frontend:
     oidc: {clientId: kagent-ui}
+    # the product switcher between kagent, agentgateway and Istio
+    extraEnvs: {NODE_ENV: {value: development}}
   # the confidential client kagent's controller trusts too
   backend:
     oidc: {clientId: kagent, secretRef: solo-ui-oidc}
