@@ -351,6 +351,21 @@ refresh_no_internet() {
     | [.metadata.namespace, .metadata.name, (.spec.podSelector | tojson)] | @tsv' |
   while IFS=$'\t' read -r ns name sel; do _no_internet "$ns" "$name" "$sel"; echo "$ns/$name"; done
 }
+# rejoin_valkey: Agent Substrate's valkey cluster keeps its peers' pod
+# addresses; pods that come back with new ones leave it in cluster_state:fail.
+# Introduce every member at its address now (slots and data stay).
+rejoin_valkey() {
+  local i ip ips=""
+  K get statefulset -n ate-system valkey-cluster >/dev/null 2>&1 || return 0
+  K exec -n ate-system valkey-cluster-0 -- valkey-cli cluster info 2>/dev/null | grep -q '^cluster_state:ok' && return 0
+  for i in $(seq 0 $(( $(K get statefulset -n ate-system valkey-cluster -o jsonpath='{.spec.replicas}') - 1 ))); do
+    ips="$ips $(K get pod -n ate-system "valkey-cluster-$i" -o jsonpath='{.status.podIP}')"
+  done
+  for i in $(seq 0 $(( $(echo $ips | wc -w) - 1 ))); do
+    for ip in $ips; do K exec -n ate-system "valkey-cluster-$i" -- valkey-cli cluster meet "$ip" 6379 >/dev/null; done
+  done
+  wait_for "valkey cluster_state:ok" 30 3 sh -c "kubectl --context $KCTX exec -n ate-system valkey-cluster-0 -- valkey-cli cluster info 2>/dev/null | grep -q '^cluster_state:ok'"
+}
 _no_internet() {  # _no_internet <ns> <policy name> <podSelector>
   local pods svcs api nodes cfg
   cfg=$(K -n kube-system get cm kubeadm-config -o jsonpath='{.data.ClusterConfiguration}')
