@@ -27,7 +27,7 @@ An IdP without an issuer is left out of the chain.
 | `gluu,auth0,keycloak,contingency` | `gluu` | `gluu` | Gluu (passkey) | S&V's Gluu | Ledgerline's Gluu |
 | `okta,keycloak` | `keycloak` | `broker` | Okta | S&V's broker | Ledgerline's Keycloak |
 | `okta,keycloak` (experimental) | `auth0` | `okta` | Okta | Okta | Ledgerline's Auth0 |
-| `okta,gluu,keycloak,contingency` (experimental) | `descope` | `okta` | Okta | Okta | Ledgerline's Descope |
+| `okta,keycloak,contingency` (experimental) | `descope` | `okta` | Okta | Okta | Ledgerline's Descope |
 | `ping,keycloak,contingency` | `keycloak` | `broker` | Ping | S&V's broker | Ledgerline's Keycloak |
 
 After a failover Bob signs in at the next IdP, which vouches for that
