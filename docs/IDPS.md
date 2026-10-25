@@ -27,7 +27,8 @@ An IdP without an issuer is left out of the chain.
 | `gluu,auth0,keycloak,contingency` | `gluu` | `gluu` | Gluu (passkey) | S&V's Gluu | Ledgerline's Gluu |
 | `okta,keycloak` | `keycloak` | `broker` | Okta | S&V's broker | Ledgerline's Keycloak |
 | `okta,keycloak` (experimental) | `auth0` | `okta` | Okta | Okta | Ledgerline's Auth0 |
-| `okta,keycloak,contingency` (experimental) | `descope` | `okta` | Okta | Okta | Ledgerline's Descope |
+| `okta,gluu,keycloak,contingency` | `descope` | `okta` | Okta | Okta | Ledgerline's Descope |
+| `okta,keycloak,contingency` | `descope` | `okta` | Okta | Okta | Ledgerline's Descope |
 | `ping,keycloak,contingency` | `keycloak` | `broker` | Ping | S&V's broker | Ledgerline's Keycloak |
 
 After a failover Bob signs in at the next IdP, which vouches for that
@@ -322,7 +323,7 @@ OKTA_CLIENT_ID=<S&V's client there>
   directory type for it. As the primary, Okta provisions no broker accounts;
   as a failover, it receives no attributes.
 
-### Okta vouches (experimental)
+### Okta vouches
 
 `XAA_VOUCHER=okta` ([An IdP that vouches](#an-idp-that-vouches)). Okta's org
 authorization server issues ID-JAGs (Cross App Access), so `OKTA_ISSUER` is
@@ -440,7 +441,7 @@ LEDGERLINE_AUTH0_CLIENT_ID=<S&V's client there>
 
 The issuer ends in `/`, as Auth0's discovery states it.
 
-### Descope as Ledgerline's AS (experimental)
+### Descope as Ledgerline's AS
 
 Descope redeems ID-JAGs from any IdP it trusts (Okta, with
 `XAA_VOUCHER=okta`, or another).

@@ -294,8 +294,8 @@ Three settings in `config/lab.env` (`scripts/idp.sh`):
 | Setting | Values | Decides |
 | --- | --- | --- |
 | `ENTERPRISE_IDP` | `auth0,keycloak,contingency` (default), `gluu,auth0,keycloak,contingency`, `okta,keycloak`, ...; any order | S&V's IdPs, which sign Bob in, in failover order ([IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md)); `keycloak` is the Keycloak S&V runs itself (`https://login.sterling.lab`) |
-| `RESOURCE_AS` | `keycloak` (default), `gluu`, `auth0` or `descope` (experimental), any name with `LEDGERLINE_<NAME>_ISSUER` | Ledgerline's authorization server |
-| `XAA_VOUCHER` | `broker` (default), or IdPs in `ENTERPRISE_IDP` that issue ID-JAGs, comma-separated (`gluu`; `okta`, experimental) | who vouches for Bob to Ledgerline (issues the ID-JAG), per session |
+| `RESOURCE_AS` | `keycloak` (default), `gluu`, `auth0` (experimental) or `descope`, any name with `LEDGERLINE_<NAME>_ISSUER` | Ledgerline's authorization server |
+| `XAA_VOUCHER` | `broker` (default), or IdPs in `ENTERPRISE_IDP` that issue ID-JAGs, comma-separated (`gluu`, `okta`) | who vouches for Bob to Ledgerline (issues the ID-JAG), per session |
 
 Each is configured by name ([IDPS.md](IDPS.md)).
 
