@@ -46,8 +46,8 @@ routes: ## where sign-ins go now: each routing rule's IdP, and where sample sign
 	@./scripts/routes.sh
 xaa-keys: ## public keys other parties register: S&V clients (private_key_jwt), S&V IdP, Ledgerline SSO client
 	@./scripts/xaa-keys.sh
-heal: ## after the nodes restart (Docker restarted, an instance stopped and started): no-internet policies follow the API server, Substrate's valkey rejoins
-	@bash -c '. scripts/lib.sh && need_cluster && refresh_no_internet && rejoin_valkey'
+heal: ## after the nodes restart (Docker restarted, an instance stopped and started): no-internet policies follow the API server, Substrate's valkey rejoins, its workers register again, S&V's broker gets its groups back
+	@bash -c '. scripts/lib.sh && need_cluster && refresh_no_internet && rejoin_valkey && restart_workers && restore_broker_groups'
 totp: ## one-time code for signing in at S&V's own Keycloak as bob (or: make totp EMPLOYEE=carol)
 	@bash -c '. scripts/lib.sh && totp_code $(or $(EMPLOYEE),bob)'
 upstream-mcp: ## an outside MCP server at the front door, signed in at its own AS (Enterprise): make upstream-mcp NAME=x URL=https://... AS=https://... SCOPES="a b"

@@ -366,6 +366,31 @@ rejoin_valkey() {
   done
   wait_for "valkey cluster_state:ok" 30 3 sh -c "kubectl --context $KCTX exec -n ate-system valkey-cluster-0 -- valkey-cli cluster info 2>/dev/null | grep -q '^cluster_state:ok'"
 }
+# restore_broker_groups: S&V's broker starts from its realm file, without the
+# profile's groups (the directory sync creates them). The IdPs' group mappers
+# map nothing until they exist, and tokens carry no groups.
+restore_broker_groups() {
+  local g
+  K get identitycontinuity sterling-vance -n sv-identity >/dev/null 2>&1 || return 0
+  for g in $(K get identitycontinuity sterling-vance -n sv-identity -o json | jq -r '.spec.profile.groups[]?'); do
+    kc_admin sv-identity SV_KC_ADMIN_PASSWORD sterling-vance POST /groups -H content-type:application/json \
+      --data "$(jq -nc --arg n "$g" '{name: $n}')" -o /dev/null -w '%{http_code}' | grep -qE '^(201|409)$' \
+      || die "group $g at S&V's broker"
+  done
+}
+# restart_workers: Substrate's worker pods register their address once, when
+# they start. A pod whose containers came back in place (the nodes restarted)
+# has a new address under its old registration, and actors routed to it hang:
+# its Deployment rolls, and the new pods register again.
+restart_workers() {
+  local d
+  for d in $(K get pods -A -l ate.dev/worker-pool -o json | jq -r '.items[]
+      | select(any(.status.containerStatuses[]?; .restartCount > 0))
+      | .metadata as $m | $m.namespace + "/" + ($m.ownerReferences[0].name | sub("-" + $m.labels["pod-template-hash"] + "$"; ""))' 2>/dev/null | sort -u); do
+    K rollout restart -n "${d%/*}" deployment "${d#*/}" >/dev/null && K rollout status -n "${d%/*}" deployment "${d#*/}" --timeout=180s >/dev/null \
+      && ok "worker pool ${d#*/} registered again"
+  done
+}
 _no_internet() {  # _no_internet <ns> <policy name> <podSelector>
   local pods svcs api nodes cfg
   cfg=$(K -n kube-system get cm kubeadm-config -o jsonpath='{.data.ClusterConfiguration}')
