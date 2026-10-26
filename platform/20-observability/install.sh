@@ -24,7 +24,7 @@ values_for "$D" otel-collector "$ISTIO_EDITION"
 # Datadog, only when .env has its key: a copy of everything to its intake
 if [ -n "${DATADOG_API_KEY:-}" ]; then
   export DATADOG_SITE=${DATADOG_SITE:-datadoghq.com} DATADOG_ENV=${DATADOG_ENV:-lab}
-  export DATADOG_KEY_ID=$(printf '%s' "$DATADOG_API_KEY" | sha256 | cut -c1-12)
+  DATADOG_KEY_ID=$(printf '%s' "$DATADOG_API_KEY" | sha256 | cut -c1-12); export DATADOG_KEY_ID
   K apply -f "$D/../00-foundation/namespaces.yaml" >/dev/null   # observability-egress, on a lab from before it
   secret_apply "$NS" datadog api-key="$DATADOG_API_KEY"
   apply_tmpl "$D/datadog.yaml"
