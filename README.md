@@ -41,6 +41,7 @@ apps through agentgateway to every IdP the firm owns, in failover order.
 | Agents acting for people | Bob's agent never holds a token an MCP server accepts. The gateway mints one per call, enforces per-tool policy, and reaches a SaaS with Cross App Access (ID-JAG). | [bob](docs/cards/bob.html) |
 | A client's data, on her terms | The same agent asks Alice. She approves each new tier and can deny a trade ([UMA for agents](https://u4a.ai)). | [bob to alice](docs/cards/bob-to-alice.html) |
 | Models | Provider failover, prompt guards, masking, budgets and per-call cost, at the same gateway. | [Model Continuity](docs/OBSERVATORY.md#model-continuity) |
+| Datadog | Optional, one API key: the lab's traces, model calls, metrics and logs in Datadog APM, LLM Observability, Metrics and Logs, over OpenTelemetry. | [DATADOG.md](docs/DATADOG.md) |
 
 Each card is a two-screen demo script. Open it in a browser (`open docs/cards/<card>.html`).
 
@@ -71,7 +72,7 @@ OS is in [SETUP.md](docs/SETUP.md#requirements).
 
 ```bash
 git clone https://github.com/nickgamb/solo-lab && cd solo-lab
-cp .env.example .env      # optional: model provider, keys, IdPs, Solo Enterprise
+cp .env.example .env      # optional: model provider, keys, IdPs, Solo Enterprise, Datadog
 make machine-setup        # once per machine, sudo: *.lab DNS and the lab CA
 make up                   # cluster, platform and every demo: ~30 min cold, ~17 GB
 make status               # pods, the active IdP, URLs and sign-ins
@@ -145,6 +146,7 @@ More in [OBSERVATORY.md](docs/OBSERVATORY.md), and the
 | [IDENTITY-CONTINUITY.md](docs/IDENTITY-CONTINUITY.md) | the IdP chain, the IdentityContinuity API, directory sync, trust across IdPs, assurance rules, the kill switch |
 | [OBSERVATORY.md](docs/OBSERVATORY.md) | the Observatory's tabs, how it builds its map, its access model |
 | [COMMANDS.md](docs/COMMANDS.md) | terminal commands for every part of the running lab |
+| [DATADOG.md](docs/DATADOG.md) | sending the lab's telemetry to Datadog: APM, LLM Observability, logs and metrics |
 | [ENTERPRISE.md](docs/ENTERPRISE.md) | switching products to Solo Enterprise |
 | [IDPS.md](docs/IDPS.md) | adding Auth0, Gluu, Okta, Ping or any OIDC IdP; Ledgerline's authorization server |
 | [GLUU.md](docs/GLUU.md) | Gluu as S&V's IdP and Ledgerline's authorization server |

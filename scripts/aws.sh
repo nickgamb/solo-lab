@@ -190,6 +190,7 @@ sync_lab() {
     [ -n "$p" ] && echo "LLM_PROVIDER=$p"
     echo "LLM_FALLBACK=$(IFS=,; echo "${fb[*]:-}")"
     echo "LLM_FALLBACK_MODEL=$(IFS=,; echo "${fbm[*]:-}")"
+    [ -n "${DATADOG_API_KEY:-}" ] && echo "DATADOG_ENV=${DATADOG_ENV:-aws}"
     cat "$pw"
     [ -n "${AWS_ENV:-}" ] && printf '%s\n' "$AWS_ENV"
     [ -f "$AWS_DIR/env" ] && cat "$AWS_DIR/env"
