@@ -9,7 +9,7 @@ No Datadog Agent, no `ddtrace` and no change to any workload.
 
 | In Datadog | From the lab |
 | --- | --- |
-| **LLM Observability**, app `solo-lab` | every model call through the ai-gateway (model, provider, input and output tokens, latency), and kagent's agent runs with the MCP tool calls in the same trace |
+| **LLM Observability** | every model call through the ai-gateway (model, provider, input and output tokens, latency): direct calls under the app `ai-gateway`, agent runs under `kagent-controller` |
 | **APM**, env `lab` | traces under each component's own service: `ai-gateway`, `kagent-controller` and Agent Substrate (`ateapi`) |
 | **Logs** | the gateways' access logs (who called what, with which identity claims) and the components' own logs |
 | **Metrics** | the OTLP metrics the gateways, kagent and Agent Substrate report |
@@ -36,8 +36,7 @@ No Datadog Agent, no `ddtrace` and no change to any workload.
    DATADOG_API_KEY=<your API key>
    DATADOG_SITE=datadoghq.com
    # optional
-   DATADOG_ENV=lab               # APM's env tag
-   DATADOG_LLMOBS_APP=solo-lab   # the app name in LLM Observability
+   DATADOG_ENV=lab               # the env tag on everything the lab sends
    ```
 
 4. **Apply.** A lab that's running takes it with:
@@ -47,7 +46,7 @@ No Datadog Agent, no `ddtrace` and no change to any workload.
    ```
 
    `make up` picks it up when it builds a lab. The line
-   `✓ Datadog (datadoghq.com): APM, LLM Observability as solo-lab, metrics and logs; env lab`
+   `✓ Datadog (datadoghq.com): APM, LLM Observability, metrics and logs; env lab`
    confirms it.
 
 5. **Make a model call.** Chat with an agent in kagent, run `make tour`, or
@@ -60,16 +59,16 @@ No Datadog Agent, no `ddtrace` and no change to any workload.
      -d '{"model": "any", "max_tokens": 200, "messages": [{"role": "user", "content": "Hello from solo-lab"}]}'
    ```
 
-   Model calls show in LLM Observability within a few minutes. On its setup
-   page ("Instrument your application"), enter the app name (`solo-lab`)
-   and skip the `ddtrace` steps: the lab already sends the traces, and the
-   page moves on once the first call arrives.
+   Traces show in APM at once, and model calls in LLM Observability within
+   about five minutes. Datadog's setup pages (LLM Observability's
+   "Instrument your application", the Agent install) aren't needed: the lab
+   already sends everything. Go straight to the pages below.
 
 ## Where to look
 
 | Datadog | What to open |
 | --- | --- |
-| LLM Observability → Traces | app `solo-lab`: each model call and agent run, with tokens per call |
+| LLM Observability → Traces | `env:lab`: each model call, with its model, provider and tokens; app `ai-gateway` or `kagent-controller` |
 | APM → Services | `ai-gateway` and `kagent-controller` (env `lab`), then a trace from Bob's agent end to end |
 | APM → Service Map | kagent calling the ai-gateway, and Agent Substrate |
 | Logs → Explorer | the gateways' access logs: model and MCP requests, with the caller's identity |
@@ -84,11 +83,12 @@ gateways, kagent, Agent Substrate ──OTLP──▶ otel-collector (observabil
 ```
 
 - **Collector.** `platform/20-observability/otel-collector-datadog.yaml`
-  adds pipelines of their own beside the lab's: traces to APM; the same
-  traces to LLM Observability (header `dd-otlp-source: llmobs`, the service
-  name set to `DATADOG_LLMOBS_APP`, each span's own kept as
-  `lab.service.name`); metrics as deltas; logs. The gateways' GenAI spans
-  follow the OpenTelemetry GenAI conventions, which LLM Observability reads.
+  adds pipelines of their own beside the lab's: traces, metrics (as deltas)
+  and logs. Traces carry `dd_llmobs_enabled=true`, so Datadog also turns
+  their GenAI spans into LLM Observability spans; one copy, no duplicates.
+  The gateway's spans follow the OpenTelemetry GenAI conventions (1.37+),
+  which LLM Observability reads, and each trace's app is the service of its
+  first span.
 - **Egress.** `observability` has no internet. The collector reaches
   Datadog through its own egress waypoint (`platform/20-observability/datadog.yaml`):
   one ServiceEntry for `otlp.<DATADOG_SITE>`, which only the collector may

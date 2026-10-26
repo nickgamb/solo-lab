@@ -287,8 +287,7 @@ pipelines of its own beside the ones above:
 
 | Signal | In Datadog |
 | --- | --- |
-| traces | APM, each component under its own service, env `DATADOG_ENV` |
-| the same traces | LLM Observability, as the ML app `DATADOG_LLMOBS_APP`: the ai-gateway's and kagent's GenAI spans (model, provider, tokens) with the tool calls around them |
+| traces | APM, each component under its own service, env `DATADOG_ENV`; their GenAI spans (model, provider, tokens) also in LLM Observability |
 | metrics | Metrics, as deltas |
 | logs | Logs: the gateways' access logs and the components' own |
 

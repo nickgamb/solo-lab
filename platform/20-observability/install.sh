@@ -23,8 +23,7 @@ step "OpenTelemetry Collector $OTEL_COLLECTOR_VERSION"
 values_for "$D" otel-collector "$ISTIO_EDITION"
 # Datadog, only when .env has its key: a copy of everything to its intake
 if [ -n "${DATADOG_API_KEY:-}" ]; then
-  export DATADOG_SITE=${DATADOG_SITE:-datadoghq.com} DATADOG_ENV=${DATADOG_ENV:-lab} \
-    DATADOG_LLMOBS_APP=${DATADOG_LLMOBS_APP:-solo-lab}
+  export DATADOG_SITE=${DATADOG_SITE:-datadoghq.com} DATADOG_ENV=${DATADOG_ENV:-lab}
   export DATADOG_KEY_ID=$(printf '%s' "$DATADOG_API_KEY" | sha256 | cut -c1-12)
   K apply -f "$D/../00-foundation/namespaces.yaml" >/dev/null   # observability-egress, on a lab from before it
   secret_apply "$NS" datadog api-key="$DATADOG_API_KEY"
@@ -36,7 +35,7 @@ fi
 helm_up otel-collector opentelemetry-collector "$OTEL_COLLECTOR_VERSION" $NS \
   --repo https://open-telemetry.github.io/opentelemetry-helm-charts ${VALS[@]+"${VALS[@]}"}
 if [ -n "${DATADOG_API_KEY:-}" ]; then
-  ok "Datadog ($DATADOG_SITE): APM, LLM Observability as $DATADOG_LLMOBS_APP, metrics and logs; env $DATADOG_ENV"
+  ok "Datadog ($DATADOG_SITE): APM, LLM Observability, metrics and logs; env $DATADOG_ENV"
 else
   # a key removed: the collector no longer sends, so its way out goes too
   K delete gateway.gateway.networking.k8s.io,serviceentry,authorizationpolicy,peerauthentication \
