@@ -9,7 +9,7 @@ internet, and mesh identity enforces it
 
 | Party | Role in the stories | Domain | Namespaces |
 | --- | --- | --- | --- |
-| **Platform** | the "cloud": mesh, edge, telemetry, substrate, and the Observatory | `ops.lab` | `istio-system` `kgateway-system` `observability` `kiali` `ate-system` `cert-manager` `cnpg-system` `observatory` `ops-identity` |
+| **Platform** | the "cloud": mesh, edge, telemetry, substrate, and the Observatory | `ops.lab` | `istio-system` `kgateway-system` `observability` `observability-egress` `kiali` `ate-system` `cert-manager` `cnpg-system` `observatory` `ops-identity` |
 | **Sterling & Vance** | Bob's firm. Runs the Solo AI platform (kagent, agentgateway, agentregistry) for its advisors | `sterling.lab` | `sv-identity` `sv-workforce` `sv-contingency` `sv-egress` `kagent` `agentgateway-system` `agentregistry` `sv-agents` `sv-mcp` `sv-u4a` |
 | **Alice** | resource owner. Her authorization server, her portal, her IdP | `alice.lab` | `alice` `alice-identity` |
 | **Meridian Wealth** | Alice's brokerage. Holds her account, enforces her terms, can never read them | `meridian.lab` | `meridian` |
@@ -40,6 +40,7 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | `observatory` | Observatory (reads the cluster; writes only by impersonating the signed-in admin; reads Substrate status from kagent as its own S&V service account) | `observatory` | platform | edge (UI/API); otel-collector (OTLP logs) |
 | `ops-identity` | Keycloak `ops` (platform admins, for the Observatory) | `keycloak` | platform | edge (the realm only); the Observatory (JWKS) |
 | `observability` | otel-collector, Prometheus, Tempo, Grafana | one SA per component | platform | collector: the components that report telemetry, by ServiceAccount; Prometheus: the collector, Tempo, Grafana, Kiali, the Observatory; Tempo: the collector, Grafana, Kiali; Grafana: edge (after sign-in), Kiali, Prometheus |
+| `observability-egress` | `egress-waypoint` (Istio waypoint for Datadog's OTLP intake, when a Datadog key is set) | `egress-waypoint` | platform | otel-collector only |
 | `kiali` | Kiali (view-only) | `kiali` | platform | edge (after sign-in); Prometheus (metrics) |
 | `sv-identity` | Keycloak `sterling-vance` (S&V's broker) | `keycloak` | S&V | edge (the realm only); S&V gateways/apps (JWKS, token exchange) and, on OSS, `bob-workspace` (JWKS); continuity-controller and continuity-sync (admin API) |
 | `sv-identity` | `continuity-controller` (2 replicas, leader-elected) | `continuity-controller` | S&V | nobody (calls out only) |
@@ -209,7 +210,7 @@ metrics ports). In `agentgateway-system`, where the ai-gateway reaches the
 model providers, `mcp-guard`, `relationship-guard` and `idtoken-exchange` have their own
 (`no-internet-<app>`). The ways out are the gateways built for it:
 ai-gateway (models, Cross App Access), `sv-egress/egress-waypoint` (S&V's
-upstream IdPs) and `ledgerline-egress/egress-waypoint` (the keys of
+upstream IdPs), `observability-egress/egress-waypoint` (Datadog, when set) and `ledgerline-egress/egress-waypoint` (the keys of
 Ledgerline's AS outside the lab). Istio ambient doesn't enforce
 `outboundTrafficPolicy`, so the CNI (kindnet) does. `ate-system` keeps its
 egress because atelet pulls the actors' images itself.
@@ -279,6 +280,22 @@ kube-state-metrics are fenced the same way. Kiali runs in the mesh in its own
 `kiali` namespace, because istio-cni excludes `istio-system` and a workload
 there has no identity to be named by. The Observatory derives its map from
 the cluster's own objects ([OBSERVATORY.md](OBSERVATORY.md)).
+
+**Datadog.** With `DATADOG_API_KEY` in `.env`, the collector also sends
+everything it takes to Datadog's OTLP intake (`otlp.<DATADOG_SITE>`), in
+pipelines of its own beside the ones above:
+
+| Signal | In Datadog |
+| --- | --- |
+| traces | APM, each component under its own service, env `DATADOG_ENV` |
+| the same traces | LLM Observability, as the ML app `DATADOG_LLMOBS_APP`: the ai-gateway's and kagent's GenAI spans (model, provider, tokens) with the tool calls around them |
+| metrics | Metrics, as deltas |
+| logs | Logs: the gateways' access logs and the components' own |
+
+The collector reaches the intake through `observability-egress/egress-waypoint`,
+one ServiceEntry that only the collector may use; the key is a Secret in
+`observability`. Setting it up and what to open in Datadog:
+[DATADOG.md](DATADOG.md).
 
 ## What the lab doesn't enforce
 
@@ -406,7 +423,7 @@ installs every story, so any card runs in any order on the same lab.
 ```
 00-foundation   Gateway API, metrics-server, cert-manager, trust-manager, lab CA, namespaces (party and Pod Security labels), CoreDNS *.lab -> edge
 10-istio        ambient: base, istiod (HA), cni, ztunnel
-20-observability kube-prometheus-stack, Tempo, OTel collector, Kiali
+20-observability kube-prometheus-stack, Tempo, OTel collector, Kiali; Datadog export when its key is set
 30-kgateway     edge (HA, pinned NodePorts, per-party TLS listeners)
 40-agentgateway ai-gateway (HA, mesh-native), LLM backend (make llm), on Enterprise the STS for MCP servers' tokens and Solo's ext-auth service replicated
 45-identity     S&V's mesh baseline, S&V's broker (Keycloak, idp.sterling.lab, patched for ID-JAG, with the session-claims mapper), S&V's own Keycloak (login.sterling.lab, realm workforce), its contingency IdP (login-dr.sterling.lab), client secrets for S&V components

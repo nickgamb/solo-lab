@@ -1,0 +1,59 @@
+# Datadog, when DATADOG_API_KEY is set (install.sh): everything the collector
+# takes also goes to Datadog's OTLP intake, through observability-egress
+# (datadog.yaml). Tempo, Prometheus, the Observatory and the Solo UI keep
+# theirs: these are pipelines of their own on the same receivers.
+#   traces         -> APM, each component under its own service
+#   traces/llmobs  -> LLM Observability, as the ML app ${DATADOG_LLMOBS_APP}
+#                     (the gateways' and kagent's GenAI spans; Datadog keeps
+#                     the traces that have them)
+#   metrics        -> Metrics (as deltas, which Datadog's intake takes)
+#   logs           -> Logs: the gateways' access logs and every component's
+extraEnvs:
+- name: DD_API_KEY
+  valueFrom: {secretKeyRef: {name: datadog, key: api-key}}
+# a new key restarts the collector
+podAnnotations: {lab.solo.io/datadog-key: "${DATADOG_KEY_ID}"}
+config:
+  processors:
+    resource/datadog:
+      attributes:
+      - {key: deployment.environment.name, value: "${DATADOG_ENV}", action: upsert}
+    # the ML app is the root span's service; each span keeps its own as a tag
+    transform/llmobs:
+      trace_statements:
+      - context: resource
+        statements:
+        - set(attributes["lab.service.name"], attributes["service.name"])
+        - set(attributes["service.name"], "${DATADOG_LLMOBS_APP}")
+    cumulative_to_delta: {}
+  exporters:
+    otlphttp/datadog:
+      endpoint: https://otlp.${DATADOG_SITE}
+      headers:
+        dd-api-key: ${env:DD_API_KEY}
+        dd-otel-metric-config: '{"resource_attributes_as_tags": true, "instrumentation_scope_metadata_as_tags": true}'
+      retry_on_failure: {enabled: true, max_elapsed_time: 60s}
+    otlphttp/datadog-llmobs:
+      endpoint: https://otlp.${DATADOG_SITE}
+      headers:
+        dd-api-key: ${env:DD_API_KEY}
+        dd-otlp-source: llmobs
+      retry_on_failure: {enabled: true, max_elapsed_time: 60s}
+  service:
+    pipelines:
+      traces/datadog:
+        receivers: [otlp]
+        processors: [memory_limiter, k8sattributes, resource/datadog, batch]
+        exporters: [otlphttp/datadog]
+      traces/llmobs:
+        receivers: [otlp]
+        processors: [memory_limiter, resource/datadog, transform/llmobs, batch]
+        exporters: [otlphttp/datadog-llmobs]
+      metrics/datadog:
+        receivers: [otlp]
+        processors: [memory_limiter, k8sattributes, resource/datadog, cumulative_to_delta, batch]
+        exporters: [otlphttp/datadog]
+      logs/datadog:
+        receivers: [otlp, otlp/access]
+        processors: [memory_limiter, k8sattributes, resource/datadog, batch]
+        exporters: [otlphttp/datadog]

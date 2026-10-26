@@ -95,6 +95,7 @@ admin consoles are off the edge; reach them with a port-forward
 | `OLLAMA_MODEL`, `OLLAMA_URL` | the local model and where the cluster reaches it |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL` | hosted models (held by agentgateway only) |
 | `BEDROCK_API_KEY` or `BEDROCK_AWS_ACCESS_KEY_ID`, `BEDROCK_AWS_SECRET_ACCESS_KEY`, `BEDROCK_AWS_SESSION_TOKEN`; `BEDROCK_MODEL`, `BEDROCK_REGION` | Amazon Bedrock (held by agentgateway only) |
+| `DATADOG_API_KEY`; `DATADOG_SITE`, `DATADOG_ENV`, `DATADOG_LLMOBS_APP` | a copy of the lab's telemetry to Datadog (site `datadoghq.com`, env `lab`, LLM Observability app `solo-lab` by default); apply with `make layer-20` ([DATADOG.md](DATADOG.md)) |
 | `ENTERPRISE_IDP` | S&V's IdPs, who sign Bob in, by name in failover order (default `auth0,keycloak,contingency`). An IdP without an issuer is left out, so a fresh clone starts on S&V's own Keycloak ([IDPS.md](IDPS.md)) |
 | `<NAME>_ISSUER`, `<NAME>_CLIENT_ID`, `<NAME>_CLIENT_SECRET` | each IdP in the chain (`auth0`, `gluu`, `okta`, `ping`, any other); without a secret S&V authenticates with its keys (`make xaa-keys`). `keycloak` and `contingency` default to S&V's own at `login.sterling.lab` and `login-dr.sterling.lab` |
 | `<NAME>_DIRECTORY_*`, `<NAME>_GROUPS_CLAIM`, `<NAME>_ASSURANCE`, ... | the rest of an IdP's settings ([IDPS.md](IDPS.md#settings)) |

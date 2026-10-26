@@ -231,7 +231,8 @@ The kill switch itself is in [IDENTITY-CONTINUITY.md](IDENTITY-CONTINUITY.md#kil
 | --- | --- |
 | `kubectl --context kind-solo-lab -n observability port-forward svc/kps-prometheus 19090:9090` | Prometheus at http://127.0.0.1:19090 |
 | `curl -s --get http://127.0.0.1:19090/api/v1/query --data-urlencode 'query=sum by (source_principal,destination_workload) (istio_tcp_connections_opened_total{reporter="destination"})' \| jq '.data.result[] \| [.metric.source_principal, .metric.destination_workload, .value[1]]'` | who has connected to what, by SPIFFE identity |
-| `kubectl --context kind-solo-lab -n observability logs deploy/otel-collector --since=5m \| grep -i "exporting failed"` | the collector failing to deliver (to the Observatory, Tempo or Prometheus) |
+| `kubectl --context kind-solo-lab -n observability logs deploy/otel-collector --since=5m \| grep -i "exporting failed"` | the collector failing to deliver (to the Observatory, Tempo, Prometheus or Datadog) |
+| `kubectl --context kind-solo-lab -n observability-egress get serviceentry,gateway,pods` | the collector's way out to Datadog, when a Datadog key is set ([DATADOG.md](DATADOG.md)) |
 | `kubectl --context kind-solo-lab -n observatory logs deploy/observatory -f` | the Observatory's server |
 | `kubectl --context kind-solo-lab auth can-i --list --as=system:serviceaccount:observatory:observatory` | what the Observatory's service account may do |
 | `kubectl --context kind-solo-lab auth can-i --list --as=observatory:admin --as-group=observatory:observatory-admins -n sv-identity` | what the Observatory's admins may do in a namespace |

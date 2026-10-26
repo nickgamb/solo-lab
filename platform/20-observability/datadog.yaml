@@ -1,0 +1,40 @@
+# Datadog (on when DATADOG_API_KEY is set): the collector's way out. Its own
+# egress waypoint and one ServiceEntry, Datadog's OTLP intake for the site;
+# only the collector may use it. observability itself has no internet.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: egress-waypoint
+  namespace: observability-egress
+  labels: {istio.io/waypoint-for: service}
+spec:
+  gatewayClassName: istio-waypoint
+  listeners:
+  - {name: mesh, port: 15008, protocol: HBONE}
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: strict, namespace: observability-egress}
+spec: {mtls: {mode: STRICT}}
+---
+apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: datadog-otlp
+  namespace: observability-egress
+  labels: {istio.io/use-waypoint: egress-waypoint}
+spec:
+  hosts: [otlp.${DATADOG_SITE}]
+  exportTo: [., observability]
+  location: MESH_EXTERNAL
+  resolution: DNS
+  ports: [{name: tls, number: 443, protocol: TLS}]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: egress-callers, namespace: observability-egress}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: egress-waypoint}]
+  action: ALLOW
+  rules:
+  - from: [{source: {principals: [cluster.local/ns/observability/sa/otel-collector]}}]
