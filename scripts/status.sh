@@ -21,6 +21,7 @@ row() { printf '  %-36s %-22s %s\n' "$@"; }
 row "https://observatory.$OPS_DOMAIN" "Observatory" "ops / $(password_hint ops) (realm ops)"
 row "https://grafana.$OPS_DOMAIN" "Grafana" "ops / $(password_hint ops) (realm ops)"
 row "https://kiali.$OPS_DOMAIN" "Kiali (view-only)" "ops / $(password_hint ops) (realm ops)"
+agentshield_on && row "https://agentshield.$OPS_DOMAIN" "Agentshield" "ops / $(password_hint ops) (realm ops)"
 [ -n "${ISTIO_UI_CHART:-}" ] && row "https://mesh.$OPS_DOMAIN" "Solo Enterprise for Istio UI" "ops / $(password_hint ops) (realm ops)"
 row "https://kagent.$SV_DOMAIN" "kagent" "Bob at S&V's active IdP (bob / $(password_hint bob) at login.$SV_DOMAIN)"
 row "https://registry.$SV_DOMAIN" "agentregistry" "S&V sign-in (bob or ops)"

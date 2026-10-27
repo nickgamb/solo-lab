@@ -1,0 +1,78 @@
+From 81c46d74123cc476ac1137a76b7272e2129241a6 Mon Sep 17 00:00:00 2001
+From: Nick Gamb <nickgamb@gmail.com>
+Date: Tue, 27 Oct 2026 09:00:40 -0700
+Subject: [PATCH 3/3] reasoning: portable JSON schemas on the Responses API
+
+An OpenAI Responses-compatible endpoint can be a gateway in front of
+Anthropic's models, whose structured outputs reject maxItems, string
+lengths and numeric bounds: every agentic investigation failed there
+with a 400 ("For 'array' type, property 'maxItems' is not supported").
+
+The investigation's text format now gets the schema the Anthropic
+provider already sends: those keywords move into descriptions, and the
+validator enforces each one after generation, as it already did.
+---
+ pkg/reasoning/model.go            |  7 +++++++
+ pkg/reasoning/text_format_test.go | 31 +++++++++++++++++++++++++++++++
+ 2 files changed, 38 insertions(+)
+ create mode 100644 pkg/reasoning/text_format_test.go
+
+diff --git a/pkg/reasoning/model.go b/pkg/reasoning/model.go
+index 0e24d1a..0ba5a6e 100644
+--- a/pkg/reasoning/model.go
++++ b/pkg/reasoning/model.go
+@@ -418,7 +418,14 @@ func (client Client) callResponses(ctx context.Context, body map[string]any) (re
+ 	return reply, nil
+ }
+ 
++// jsonSchemaTextFormat asks for an answer in schema, without the keywords
++// some providers' structured outputs reject: a Responses endpoint may be a
++// gateway in front of Anthropic's models. They move into descriptions, as for
++// the Anthropic provider, and the validator enforces each after generation.
+ func jsonSchemaTextFormat(name string, schema map[string]any) map[string]any {
++	if portable, err := anthropicSchema(schema); err == nil {
++		schema = portable
++	}
+ 	return map[string]any{"format": map[string]any{"type": "json_schema", "name": name, "strict": true, "schema": schema}}
+ }
+ 
+diff --git a/pkg/reasoning/text_format_test.go b/pkg/reasoning/text_format_test.go
+new file mode 100644
+index 0000000..db46aac
+--- /dev/null
++++ b/pkg/reasoning/text_format_test.go
+@@ -0,0 +1,31 @@
++package reasoning
++
++import (
++	"encoding/json"
++	"strings"
++	"testing"
++)
++
++func TestJSONSchemaTextFormatIsPortable(t *testing.T) {
++	schema := responseSchema()
++	before, err := json.Marshal(schema)
++	if err != nil {
++		t.Fatal(err)
++	}
++	format := jsonSchemaTextFormat("assessment", schema)["format"].(map[string]any)
++	sent, err := json.Marshal(format["schema"])
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, keyword := range []string{`"maxItems"`, `"maxLength"`, `"minLength"`} {
++		if strings.Contains(string(sent), keyword) {
++			t.Fatalf("schema sent still has %s", keyword)
++		}
++	}
++	if !strings.Contains(string(sent), "enforced by the host after generation") {
++		t.Fatal("schema sent does not restate the removed constraints")
++	}
++	if after, _ := json.Marshal(schema); string(after) != string(before) {
++		t.Fatal("responseSchema was modified")
++	}
++}
+-- 
+2.55.0
+

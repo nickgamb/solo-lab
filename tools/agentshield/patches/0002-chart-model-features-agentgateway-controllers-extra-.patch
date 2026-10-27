@@ -1,0 +1,114 @@
+From c901ff58ce15ddd1a0207984f5ec98697120d017 Mon Sep 17 00:00:00 2001
+From: Nick Gamb <nickgamb@gmail.com>
+Date: Tue, 27 Oct 2026 08:47:51 -0700
+Subject: [PATCH 2/3] chart: model features, agentgateway controllers, extra
+ args and env
+
+The chart could point at a model endpoint but not turn on the features
+that use it, name the model, or select agentgateway Gateways by another
+controller. Values for each, plus extraArgs and extraEnv for the rest:
+
+  model.name, model.reasoningEffort
+  model.agenticInvestigation, model.deploymentRuleAuthoring
+  ruleReviewAPI
+  discovery.agentgateway.controllerNames, .gatewayClasses
+  extraArgs, extraEnv
+
+All default off or empty, so existing installs render unchanged.
+---
+ deploy/kubernetes/templates/deployment.yaml | 27 +++++++++++++++++++++
+ deploy/kubernetes/values.yaml               | 20 +++++++++++++++
+ 2 files changed, 47 insertions(+)
+
+diff --git a/deploy/kubernetes/templates/deployment.yaml b/deploy/kubernetes/templates/deployment.yaml
+index 7b0d795..49b5b5b 100644
+--- a/deploy/kubernetes/templates/deployment.yaml
++++ b/deploy/kubernetes/templates/deployment.yaml
+@@ -75,10 +75,34 @@ spec:
+             - {{ printf "--clickhouse-table=%s" .Values.telemetry.clickhouse.table | quote }}
+             - {{ printf "--clickhouse-username=%s" .Values.telemetry.clickhouse.username | quote }}
+             {{- end }}
++            {{- with .Values.discovery.agentgateway.controllerNames }}
++            - {{ printf "--agentgateway-controller-names=%s" (join "," .) | quote }}
++            {{- end }}
++            {{- with .Values.discovery.agentgateway.gatewayClasses }}
++            - {{ printf "--agentgateway-gateway-classes=%s" (join "," .) | quote }}
++            {{- end }}
+             {{- if .Values.model.endpoint }}
+             - {{ printf "--model-endpoint=%s" .Values.model.endpoint | quote }}
+             - {{ printf "--model-provider=%s" .Values.model.provider | quote }}
+             {{- end }}
++            {{- with .Values.model.name }}
++            - {{ printf "--model=%s" . | quote }}
++            {{- end }}
++            {{- with .Values.model.reasoningEffort }}
++            - {{ printf "--model-reasoning-effort=%s" . | quote }}
++            {{- end }}
++            {{- if .Values.model.agenticInvestigation }}
++            - --agentic-investigation
++            {{- end }}
++            {{- if .Values.model.deploymentRuleAuthoring }}
++            - --deployment-rule-authoring
++            {{- end }}
++            {{- if .Values.ruleReviewAPI }}
++            - --rule-review-api
++            {{- end }}
++            {{- range .Values.extraArgs }}
++            - {{ . | quote }}
++            {{- end }}
+           env:
+             - name: AGENTSHIELD_DATABASE_URL
+               valueFrom:
+@@ -106,6 +130,9 @@ spec:
+                   name: {{ .Values.model.existingSecret }}
+                   key: {{ .Values.model.secretKey }}
+             {{- end }}
++            {{- with .Values.extraEnv }}
++            {{- toYaml . | nindent 12 }}
++            {{- end }}
+           ports:
+             - name: http
+               containerPort: 8088
+diff --git a/deploy/kubernetes/values.yaml b/deploy/kubernetes/values.yaml
+index f717b2c..0d19413 100644
+--- a/deploy/kubernetes/values.yaml
++++ b/deploy/kubernetes/values.yaml
+@@ -37,6 +37,11 @@ discovery:
+   agentgateway:
+     clusterID: example-cluster
+     sourceID: kubernetes/example-cluster
++    # GatewayClass controllers that select agentgateway Gateways; empty keeps
++    # agentgateway.dev/gatewayclass-controller
++    controllerNames: []
++    # class names used only when the GatewayClass object is not observed
++    gatewayClasses: []
+   cilium:
+     clusterID: example-cluster
+     sourceID: kubernetes/example-cluster
+@@ -65,8 +70,23 @@ telemetry:
+ model:
+   endpoint: ""
+   provider: openai
++  # empty uses the provider's default model
++  name: ""
++  reasoningEffort: ""
+   existingSecret: ""
+   secretKey: api-key
++  # model features; both need endpoint (agentic investigation: an OpenAI
++  # Responses-compatible one)
++  agenticInvestigation: false
++  deploymentRuleAuthoring: false
++
++# serve the rule review and regenerate routes on the Pod's non-loopback
++# listener; only behind an authenticating proxy
++ruleReviewAPI: false
++
++# more flags and environment variables for the agentshield container
++extraArgs: []
++extraEnv: []
+ 
+ resources:
+   requests:
+-- 
+2.55.0
+

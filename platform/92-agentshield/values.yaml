@@ -1,0 +1,33 @@
+# Agentshield's own chart (deploy/kubernetes in its source, tools/agentshield)
+fullnameOverride: agentshield
+image:
+  repository: localhost:${LAB_REGISTRY_PORT}/lab/agentshield
+  tag: ${AGENTSHIELD_TAG}
+# CloudNativePG's connection URI for the agentshield-db cluster
+database:
+  existingSecret: agentshield-db-app
+  secretKey: uri
+# one cluster: every plugin names it the same, so they meet on its objects
+discovery:
+  kubernetes: {clusterID: ${MESH_NAME}, sourceID: kubernetes/${MESH_NAME}}
+  istio: {clusterID: ${MESH_NAME}, sourceID: kubernetes/${MESH_NAME}}
+  agentgateway:
+    clusterID: ${MESH_NAME}
+    sourceID: kubernetes/${MESH_NAME}
+    # OSS and Solo Enterprise for agentgateway
+    controllerNames: [agentgateway.dev/gatewayclass-controller, solo.io/enterprise-agentgateway]
+  cilium: {clusterID: ${MESH_NAME}, sourceID: kubernetes/${MESH_NAME}}
+  falco: {clusterID: ${MESH_NAME}, sourceID: kubernetes/${MESH_NAME}}
+# its model, through the AI gateway like every other model call: the route
+# for security tools (platform/40-agentgateway/llm/security.yaml) picks the
+# model and admits Agentshield by its identity, so it holds no key
+model:
+  endpoint: http://ai-gateway.agentgateway-system/security
+  provider: openai
+  agenticInvestigation: true
+  deploymentRuleAuthoring: true
+# reviewing rule drafts in the UI: the edge signs every request in first
+ruleReviewAPI: true
+extraArgs:
+- --agentic-investigation-max-per-hour=30
+- --deployment-rule-baseline-window=1h

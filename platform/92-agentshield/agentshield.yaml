@@ -1,0 +1,110 @@
+# Agentshield's database, its console on the edge, and who may reach either.
+# Its API has no authentication of its own: the edge signs every request in
+# (the ops realm), and the mesh takes the console only from the edge and
+# access logs only from the collector.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata: {name: agentshield-db, namespace: agentshield-system}
+spec:
+  instances: 1
+  bootstrap:
+    initdb: {database: agentshield, owner: agentshield}
+  storage: {size: 2Gi}
+  resources:
+    requests: {cpu: 50m, memory: 256Mi}
+    limits: {memory: 512Mi}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentshield
+  namespace: agentshield-system
+spec:
+  parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-ops}]
+  hostnames: ["agentshield.${OPS_DOMAIN}"]
+  rules:
+  - backendRefs: [{name: agentshield, port: 8088}]
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: GatewayExtension
+metadata:
+  name: agentshield-sso
+  namespace: agentshield-system
+spec:
+  type: OAuth2
+  oauth2:
+    backendRef: {kind: Service, name: keycloak, namespace: ops-identity, port: 80}
+    issuerURI: https://idp.${OPS_DOMAIN}/realms/ops
+    authorizationEndpoint: https://idp.${OPS_DOMAIN}/realms/ops/protocol/openid-connect/auth
+    tokenEndpoint: https://idp.${OPS_DOMAIN}/realms/ops/protocol/openid-connect/token
+    endSessionEndpoint: https://idp.${OPS_DOMAIN}/realms/ops/protocol/openid-connect/logout
+    redirectURI: https://agentshield.${OPS_DOMAIN}/oauth2/redirect
+    logoutPath: /logout
+    credentials:
+      clientID: agentshield
+      clientSecretRef: {name: agentshield-sso}
+    scopes: [openid, profile, email]
+    cookies:
+      sameSite: Lax
+    jwt:
+      jwksURI: https://idp.${OPS_DOMAIN}/realms/ops/protocol/openid-connect/certs
+      jwksBackendRef: {kind: Service, name: keycloak, namespace: ops-identity, port: 80}
+      accessToken:
+        audiences: [agentshield]
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: agentshield-sso
+  namespace: agentshield-system
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: agentshield}]
+  oauth2: {extensionRef: {name: agentshield-sso}}
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: agentshield-sso-to-keycloak
+  namespace: ops-identity
+spec:
+  from: [{group: gateway.kgateway.dev, kind: GatewayExtension, namespace: agentshield-system}]
+  to: [{group: "", kind: Service, name: keycloak}]
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: {name: strict, namespace: agentshield-system}
+spec: {mtls: {mode: STRICT}}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: default-deny, namespace: agentshield-system}
+spec: {}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: agentshield-callers, namespace: agentshield-system}
+spec:
+  selector: {matchLabels: {app.kubernetes.io/name: agentshield}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/kgateway-system/sa/edge                # the console, signed in
+        - cluster.local/ns/observability/sa/otel-collector        # the waypoints' access logs
+    to: [{operation: {ports: ["8088"]}}]
+---
+# Its database: Agentshield, the instance itself, and the operator managing it.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: {name: agentshield-db-callers, namespace: agentshield-system}
+spec:
+  selector: {matchLabels: {cnpg.io/cluster: agentshield-db}}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals:
+        - cluster.local/ns/agentshield-system/sa/agentshield
+        - cluster.local/ns/agentshield-system/sa/agentshield-db
+        - cluster.local/ns/cnpg-system/sa/cnpg-cloudnative-pg
