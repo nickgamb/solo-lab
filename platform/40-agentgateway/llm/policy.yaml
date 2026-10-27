@@ -5,9 +5,9 @@
 #             LLM_FALLBACK=...) the next healthy one serves instead. (No
 #             unhealthyCondition: the default is what catches no answer at
 #             all; a condition would replace it.)
-#   formats   OpenAI chat completions and Anthropic messages, either way
-#             round: the provider answers in its own API, the caller gets
-#             the one it asked in
+#   formats   OpenAI chat completions and responses, and Anthropic
+#             messages, any way round: the provider answers in its own API,
+#             the caller gets the one it asked in
 #   guards    prompts that try to override the agent's instructions are
 #             refused; card and social security numbers are masked before
 #             the prompt leaves for the provider, and again in the answer;
@@ -18,7 +18,9 @@ metadata:
   name: llm-backend
   namespace: agentgateway-system
 spec:
-  targetRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: llm}]
+  targetRefs:
+  - {group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: llm}
+  - {group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: llm-security}
   backend:
     health:
       eviction:
@@ -28,6 +30,7 @@ spec:
       # the request's API shape, translated to what the provider speaks
       routes:
         /v1/chat/completions: Completions
+        /v1/responses: Responses
         /v1/messages: Messages
         /v1/models: Models
         "*": Passthrough

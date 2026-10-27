@@ -91,6 +91,17 @@ else
     'del(.spec.ai.provider, .spec.policies) | .metadata.labels["lab.solo.io/llm-fallback"] = $f
      | .spec.ai.groups = $g' | K apply -f - >/dev/null
 fi
+# The security tools' model (llm/security.yaml): the same provider, a model
+# that answers in a JSON schema (LLM_SECURITY_MODEL, or the provider's below)
+case "$P" in
+  bedrock) SMODEL=us.anthropic.claude-haiku-4-5-20251001-v1:0 ;;
+  anthropic) SMODEL=claude-haiku-4-5 ;;
+  *) SMODEL=$MODEL ;;
+esac
+SMODEL=${LLM_SECURITY_MODEL:-$SMODEL}
+prepare "$P" "$SMODEL"
+render "$D/$P.yaml" | yq '.metadata.name = "llm-security"' | K apply -f - >/dev/null
+apply_tmpl "$D/security.yaml"
 # API keys for callers outside the mesh (llm/external.yaml): only their
 # SHA-256 is in the cluster; the key itself is in .lab/secrets.env
 # ("capped" has next to no budget on Solo Enterprise, to show a block)
@@ -115,5 +126,5 @@ else
   apply_tmpl "$D/route.yaml" "$D/external.yaml"
 fi
 K annotate namespace agentgateway-system lab.solo.io/llm-provider="$P" lab.solo.io/llm-model="$MODEL" \
-  lab.solo.io/llm-fallback="$FMODEL" --overwrite >/dev/null
-ok "llm -> $P ($MODEL)${F:+, then $FMODEL}"
+  lab.solo.io/llm-fallback="$FMODEL" lab.solo.io/llm-security-model="$SMODEL" --overwrite >/dev/null
+ok "llm -> $P ($MODEL)${F:+, then $FMODEL}; security tools -> $SMODEL"
