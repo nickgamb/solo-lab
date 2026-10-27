@@ -139,6 +139,15 @@ The Observatory, on identity and model continuity:
 More in [OBSERVATORY.md](docs/OBSERVATORY.md), and the
 [3-minute walkthrough](https://youtu.be/Y3P4a7HRvVs).
 
+Agentshield, on lateral movement ([AGENTSHIELD.md](docs/AGENTSHIELD.md)):
+
+| | |
+| --- | --- |
+| ![Agentshield: the ai-gateway in the cluster's graph, with every route, backend and policy around it](docs/images/agentshield-graph-ai-gateway.jpg) | ![Agentshield: rules drafted by the model for each workload from its observed traffic, awaiting review](docs/images/agentshield-rules-drafted.jpg) |
+| **The graph** around the ai-gateway: routes, backends, policy | **Rules drafted by the model** from each workload's traffic, routed through the AI gateway |
+| ![Agentshield: a workload in S&V's agent namespace reaching Meridian's resource server, across the party boundary](docs/images/agentshield-graph-cross-party.jpg) | ![Agentshield: a finding raised by an approved rule, with the affected resources and evidence](docs/images/agentshield-findings.jpg) |
+| **A new path** from S&V's agents into Meridian | **A finding** with its evidence, from an approved rule |
+
 ## Docs
 
 | Doc | Covers |

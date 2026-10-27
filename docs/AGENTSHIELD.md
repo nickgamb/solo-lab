@@ -34,6 +34,17 @@ sign-in).
 Fixes are proposed, not applied: the lab gives Agentshield read-only access,
 so an approved fix is one to make in the lab's manifests.
 
+| | |
+| --- | --- |
+| ![Overview: graph size, newest findings, each source's health](images/agentshield-overview.jpg) | ![The ai-gateway in the graph, with its routes, backends and policy](images/agentshield-graph-ai-gateway.jpg) |
+| **Overview** | **Environment graph**: the ai-gateway |
+| ![Meridian's resource server in the graph: who reaches it, its pods and policy](images/agentshield-graph-service.jpg) | ![A workload in S&V's agent namespace reaching Meridian's resource server](images/agentshield-graph-cross-party.jpg) |
+| **Environment graph**: a Service behind a waypoint | **Environment graph**: a path across parties |
+| ![Rules drafted by the model per workload, awaiting review](images/agentshield-rules-drafted.jpg) | ![Loaded rules: active and in shadow mode](images/agentshield-rules-loaded.jpg) |
+| **Rules**: drafts to review | **Rules**: loaded, active and shadow |
+| ![A finding from an approved rule, with affected resources and evidence](images/agentshield-findings.jpg) | ![The same views in the light theme](images/agentshield-graph-ai-gateway-light.jpg) |
+| **Findings** | Light theme |
+
 ## How it works
 
 ```
