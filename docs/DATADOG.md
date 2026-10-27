@@ -66,6 +66,8 @@ No Datadog Agent, no `ddtrace` and no change to any workload.
 
 ## Where to look
 
+[![Datadog: requests from the lab's ai-gateway, recent spans by duration](images/datadog-apm-ai-gateway.jpg)](images/datadog-apm-ai-gateway.jpg)
+
 | Datadog | What to open |
 | --- | --- |
 | LLM Observability → Traces | `env:lab`: each model call, with its model, provider and tokens; app `ai-gateway` or `kagent-controller` |
