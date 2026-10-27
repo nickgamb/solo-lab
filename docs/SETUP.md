@@ -95,6 +95,8 @@ admin consoles are off the edge; reach them with a port-forward
 | `OLLAMA_MODEL`, `OLLAMA_URL` | the local model and where the cluster reaches it |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `OPENAI_API_KEY`, `OPENAI_MODEL` | hosted models (held by agentgateway only) |
 | `BEDROCK_API_KEY` or `BEDROCK_AWS_ACCESS_KEY_ID`, `BEDROCK_AWS_SECRET_ACCESS_KEY`, `BEDROCK_AWS_SESSION_TOKEN`; `BEDROCK_MODEL`, `BEDROCK_REGION` | Amazon Bedrock (held by agentgateway only) |
+| `AGENTSHIELD` | `off` leaves Agentshield out (on by default); apply with `make layer-10 layer-20 layer-92` ([AGENTSHIELD.md](AGENTSHIELD.md)) |
+| `LLM_SECURITY_MODEL` | the security tools' model, at the provider `LLM_PROVIDER` names (Claude Haiku 4.5 on Bedrock and Anthropic); apply with `make llm` ([AGENTSHIELD.md](AGENTSHIELD.md#how-it-works)) |
 | `DATADOG_API_KEY`; `DATADOG_SITE`, `DATADOG_ENV` | a copy of the lab's telemetry to Datadog (site `datadoghq.com`, env `lab` by default); apply with `make layer-20` ([DATADOG.md](DATADOG.md)) |
 | `ENTERPRISE_IDP` | S&V's IdPs, who sign Bob in, by name in failover order (default `auth0,keycloak,contingency`). An IdP without an issuer is left out, so a fresh clone starts on S&V's own Keycloak ([IDPS.md](IDPS.md)) |
 | `<NAME>_ISSUER`, `<NAME>_CLIENT_ID`, `<NAME>_CLIENT_SECRET` | each IdP in the chain (`auth0`, `gluu`, `okta`, `ping`, any other); without a secret S&V authenticates with its keys (`make xaa-keys`). `keycloak` and `contingency` default to S&V's own at `login.sterling.lab` and `login-dr.sterling.lab` |
@@ -122,11 +124,12 @@ count, host ports, party domains, registry port; `config/oss.env` and
 | `cluster` | kind cluster, registry caches, cloud-provider-kind, lab DNS |
 | `platform` | every layer under `platform/` in order |
 | `layer-NN` | one layer, e.g. `make layer-90` (Observatory) |
-| `verify` | `reset`, then `bob-verify`, `alice-verify`, `continuity-verify`, `observatory-verify` |
+| `verify` | `reset`, then `bob-verify`, `alice-verify`, `continuity-verify`, `observatory-verify`, `agentshield-verify` |
 | `bob-verify` | story 1 checks only (delegation, per-tool policy, Cross App Access, assurance rules) |
 | `alice-verify` | story 2 checks only (Bob to Alice, UMA for agents), after a `reset` |
 | `continuity-verify` | identity continuity checks only (failover, kill switch, live rules, routing, directory sync) |
 | `observatory-verify` | what the Observatory's admins may and may not change (RBAC, admission) |
+| `agentshield-verify` | Agentshield's graph, a waypoint's requests reaching it, and who may reach it and its model |
 | `tour` | drive every story end to end, paced, to watch in the Observatory |
 | `reset` | rewind the demos (grants, terms, agent key, follow-ups, relationships) |
 | `llm` | switch the model: `make llm LLM_PROVIDER=anthropic` |
@@ -159,7 +162,7 @@ apps/relationship-guard
                  the gateway's entitlements check (OpenFGA), an MCP guardrail
 apps/idtoken-exchange
                  Cross App Access at S&V's egress: the user's ID token from S&V's broker
-tools/           patched upstream builds (kagent, Substrate, Keycloak), the probe
+tools/           patched upstream builds (kagent, Substrate, Keycloak, Agentshield), the probe
                  toolbox image and mcp-probe.py, diagram generators
 docs/            architecture, per-app docs, commands, demo cards, images and videos
 ```
@@ -167,10 +170,10 @@ docs/            architecture, per-app docs, commands, demo cards, images and vi
 | Layer | Installs |
 | --- | --- |
 | `00-foundation` | Gateway API, metrics-server, cert-manager, trust-manager, lab CA, namespaces, CoreDNS `*.lab` → edge |
-| `10-istio` | Istio ambient: base, istiod, istio-cni, ztunnel |
-| `20-observability` | kube-prometheus-stack, Tempo, OTel collector, Kiali |
+| `10-istio` | Istio ambient: base, istiod, istio-cni, ztunnel; waypoints' access logs for Agentshield |
+| `20-observability` | kube-prometheus-stack, Tempo, OTel collector, Kiali; Agentshield's and Datadog's pipelines when on |
 | `30-kgateway` | the edge: per-party TLS listeners on NodePorts 30080/30443 |
-| `40-agentgateway` | ai-gateway: LLM backend, MCP; on Enterprise the STS for MCP servers' tokens and Solo's ext-auth service, replicated |
+| `40-agentgateway` | ai-gateway: LLM backend, the security tools' model route, MCP; on Enterprise the STS for MCP servers' tokens and Solo's ext-auth service, replicated |
 | `45-identity` | S&V's mesh baseline, S&V's broker (Keycloak, `idp.sterling.lab`), S&V's own Keycloak (`login.sterling.lab`, realm `workforce`), its contingency IdP (`login-dr.sterling.lab`), client secrets for S&V components |
 | `47-continuity` | IdentityContinuity and WorkloadProfile CRDs and controller, the directory sync, the assurance rules (Solo's ext-auth service on Enterprise, the assurance gate on OSS), S&V egress waypoint |
 | `48-relationships` | OpenFGA (3 replicas) on Postgres (CloudNativePG, 3 instances) in `sv-authz`, S&V's relationship model |
@@ -179,4 +182,5 @@ docs/            architecture, per-app docs, commands, demo cards, images and vi
 | `70-agentregistry` | agentregistry behind S&V SSO |
 | `80-mesh-policy` | S&V's mesh baseline, re-applied, STRICT mTLS mesh-wide, and S&V's egress fences |
 | `90-observatory` | Observatory, its Keycloak (realm `ops`), Grafana and Kiali on the edge behind it, the Solo UI on Enterprise, gateway access logs |
+| `92-agentshield` | Agentshield (patched, its own chart) and its database (CloudNativePG), console on the edge behind the ops sign-in |
 | `95-demos` | every story: `demos/bob`, then `demos/bob-to-alice` |

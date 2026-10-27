@@ -26,6 +26,13 @@ metadata:
   # the collector's way out to an external telemetry backend (Datadog), when one is set
   labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: baseline, pod-security.kubernetes.io/warn: restricted, pod-security.kubernetes.io/audit: restricted}
 ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentshield-system
+  # Agentshield (layer 92) and its database: the platform's view of lateral movement
+  labels: {lab.solo.io/party: platform, istio.io/dataplane-mode: ambient, pod-security.kubernetes.io/enforce: restricted}
+---
 # Kiali, in the mesh (istio-system is not: istio-cni excludes it), so its
 # callers are named by identity like everything else's.
 apiVersion: v1

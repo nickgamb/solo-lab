@@ -9,7 +9,7 @@ internet, and mesh identity enforces it
 
 | Party | Role in the stories | Domain | Namespaces |
 | --- | --- | --- | --- |
-| **Platform** | the "cloud": mesh, edge, telemetry, substrate, and the Observatory | `ops.lab` | `istio-system` `kgateway-system` `observability` `observability-egress` `kiali` `ate-system` `cert-manager` `cnpg-system` `observatory` `ops-identity` |
+| **Platform** | the "cloud": mesh, edge, telemetry, substrate, and the Observatory | `ops.lab` | `istio-system` `kgateway-system` `observability` `observability-egress` `kiali` `ate-system` `cert-manager` `cnpg-system` `observatory` `ops-identity` `agentshield-system` |
 | **Sterling & Vance** | Bob's firm. Runs the Solo AI platform (kagent, agentgateway, agentregistry) for its advisors | `sterling.lab` | `sv-identity` `sv-workforce` `sv-contingency` `sv-egress` `kagent` `agentgateway-system` `agentregistry` `sv-agents` `sv-mcp` `sv-u4a` |
 | **Alice** | resource owner. Her authorization server, her portal, her IdP | `alice.lab` | `alice` `alice-identity` |
 | **Meridian Wealth** | Alice's brokerage. Holds her account, enforces her terms, can never read them | `meridian.lab` | `meridian` |
@@ -42,6 +42,7 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | `observability` | otel-collector, Prometheus, Tempo, Grafana | one SA per component | platform | collector: the components that report telemetry, by ServiceAccount; Prometheus: the collector, Tempo, Grafana, Kiali, the Observatory; Tempo: the collector, Grafana, Kiali; Grafana: edge (after sign-in), Kiali, Prometheus |
 | `observability-egress` | `egress-waypoint` (Istio waypoint for Datadog's OTLP intake, when a Datadog key is set) | `egress-waypoint` | platform | otel-collector only |
 | `kiali` | Kiali (view-only) | `kiali` | platform | edge (after sign-in); Prometheus (metrics) |
+| `agentshield-system` | Agentshield (reads the cluster, read-only; its model through the ai-gateway's security route), its database (CloudNativePG) | `agentshield`, `agentshield-db` | platform | Agentshield: edge (after sign-in), otel-collector (waypoints' access logs); its database: Agentshield and the operator |
 | `sv-identity` | Keycloak `sterling-vance` (S&V's broker) | `keycloak` | S&V | edge (the realm only); S&V gateways/apps (JWKS, token exchange) and, on OSS, `bob-workspace` (JWKS); continuity-controller and continuity-sync (admin API) |
 | `sv-identity` | `continuity-controller` (2 replicas, leader-elected) | `continuity-controller` | S&V | nobody (calls out only) |
 | `sv-identity` | `sterling-vance-profile-sync` (CronJob: the directory sync) | `continuity-sync` | S&V | nobody (calls out only) |
@@ -296,6 +297,17 @@ one ServiceEntry that only the collector may use; the key is a Secret in
 `observability`. Setting it up and what to open in Datadog:
 [DATADOG.md](DATADOG.md).
 
+**Agentshield.** Istio's waypoints also log each request they serve for
+Agentshield (the mesh's `agentshield` access-log provider), to the
+collector, which sends on those whose target is a Service in the cluster;
+for a request the waypoint refused, it names the target from the
+waypoint's route. Agentshield builds its graph from the Kubernetes API
+(read-only, including Gateway API objects of both agentgateway editions),
+and calls its model through the ai-gateway's security route, which only its
+identity may use. Its API has no authentication of its own: the edge signs
+the console in (realm `ops`), and the mesh takes only the edge and the
+collector ([AGENTSHIELD.md](AGENTSHIELD.md)).
+
 ## What the lab doesn't enforce
 
 Known gaps, kept on purpose or pending upstream work:
@@ -415,16 +427,19 @@ installs every story, so any card runs in any order on the same lab.
 | `tools/kagent` 0002 | OSS controller: a SandboxAgent turn sent as the last one closes (HITL approval) no longer races its suspend | kagent-dev/kagent (PR to open) |
 | `tools/substrate-mesh` 0001 | Substrate 0.0.9: WorkerPool pod identity (`serviceAccountName`, labels, annotations) | kagent-dev/substrate (PR to open) |
 | `tools/substrate-mesh` 0002 | a pool with its own ServiceAccount only runs its namespace's actors | kagent-dev/substrate (PR to open) |
+| `tools/agentshield` 0001 | agentgateway Gateways selected by any GatewayClass controller (Solo Enterprise's `solo.io/enterprise-agentgateway`) | agentshield-dev/agentshield (PR to open) |
+| `tools/agentshield` 0002 | the chart: model features, model name, rule review, agentgateway controllers, extra args and env | agentshield-dev/agentshield (PR to open) |
+| `tools/agentshield` 0003 | investigations ask a Responses endpoint for a schema Claude's structured output accepts (limits enforced after generation) | agentshield-dev/agentshield (PR to open) |
 | `tools/substrate-mesh` 0003 | ateom: inbound relayed from a local socket, worker-local traffic pinned, so actors work under in-pod mesh capture | kagent-dev/substrate (PR to open) |
 
 ## Install order
 
 ```
 00-foundation   Gateway API, metrics-server, cert-manager, trust-manager, lab CA, namespaces (party and Pod Security labels), CoreDNS *.lab -> edge
-10-istio        ambient: base, istiod (HA), cni, ztunnel
-20-observability kube-prometheus-stack, Tempo, OTel collector, Kiali; Datadog export when its key is set
+10-istio        ambient: base, istiod (HA), cni, ztunnel; waypoints' access logs for Agentshield
+20-observability kube-prometheus-stack, Tempo, OTel collector, Kiali; Agentshield's pipeline; Datadog export when its key is set
 30-kgateway     edge (HA, pinned NodePorts, per-party TLS listeners)
-40-agentgateway ai-gateway (HA, mesh-native), LLM backend (make llm), on Enterprise the STS for MCP servers' tokens and Solo's ext-auth service replicated
+40-agentgateway ai-gateway (HA, mesh-native), LLM backend and the security tools' model route (make llm), on Enterprise the STS for MCP servers' tokens and Solo's ext-auth service replicated
 45-identity     S&V's mesh baseline, S&V's broker (Keycloak, idp.sterling.lab, patched for ID-JAG, with the session-claims mapper), S&V's own Keycloak (login.sterling.lab, realm workforce), its contingency IdP (login-dr.sterling.lab), client secrets for S&V components
 47-continuity   IdentityContinuity and WorkloadProfile CRDs and controller, the directory sync, the assurance rules' Rego (Solo's ext-auth service on Enterprise, the assurance gate on OSS; admission policies fence them), S&V egress waypoint
 50-substrate    Agent Substrate (patched, ate-system in the mesh)
@@ -432,5 +447,6 @@ installs every story, so any card runs in any order on the same lab.
 70-agentregistry agentregistry behind S&V SSO at the edge
 80-mesh-policy  S&V mesh baseline, re-applied (other parties own theirs, in their story), STRICT mTLS mesh-wide
 90-observatory  Observatory, its Keycloak (realm ops), Grafana and Kiali behind it, gateway access logs
+92-agentshield  Agentshield (patched, its own chart) and its database, console behind the ops sign-in (AGENTSHIELD=off leaves it out)
 95-demos        every story: bob, then bob-to-alice
 ```

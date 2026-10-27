@@ -32,13 +32,15 @@ if [ -n "${DATADOG_API_KEY:-}" ]; then
   ( umask 077; render "$D/otel-collector-datadog.yaml" > "$out" )
   VALS+=(-f "$out")
 fi
+# Agentshield, while it's on (layer 92): the waypoints' requests
+agentshield_on && VALS+=(-f "$D/otel-collector-agentshield.yaml")
 helm_up otel-collector opentelemetry-collector "$OTEL_COLLECTOR_VERSION" $NS \
   --repo https://open-telemetry.github.io/opentelemetry-helm-charts ${VALS[@]+"${VALS[@]}"}
 if [ -n "${DATADOG_API_KEY:-}" ]; then
   ok "Datadog ($DATADOG_SITE): APM, LLM Observability, metrics and logs; env $DATADOG_ENV"
 else
   # a key removed: the collector no longer sends, so its way out goes too
-  K delete gateway.gateway.networking.k8s.io,serviceentry,authorizationpolicy,peerauthentication \
+  K delete gateway.gateway.networking.k8s.io,serviceentry,authorizationpolicy,peerauthentication,telemetries.telemetry.istio.io \
     -n observability-egress --all --ignore-not-found >/dev/null 2>&1 || true
   K delete secret datadog -n "$NS" --ignore-not-found >/dev/null
 fi

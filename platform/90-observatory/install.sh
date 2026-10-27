@@ -27,6 +27,7 @@ secret_apply ops-identity kc-secrets \
   OBSERVATORY_CLIENT_SECRET="$(lab_secret OBSERVATORY_CLIENT_SECRET)" \
   GRAFANA_CLIENT_SECRET="$(lab_secret OPS_GRAFANA_CLIENT_SECRET)" \
   KIALI_CLIENT_SECRET="$(lab_secret OPS_KIALI_CLIENT_SECRET)" \
+  AGENTSHIELD_CLIENT_SECRET="$(lab_secret OPS_AGENTSHIELD_CLIENT_SECRET)" \
   LAB_PASSWORD_OPS="$LAB_PASSWORD_OPS"
 deploy_keycloak ops-identity "$OPS_DOMAIN" https-ops "$D/realm-ops.json"
 secret_apply observatory observatory-oidc client-secret="$(lab_secret OBSERVATORY_CLIENT_SECRET)"

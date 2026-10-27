@@ -22,8 +22,8 @@ nuke: ## delete the cluster AND every lab container and volume (caches, registry
 	@./scripts/cluster-down.sh --all
 
 ## ---- demos (all installed by `make up`; cards in docs/cards) ---------------
-verify: ## rewind the demos (make reset), every story's checks, identity continuity, the Observatory's reach
-	@./scripts/reset.sh && ./demos/bob/verify.sh && ./demos/bob-to-alice/verify.sh && ./platform/47-continuity/verify.sh && ./platform/90-observatory/verify.sh
+verify: ## rewind the demos (make reset), every story's checks, identity continuity, the Observatory's reach, Agentshield
+	@./scripts/reset.sh && ./demos/bob/verify.sh && ./demos/bob-to-alice/verify.sh && ./platform/47-continuity/verify.sh && ./platform/90-observatory/verify.sh && ./platform/92-agentshield/verify.sh
 bob-verify: ## story 1 checks only (delegation, per-tool policy, Cross App Access)
 	@./demos/bob/verify.sh
 alice-verify: ## story 2 checks only, from a first run (make reset first)
@@ -32,6 +32,8 @@ continuity-verify: ## identity continuity checks only (failover, kill switch, li
 	@./platform/47-continuity/verify.sh
 observatory-verify: ## what the Observatory's admins may and may not change (RBAC, admission)
 	@./platform/90-observatory/verify.sh
+agentshield-verify: ## Agentshield: its graph, waypoint requests reaching it, who may reach it and its model
+	@./platform/92-agentshield/verify.sh
 tour: ## drive every story end to end, paced, to watch live in the Observatory
 	@./scripts/tour.sh
 reset: ## rewind every demo to a first run (grants, terms, agent key, follow-ups, relationships, AI clients signed out)
@@ -80,4 +82,4 @@ aws-down: ## terminate the instance; keeps the address so the names stay (ALL=1 
 help:
 	@awk 'BEGIN{FS=":.*## "} /^## ----/{printf "\n\033[1m%s\033[0m\n", substr($$0,9)} /^[a-zA-Z%_-]+:.*## /{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-.PHONY: machine-setup up cluster platform down nuke verify bob-verify alice-verify continuity-verify observatory-verify tour reset llm xaa-logs xaa-keys routes heal totp upstream-mcp upstream-mcp-remove status preflight aws-up aws-sync aws-ssh aws-stop aws-start aws-status aws-down help
+.PHONY: machine-setup up cluster platform down nuke verify bob-verify alice-verify continuity-verify observatory-verify agentshield-verify tour reset llm xaa-logs xaa-keys routes heal totp upstream-mcp upstream-mcp-remove status preflight aws-up aws-sync aws-ssh aws-stop aws-start aws-status aws-down help

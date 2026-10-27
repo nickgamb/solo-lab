@@ -41,6 +41,7 @@ apps through agentgateway to every IdP the firm owns, in failover order.
 | Agents acting for people | Bob's agent never holds a token an MCP server accepts. The gateway mints one per call, enforces per-tool policy, and reaches a SaaS with Cross App Access (ID-JAG). | [bob](docs/cards/bob.html) |
 | A client's data, on her terms | The same agent asks Alice. She approves each new tier and can deny a trade ([UMA for agents](https://u4a.ai)). | [bob to alice](docs/cards/bob-to-alice.html) |
 | Models | Provider failover, prompt guards, masking, budgets and per-call cost, at the same gateway. | [Model Continuity](docs/OBSERVATORY.md#model-continuity) |
+| Lateral movement | Agentshield maps the cluster (workloads, identities, mesh and gateway policy), watches the waypoints' traffic, and flags new paths with evidence; its investigations go to a model through the AI gateway. | [AGENTSHIELD.md](docs/AGENTSHIELD.md) |
 | Datadog | Optional, one API key: the lab's traces, model calls, metrics and logs in Datadog APM, LLM Observability, Metrics and Logs, over OpenTelemetry. | [DATADOG.md](docs/DATADOG.md) |
 
 Each card is a two-screen demo script. Open it in a browser (`open docs/cards/<card>.html`).
@@ -57,6 +58,7 @@ Each card is a two-screen demo script. Open it in a browser (`open docs/cards/<c
 | [Agent Substrate](https://www.solo.io/products/kagent) | every agent runs in a snapshot-backed sandbox on a worker pool |
 | [agentregistry](https://www.solo.io/products/agentregistry) | the firm's catalog of agents, MCP servers and skills |
 | [Istio ambient](https://www.solo.io/products/istio) | mTLS and a SPIFFE identity for every workload, waypoints, default-deny per party |
+| [Agentshield](https://agent-shield.dev) | the platform team's view of lateral movement: the cluster's graph, the waypoints' traffic, findings with evidence |
 
 Four parties share the platform: an advisory firm, its SaaS vendor, a client
 and her brokerage. Each has its own namespaces, identities, IdP and
@@ -101,6 +103,7 @@ The same lab runs on one EC2 instance under public names with `make aws-up`
 | https://kagent.sterling.lab/ie/graph | **Solo UI · Istio** (Enterprise): the mesh graph, global services, resources | `dana` / `dana-demo` |
 | https://registry.sterling.lab | **agentregistry**: the firm's catalog, and the kagent runtime | `bob` / `bob-demo` |
 | https://portal.alice.lab | Alice's portal: her grants and terms | `alice` / `alice-demo` |
+| https://agentshield.ops.lab | **Agentshield**: the cluster's graph, findings with evidence, drafted rules | `ops` / `ops-demo` |
 | https://grafana.ops.lab, https://kiali.ops.lab | Grafana; the Kiali mesh graph (view-only) | `ops` / `ops-demo` |
 | https://idp.sterling.lab/realms/sterling-vance/account | S&V's broker: your account, signed in through the active IdP | `bob` / `bob-demo` |
 | https://mcp.sterling.lab/mcp/bob-workspace | the firm's MCP front door for AI clients (Claude Code, an IDE): add it as a remote MCP server | `bob` / `bob-demo` |
@@ -146,6 +149,7 @@ More in [OBSERVATORY.md](docs/OBSERVATORY.md), and the
 | [IDENTITY-CONTINUITY.md](docs/IDENTITY-CONTINUITY.md) | the IdP chain, the IdentityContinuity API, directory sync, trust across IdPs, assurance rules, the kill switch |
 | [OBSERVATORY.md](docs/OBSERVATORY.md) | the Observatory's tabs, how it builds its map, its access model |
 | [COMMANDS.md](docs/COMMANDS.md) | terminal commands for every part of the running lab |
+| [AGENTSHIELD.md](docs/AGENTSHIELD.md) | Agentshield in the lab: its graph, the waypoints' traffic, its model route, access |
 | [DATADOG.md](docs/DATADOG.md) | sending the lab's telemetry to Datadog: APM, LLM Observability, logs and metrics |
 | [ENTERPRISE.md](docs/ENTERPRISE.md) | switching products to Solo Enterprise |
 | [IDPS.md](docs/IDPS.md) | adding Auth0, Gluu, Okta, Ping or any OIDC IdP; Ledgerline's authorization server |

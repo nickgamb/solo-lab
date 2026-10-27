@@ -170,6 +170,51 @@
         }
       ],
       "fullScopeAllowed": false
+    },
+    {
+      "clientId": "agentshield",
+      "name": "Agentshield",
+      "description": "Agentshield, signed in at the edge (kgateway OAuth2).",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${AGENTSHIELD_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "https://agentshield.${OPS_DOMAIN}/oauth2/redirect"
+      ],
+      "webOrigins": [
+        "https://agentshield.${OPS_DOMAIN}"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "https://agentshield.${OPS_DOMAIN}/*",
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "aud-agentshield",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "agentshield",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ],
+      "fullScopeAllowed": false
     }
   ],
   "components": {

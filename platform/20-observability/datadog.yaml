@@ -38,3 +38,12 @@ spec:
   action: ALLOW
   rules:
   - from: [{source: {principals: [cluster.local/ns/observability/sa/otel-collector]}}]
+---
+# This waypoint carries the collector's own exports: its access logs stay on
+# stdout, or each export would make the next one.
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata: {name: stdout-only, namespace: observability-egress}
+spec:
+  accessLogging:
+  - providers: [{name: envoy}]

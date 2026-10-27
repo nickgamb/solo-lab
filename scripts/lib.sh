@@ -295,6 +295,32 @@ lab_image() {
   in_registry "$1" || die "$2 finished without pushing $1"
 }
 
+# agentshield_on: layer 92 installs Agentshield (AGENTSHIELD, default on)
+agentshield_on() { [ "${AGENTSHIELD:-on}" != off ]; }
+
+# agentshield_image: Agentshield at AGENTSHIELD_COMMIT with the lab's patches
+# (tools/agentshield), tagged by both, so a changed patch is a new image
+agentshield_image() {
+  echo "lab/agentshield:${AGENTSHIELD_COMMIT:0:12}-lab.$(src_hash "$LAB_ROOT/tools/agentshield")"
+}
+
+# agentshield_src: that source, fetched and patched once into .lab/cache: the
+# image's build context and the Helm chart. Prints the directory.
+agentshield_src() {
+  local d t
+  d="$LAB_STATE/cache/agentshield-${AGENTSHIELD_COMMIT:0:12}-$(src_hash "$LAB_ROOT/tools/agentshield")"
+  if [ ! -d "$d" ]; then
+    t="$d.tmp"; rm -rf "$t"; mkdir -p "$t"
+    { git -C "$t" init -q && git -C "$t" fetch -q --depth 1 https://github.com/agentshield-dev/agentshield "$AGENTSHIELD_COMMIT" \
+        && git -C "$t" -c advice.detachedHead=false checkout -q FETCH_HEAD; } || { rm -rf "$t"; die "fetching Agentshield $AGENTSHIELD_COMMIT failed"; }
+    [ "$(git -C "$t" rev-parse HEAD)" = "$AGENTSHIELD_COMMIT" ] || { rm -rf "$t"; die "Agentshield checkout is not $AGENTSHIELD_COMMIT"; }
+    git -C "$t" -c user.name=lab -c user.email=lab@solo.lab am -q "$LAB_ROOT"/tools/agentshield/patches/*.patch \
+      || { rm -rf "$t"; die "the Agentshield patches (tools/agentshield/patches) don't apply"; }
+    mv "$t" "$d"
+  fi
+  echo "$d"
+}
+
 # kc_idjag_image: S&V's patched Keycloak (tools/keycloak-idjag), tagged by its
 # version and a hash of its sources, so a changed patch is a new image
 kc_idjag_image() {

@@ -1,0 +1,45 @@
+# The security tools' model: a route of its own, so they get a model of their
+# own at the provider the agents use (scripts/llm.sh renders backend
+# llm-security with LLM_SECURITY_MODEL). Agentshield (layer 92) asks for
+# answers in a JSON schema, which the agents' model need not support.
+#   http://ai-gateway.agentgateway-system/security/v1/responses
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: llm-security
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+  - name: ai-gateway
+  rules:
+  - matches:
+    - path: {type: PathPrefix, value: /security/v1}
+    filters:
+    - type: URLRewrite
+      urlRewrite: {path: {type: ReplacePrefixMatch, replacePrefixMatch: /v1}}
+    backendRefs:
+    - group: ${AGW_BACKEND_GROUP}
+      kind: ${AGW_BACKEND_KIND}
+      name: llm-security
+---
+# Who may use it, by ServiceAccount: Agentshield, and nothing else. It holds
+# no key; whatever it sends as one stops here.
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata:
+  name: llm-security-callers
+  namespace: agentgateway-system
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: llm-security}]
+  traffic:
+    authorization:
+      action: Allow
+      policy:
+        matchExpressions:
+        - source.identity.namespace == "agentshield-system" && source.identity.serviceAccount == "agentshield"
+    transformation:
+      request:
+        remove: [authorization]
+    retry:
+      attempts: 1
+      codes: [429, 500, 502, 503, 504]

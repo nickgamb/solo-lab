@@ -1,0 +1,34 @@
+# Agentshield, while it's on (layer 92): the requests the waypoints serve
+# (their access logs, platform/10-istio istiod.yaml) go on to it, and only
+# those whose target is a Service in the cluster: a request to an outside
+# host names nothing in its graph. A request the waypoint refused never
+# reached its target, so the target is named from the waypoint's route
+# (inbound-vip|<port>|http|<service>.<ns>.svc.cluster.local;) instead.
+config:
+  processors:
+    transform/agentshield:
+      error_mode: ignore
+      log_statements:
+      - context: log
+        statements:
+        - replace_pattern(attributes["upstream.cluster"], "^[^|]*\\|([0-9]+)\\|[^|]*\\|([^|;]+\\.svc\\.cluster\\.local);?$", "$$2:$$1")
+        - set(attributes["agentshield.object.authority"], attributes["upstream.cluster"]) where IsMatch(attributes["agentshield.object.k8s.namespace"], "^-?$") and IsMatch(attributes["upstream.cluster"], "\\.svc\\.cluster\\.local:[0-9]+$")
+        - delete_key(attributes, "upstream.cluster")
+    filter/agentshield:
+      error_mode: ignore
+      logs:
+        log_record:
+        - attributes["agentshield.telemetry.kind"] == nil
+        - IsMatch(attributes["agentshield.object.k8s.namespace"], "^-?$") and not IsMatch(attributes["agentshield.object.authority"], "\\.svc(\\.cluster\\.local)?(:[0-9]+)?$")
+  exporters:
+    otlphttp/agentshield:
+      endpoint: http://agentshield.agentshield-system.svc:8088
+      encoding: proto
+      tls: {insecure: true}
+      retry_on_failure: {enabled: true, max_elapsed_time: 30s}
+  service:
+    pipelines:
+      logs/agentshield:
+        receivers: [otlp]
+        processors: [memory_limiter, transform/agentshield, filter/agentshield, batch]
+        exporters: [otlphttp/agentshield]

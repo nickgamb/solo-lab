@@ -1,0 +1,123 @@
+From c7b2397dcd1d45147a6bae45825406cb80ba630d Mon Sep 17 00:00:00 2001
+From: Nick Gamb <nickgamb@gmail.com>
+Date: Tue, 27 Oct 2026 08:47:00 -0700
+Subject: [PATCH 1/3] agentgateway: select Gateways by configurable
+ GatewayClass controllers
+
+Gateways whose GatewayClass names a controller other than
+agentgateway.dev/gatewayclass-controller (an agentgateway distribution
+with its own controller name) were never selected, so their routes and
+backends were missing from the graph.
+
+--agentgateway-controller-names and --agentgateway-gateway-classes take
+comma-separated lists; empty keeps the defaults.
+---
+ cmd/agentshield/main.go            |  2 +-
+ plugins/agentgateway/flags.go      | 28 ++++++++++++++++++++++++++--
+ plugins/agentgateway/flags_test.go | 30 ++++++++++++++++++++++++++++++
+ 3 files changed, 57 insertions(+), 3 deletions(-)
+ create mode 100644 plugins/agentgateway/flags_test.go
+
+diff --git a/cmd/agentshield/main.go b/cmd/agentshield/main.go
+index c60d83f..eece8ae 100644
+--- a/cmd/agentshield/main.go
++++ b/cmd/agentshield/main.go
+@@ -782,7 +782,7 @@ func kubernetesConsumerPlugins(config options, actions kubernetesplugin.WriteTra
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	agentgateway, err := agentgatewayplugin.New(agentgatewayplugin.Config{ClusterID: config.agentgateway.ClusterID, SourceID: config.agentgateway.SourceID})
++	agentgateway, err := agentgatewayplugin.New(config.agentgateway.PluginConfig())
+ 	if err != nil {
+ 		return nil, err
+ 	}
+diff --git a/plugins/agentgateway/flags.go b/plugins/agentgateway/flags.go
+index 9dcffcd..c53155c 100644
+--- a/plugins/agentgateway/flags.go
++++ b/plugins/agentgateway/flags.go
+@@ -1,14 +1,18 @@
+ package agentgateway
+ 
+ import (
++	"strings"
++
+ 	"github.com/agentshield-dev/agentshield/pkg/discovery"
+ 	"github.com/spf13/pflag"
+ )
+ 
+ // CLIConfig contains agentgateway-owned runtime options.
+ type CLIConfig struct {
+-	ClusterID string
+-	SourceID  string
++	ClusterID       string
++	SourceID        string
++	ControllerNames string
++	GatewayClasses  string
+ }
+ 
+ // RegisterFlags registers agentgateway flags in the agentgateway-* namespace.
+@@ -16,5 +20,25 @@ func (config *CLIConfig) RegisterFlags(flags *pflag.FlagSet) error {
+ 	return discovery.RegisterPluginFlags(flags, PluginID, func(pluginFlags *discovery.PluginFlags) {
+ 		pluginFlags.StringVar(&config.ClusterID, "cluster-id", "local", "stable Kubernetes authority ID used by agentgateway")
+ 		pluginFlags.StringVar(&config.SourceID, "source-id", "kubernetes/local", "stable agentgateway source ID")
++		pluginFlags.StringVar(&config.ControllerNames, "controller-names", "", "comma-separated GatewayClass controller names that select agentgateway Gateways (default "+DefaultControllerName+")")
++		pluginFlags.StringVar(&config.GatewayClasses, "gateway-classes", "", "comma-separated GatewayClass names used only when the GatewayClass object is not observed (default "+DefaultGatewayClass+")")
+ 	})
+ }
++
++// PluginConfig returns the plugin Config for these options.
++func (config CLIConfig) PluginConfig() Config {
++	return Config{
++		ClusterID: config.ClusterID, SourceID: config.SourceID,
++		ControllerNames: splitList(config.ControllerNames), GatewayClasses: splitList(config.GatewayClasses),
++	}
++}
++
++func splitList(value string) []string {
++	var result []string
++	for _, item := range strings.Split(value, ",") {
++		if item = strings.TrimSpace(item); item != "" {
++			result = append(result, item)
++		}
++	}
++	return result
++}
+diff --git a/plugins/agentgateway/flags_test.go b/plugins/agentgateway/flags_test.go
+new file mode 100644
+index 0000000..2989f79
+--- /dev/null
++++ b/plugins/agentgateway/flags_test.go
+@@ -0,0 +1,30 @@
++package agentgateway
++
++import (
++	"reflect"
++	"testing"
++
++	"github.com/spf13/pflag"
++)
++
++func TestCLIConfigControllerNames(t *testing.T) {
++	var config CLIConfig
++	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
++	if err := config.RegisterFlags(flags); err != nil {
++		t.Fatal(err)
++	}
++	if err := flags.Parse([]string{"--agentgateway-controller-names= solo.io/enterprise-agentgateway, agentgateway.dev/gatewayclass-controller ,"}); err != nil {
++		t.Fatal(err)
++	}
++	plugin, err := New(config.PluginConfig())
++	if err != nil {
++		t.Fatal(err)
++	}
++	want := []string{"agentgateway.dev/gatewayclass-controller", "solo.io/enterprise-agentgateway"}
++	if got := plugin.config.ControllerNames; !reflect.DeepEqual(got, want) {
++		t.Fatalf("controller names = %v, want %v", got, want)
++	}
++	if got := plugin.config.GatewayClasses; !reflect.DeepEqual(got, []string{DefaultGatewayClass}) {
++		t.Fatalf("gateway classes = %v, want the default", got)
++	}
++}
+-- 
+2.55.0
+

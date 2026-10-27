@@ -20,6 +20,7 @@ spec:
         - cluster.local/ns/kgateway-system/sa/edge
         - cluster.local/ns/agentgateway-system/sa/ai-gateway
         - cluster.local/ns/sv-egress/sa/egress-waypoint
+        - cluster.local/ns/ledgerline-egress/sa/egress-waypoint
         - cluster.local/ns/meridian/sa/meridian
         - cluster.local/ns/meridian/sa/waypoint
         - cluster.local/ns/alice/sa/waypoint
