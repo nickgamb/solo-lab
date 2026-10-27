@@ -43,5 +43,8 @@ for c in base istiod cni ztunnel; do
 done
 rollout istio-system deploy/istiod ds/istio-cni-node ds/ztunnel
 
-K apply -f "$D/telemetry.yaml" >/dev/null
-ok "mesh-wide access logs + tracing to the OTel collector"
+MESH_ACCESS_LOGGERS='[{name: envoy}]'
+agentshield_on && MESH_ACCESS_LOGGERS='[{name: envoy}, {name: agentshield}]'
+export MESH_ACCESS_LOGGERS
+apply_tmpl "$D/telemetry.yaml"
+ok "mesh-wide access logs + tracing to the OTel collector$(agentshield_on && echo '; waypoint requests to Agentshield')"

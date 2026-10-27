@@ -1,5 +1,6 @@
 # Mesh-wide: traces from waypoints/gateways to the OTel collector (10% in the
-# lab is plenty and keeps Tempo small; bump for a tracing demo).
+# lab is plenty and keeps Tempo small; bump for a tracing demo). Access logs
+# to stdout, and to Agentshield while it's on (install.sh).
 apiVersion: telemetry.istio.io/v1
 kind: Telemetry
 metadata:
@@ -10,4 +11,4 @@ spec:
   - providers: [{name: otel-tracing}]
     randomSamplingPercentage: 10
   accessLogging:
-  - providers: [{name: envoy}]
+  - providers: ${MESH_ACCESS_LOGGERS}
