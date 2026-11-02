@@ -18,7 +18,10 @@
 # Settings (.env): AWS_PROFILE, AWS_REGION, AWS_NAME, AWS_INSTANCE_TYPE,
 # AWS_DISK_GB, AWS_HTTPS_CIDRS, AWS_LAB_TLD, AWS_ENV (extra .env lines for
 # the instance; or a file, .lab/aws/env). The people's passwords there are the
-# instance's own (.lab/aws/passwords.env), not the documented ones.
+# instance's own (.lab/aws/passwords.env), not the documented ones. With
+# LOG_ARCHIVE on for the instance, its log archive runs there as a service;
+# with s3://bucket/prefix, the bucket is made if missing and the instance gets
+# a role that may write to it.
 . "$(dirname "$0")/lib.sh"
 
 AWS_PROFILE=${AWS_PROFILE:-solo-lab}
@@ -64,7 +67,10 @@ user_data() {
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y docker.io docker-buildx jq gettext-base make python3 git curl openssl rsync libnss3-tools
+apt-get install -y docker.io docker-buildx jq gettext-base make python3 git curl openssl rsync libnss3-tools unzip
+# the AWS CLI, for a log archive in S3 (LOG_ARCHIVE)
+curl -fsSLo /tmp/awscli.zip https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+unzip -q /tmp/awscli.zip -d /tmp && /tmp/aws/install && rm -rf /tmp/aws /tmp/awscli.zip
 usermod -aG docker ubuntu
 systemctl enable --now docker
 curl -fsSLo /usr/local/bin/kind https://kind.sigs.k8s.io/dl/$AWS_KIND_VERSION/kind-linux-amd64
@@ -194,9 +200,77 @@ sync_lab() {
     cat "$pw"
     [ -n "${AWS_ENV:-}" ] && printf '%s\n' "$AWS_ENV"
     [ -f "$AWS_DIR/env" ] && cat "$AWS_DIR/env"
+    # the archive copies to S3 with the instance's role, not a profile from here
+    echo "LOG_ARCHIVE_PROFILE="
     echo "# <<< scripts/aws.sh"
   } | R "umask 077; cat > $REMOTE/.env"
   ok "lab copied to ubuntu@$IP:~/$REMOTE (LAB_TLD=$tld)"
+  log_archive
+}
+
+# ---- the instance's log archive (LOG_ARCHIVE, docs/AWS.md) -----------------
+# log_archive: LOG_ARCHIVE as the instance has it, run there as a service
+# (scripts/log-archive.sh run); for s3://bucket/prefix, the bucket and a role
+# that may write to that prefix
+log_archive() {
+  local la; la=$(R "cd $REMOTE && bash -c '. scripts/lib.sh >/dev/null 2>&1; echo \$LOG_ARCHIVE'")
+  if [ -z "$la" ] || [ "$la" = off ]; then
+    R "sudo systemctl disable --now solo-lab-log-archive.service 2>/dev/null; true"
+    return 0
+  fi
+  [[ $la == s3://* ]] && archive_role "$la"
+  R "sudo tee /etc/systemd/system/solo-lab-log-archive.service >/dev/null" <<UNIT
+[Unit]
+Description=solo-lab: a copy of the lab's traffic logs (LOG_ARCHIVE)
+After=docker.service network-online.target
+Wants=docker.service
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/$REMOTE
+ExecStart=/home/ubuntu/$REMOTE/scripts/log-archive.sh run
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  R "sudo systemctl daemon-reload && sudo systemctl enable solo-lab-log-archive.service >/dev/null 2>&1 && sudo systemctl restart solo-lab-log-archive.service"
+  ok "log archive on the instance: $la (service solo-lab-log-archive)"
+}
+
+# archive_role s3://bucket/prefix: the bucket (made if missing: private), and
+# the instance's role, which may list the bucket and write under the prefix
+archive_role() {
+  local b=${1#s3://} pfx role=$AWS_NAME-log-archive id cur
+  pfx=${b#*/}; b=${b%%/*}; [ "$pfx" = "$b" ] && pfx=
+  pfx=${pfx%/}
+  if ! A s3api head-bucket --bucket "$b" >/dev/null 2>&1; then
+    if [ "$AWS_REGION" = us-east-1 ]; then A s3api create-bucket --bucket "$b" >/dev/null
+    else A s3api create-bucket --bucket "$b" --create-bucket-configuration "LocationConstraint=$AWS_REGION" >/dev/null; fi
+    A s3api put-public-access-block --bucket "$b" \
+      --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+    ok "bucket $b"
+  fi
+  if ! A iam get-role --role-name "$role" >/dev/null 2>&1; then
+    A iam create-role --role-name "$role" --tags "Key=Name,Value=$AWS_NAME" --assume-role-policy-document \
+      '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}' >/dev/null
+    A iam create-instance-profile --instance-profile-name "$role" >/dev/null
+    A iam add-role-to-instance-profile --instance-profile-name "$role" --role-name "$role"
+  fi
+  A iam put-role-policy --role-name "$role" --policy-name log-archive --policy-document "$(jq -nc --arg b "$b" --arg p "${pfx:+$pfx/}" '
+    {Version: "2012-10-17", Statement: [
+      {Effect: "Allow", Action: "s3:ListBucket", Resource: "arn:aws:s3:::\($b)"},
+      {Effect: "Allow", Action: ["s3:PutObject", "s3:GetObject"], Resource: "arn:aws:s3:::\($b)/\($p)*"}]}')"
+  id=$(instance_id)
+  cur=$(A ec2 describe-iam-instance-profile-associations --filters "Name=instance-id,Values=$id" "Name=state,Values=associated" \
+    --query 'IamInstanceProfileAssociations[0].[AssociationId,IamInstanceProfile.Arn]')
+  case "$cur" in
+    *":instance-profile/$role") ;;
+    None*|"") wait_for "the role $role" 10 5 A ec2 associate-iam-instance-profile --instance-id "$id" --iam-instance-profile "Name=$role" >/dev/null ;;
+    *) A ec2 replace-iam-instance-profile-association --association-id "${cur%%[[:space:]]*}" --iam-instance-profile "Name=$role" >/dev/null ;;
+  esac
+  ok "the instance may write to s3://$b/${pfx:+$pfx/} (role $role)"
 }
 
 # run_make <target>: make <target> on the instance, detached from this SSH
