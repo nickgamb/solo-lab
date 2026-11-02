@@ -79,7 +79,7 @@ it takes `list` or `call <tool> '<json args>'`, with `--token <jwt>` and
 | `kubectl --context kind-solo-lab -n agentgateway-system logs deploy/ai-gateway -f \| grep request` | ai-gateway's access log, live: caller identity, route, JWT claims, status |
 | `kubectl --context kind-solo-lab -n agentgateway-system logs deploy/ai-gateway -f \| grep request \| grep mcp.tool.name` | the MCP calls in ai-gateway's access log: tool, user, allowed or refused |
 | `kubectl --context kind-solo-lab -n meridian logs deploy/meridian -f \| grep request` | Meridian's gateway |
-| `kubectl --context kind-solo-lab -n kgateway-system logs deploy/edge -f` | the edge (Envoy) |
+| `kubectl --context kind-solo-lab -n kgateway-system logs deploy/edge -f` | the edge (Envoy): one JSON line a request, with the caller's address and user agent |
 | `make llm LLM_PROVIDER=ollama` | point ai-gateway's model route at a provider |
 | `make llm LLM_FALLBACK=anthropic` | add a second provider the model route fails over to |
 | `make llm LLM_PROVIDER=bedrock LLM_FALLBACK=openai,ollama` | Bedrock first, then OpenAI, then Ollama |
@@ -118,6 +118,16 @@ then `codex mcp login sv-workspace` and `codex mcp login ledgerline`. Both
 take the lab's CA from `NODE_EXTRA_CA_CERTS` (Claude Code) and
 `CODEX_CA_CERTIFICATE` (Codex), set to `~/.solo-lab/ca/ca.crt`.
 
+**Keep a run's evidence.** Two settings in `.env`, both off by default:
+
+| Setting | |
+| --- | --- |
+| `ACCESS_LOG_CAPTURE=on` | ai-gateway's access log also records each AI client request's route, request and response bodies (`x.req.body`, `x.resp.body`, base64), whether it carried an Authorization header (`x.req.authorization`: its scheme, never its value) and the WWW-Authenticate and Location headers; `make layer-90` applies it |
+| `LOG_ARCHIVE=local` | `make log-archive` keeps the gateways', mesh's, egress gateways' and IdPs' logs in `.lab/log-archive/<date>/` (`LOG_ARCHIVE_DIR`), one file a container, as they're written; `make up` starts it |
+| `LOG_ARCHIVE=s3://<bucket>/<prefix>` | the same, copied to S3 every hour (`LOG_ARCHIVE_SYNC` seconds), with `LOG_ARCHIVE_PROFILE`'s credentials |
+
+`make log-archive-stop` stops it; what it kept stays.
+
 ## Identity
 
 | Command | Shows |
@@ -125,6 +135,7 @@ take the lab's CA from `NODE_EXTRA_CA_CERTS` (Claude Code) and
 | `curl -s https://idp.sterling.lab/realms/sterling-vance/.well-known/openid-configuration \| jq` | S&V's issuer and endpoints (same for `idp.alice.lab/realms/alice`, `idp.ledgerline.lab/realms/ledgerline`, `idp.ops.lab/realms/ops`) |
 | `grep -E 'KC_ADMIN_PASSWORD' .lab/secrets.env` | each Keycloak's admin password (user `admin`) |
 | `kubectl --context kind-solo-lab -n sv-identity port-forward svc/keycloak 18080:80` | S&V broker's admin console at http://127.0.0.1:18080/admin (the edge publishes only the realm; same for `sv-workforce`, `ops-identity`, `alice-identity`, `ledgerline-identity`) |
+| `make user ACCOUNT=dana2 NAME="Dana Two"` | a test account at S&V's own Keycloak, `dana2@sterling.lab`, in `advisors` (`GROUP=`), password from stdin or asked; an authenticator app is set up at first sign-in, and the broker's account follows |
 | `make xaa-logs SINCE=2h` | the Cross App Access trail: both token requests (S&V's broker, Ledgerline's AS), the ID-JAG's claims and every check, tokens redacted |
 | `kubectl --context kind-solo-lab -n sv-identity logs deploy/keycloak --since=10m \| grep -i -E "claim\|IDENTITY_PROVIDER\|error"` | sign-in and broker errors (it names the claim or step that failed) |
 

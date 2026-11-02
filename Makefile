@@ -9,7 +9,7 @@ machine-setup: ## one-time, sudo: *.lab resolves to the lab, trust the lab CA (m
 
 ## ---- lifecycle ---------------------------------------------------------------
 up: ## preflight, then create the cluster and install the whole platform
-	@./scripts/preflight.sh && LAB_PREFLIGHT_DONE=1 $(MAKE) --no-print-directory cluster && $(MAKE) --no-print-directory platform
+	@./scripts/preflight.sh && LAB_PREFLIGHT_DONE=1 $(MAKE) --no-print-directory cluster && $(MAKE) --no-print-directory platform && ./scripts/log-archive.sh start --if-on
 cluster: ## kind cluster + registry caches + cloud-provider-kind + lab DNS
 	@{ [ "$${LAB_PREFLIGHT_DONE:-}" = 1 ] || ./scripts/preflight.sh; } && ./scripts/dns.sh && ./scripts/ca.sh && LAB_PREFLIGHT_DONE=1 ./scripts/cluster-up.sh
 platform: ## install every platform layer in order (idempotent)
@@ -52,10 +52,16 @@ heal: ## after the nodes restart (Docker restarted, an instance stopped and star
 	@bash -c '. scripts/lib.sh && need_cluster && refresh_no_internet && rejoin_valkey && restart_workers && restore_broker_groups'
 totp: ## one-time code for signing in at S&V's own Keycloak as bob (or: make totp EMPLOYEE=carol)
 	@bash -c '. scripts/lib.sh && totp_code $(or $(EMPLOYEE),bob)'
-upstream-mcp: ## an outside MCP server at the front door, signed in at its own AS (Enterprise): make upstream-mcp NAME=x URL=https://... AS=https://... SCOPES="a b"
-	@./scripts/upstream-mcp.sh add "$(NAME)" "$(URL)" "$(AS)" $(SCOPES)
+upstream-mcp: ## an outside MCP server at the front door, signed in at its own AS (Enterprise): make upstream-mcp NAME=x URL=https://... AS=https://... SCOPES="a b" [CLIENT_DOC=name] [CLIENT_AUTH=private_key_jwt]
+	@CLIENT_DOC="$(CLIENT_DOC)" CLIENT_AUTH="$(CLIENT_AUTH)" ./scripts/upstream-mcp.sh add "$(NAME)" "$(URL)" "$(AS)" $(SCOPES)
 upstream-mcp-remove: ## remove one: make upstream-mcp-remove NAME=x
 	@./scripts/upstream-mcp.sh remove "$(NAME)"
+user: ## a test account at S&V's own Keycloak (in advisors; TOTP set at first sign-in), password from stdin or asked: make user ACCOUNT=x [NAME="First Last"] [GROUP=advisors]
+	@./scripts/user.sh "$(ACCOUNT)" "$(NAME)" "$(or $(GROUP),advisors)"
+log-archive: ## keep a copy of the traffic logs outside the cluster (LOG_ARCHIVE=local or s3://bucket/prefix in .env)
+	@./scripts/log-archive.sh start
+log-archive-stop: ## stop keeping it (the copy stays)
+	@./scripts/log-archive.sh stop
 status: ## what's running, where, and the URLs
 	@./scripts/status.sh
 preflight: ## check tools and Docker resources
@@ -82,4 +88,4 @@ aws-down: ## terminate the instance; keeps the address so the names stay (ALL=1 
 help:
 	@awk 'BEGIN{FS=":.*## "} /^## ----/{printf "\n\033[1m%s\033[0m\n", substr($$0,9)} /^[a-zA-Z%_-]+:.*## /{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-.PHONY: machine-setup up cluster platform down nuke verify bob-verify alice-verify continuity-verify observatory-verify agentshield-verify tour reset llm xaa-logs xaa-keys routes heal totp upstream-mcp upstream-mcp-remove status preflight aws-up aws-sync aws-ssh aws-stop aws-start aws-status aws-down help
+.PHONY: machine-setup up cluster platform down nuke verify bob-verify alice-verify continuity-verify observatory-verify agentshield-verify tour reset llm xaa-logs xaa-keys routes heal totp upstream-mcp upstream-mcp-remove user log-archive log-archive-stop status preflight aws-up aws-sync aws-ssh aws-stop aws-start aws-status aws-down help
