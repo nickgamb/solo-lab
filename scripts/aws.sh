@@ -265,10 +265,11 @@ archive_role() {
   id=$(instance_id)
   cur=$(A ec2 describe-iam-instance-profile-associations --filters "Name=instance-id,Values=$id" "Name=state,Values=associated" \
     --query 'IamInstanceProfileAssociations[0].[AssociationId,IamInstanceProfile.Arn]')
+  # a new instance profile takes a few seconds to be usable
   case "$cur" in
     *":instance-profile/$role") ;;
-    None*|"") wait_for "the role $role" 10 5 A ec2 associate-iam-instance-profile --instance-id "$id" --iam-instance-profile "Name=$role" >/dev/null ;;
-    *) A ec2 replace-iam-instance-profile-association --association-id "${cur%%[[:space:]]*}" --iam-instance-profile "Name=$role" >/dev/null ;;
+    None*|"") wait_for "the role $role" 12 5 A ec2 associate-iam-instance-profile --instance-id "$id" --iam-instance-profile "Name=$role" ;;
+    *) wait_for "the role $role" 12 5 A ec2 replace-iam-instance-profile-association --association-id "${cur%%[[:space:]]*}" --iam-instance-profile "Name=$role" ;;
   esac
   ok "the instance may write to s3://$b/${pfx:+$pfx/} (role $role)"
 }

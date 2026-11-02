@@ -46,7 +46,7 @@ run() {
   mkdir -p "$LOG_ARCHIVE_DIR" "$st"; chmod 700 "$LOG_ARCHIVE_DIR"; rm -f "$st"/*
   echo $$ >"$PIDF"
   trap 'kill $(jobs -p) 2>/dev/null; rm -f "$PIDF"; exit 0' TERM INT
-  echo "$(date -u +%FT%TZ) archiving to $LOG_ARCHIVE_DIR${LOG_ARCHIVE#local}"
+  echo "$(date -u +%FT%TZ) archiving to $LOG_ARCHIVE_DIR$([[ $LOG_ARCHIVE == s3://* ]] && echo ", copied to $LOG_ARCHIVE")"
   follow() {  # follow <ns> <pod> <container>
     local f since
     mkdir -p "$LOG_ARCHIVE_DIR/$today"
