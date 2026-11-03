@@ -1,0 +1,31 @@
+# CLIENT_AUTH=private_key_jwt: the public key of the gateway's client at one
+# outside authorization server (its document's jwks_uri), for the client
+# assertions the issuer signs with the key in Secret
+# upstream-${UPSTREAM_RESOURCE}-client. Rendered by scripts/upstream-mcp.sh.
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: DirectResponse
+metadata:
+  name: upstream-${UPSTREAM_RESOURCE}-client-jwks
+  namespace: agentgateway-system
+  labels: {lab.solo.io/upstream-resource: "${UPSTREAM_RESOURCE}"}
+spec:
+  status: 200
+  body: ${UPSTREAM_CLIENT_JWKS_BODY}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: upstream-${UPSTREAM_RESOURCE}-client-jwks
+  namespace: agentgateway-system
+  labels: {lab.solo.io/upstream-resource: "${UPSTREAM_RESOURCE}"}
+spec:
+  parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-sterling}]
+  hostnames: ["${UPSTREAM_CLIENT_HOST}"]
+  rules:
+  - matches: [{method: GET, path: {type: Exact, value: "${UPSTREAM_CLIENT_JWKS_PATH}"}}]
+    filters:
+    - type: ResponseHeaderModifier
+      responseHeaderModifier:
+        set: [{name: content-type, value: application/json}, {name: cache-control, value: max-age=300}]
+    - type: ExtensionRef
+      extensionRef: {group: gateway.kgateway.dev, kind: DirectResponse, name: upstream-${UPSTREAM_RESOURCE}-client-jwks}

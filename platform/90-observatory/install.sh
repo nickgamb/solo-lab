@@ -76,7 +76,17 @@ fi
 K apply -f "$D/rbac.yaml" >/dev/null
 apply_tmpl "$D/admission.yaml"
 apply_tmpl "$D/observatory.yaml"
-apply_tmpl "$D/telemetry.yaml"
+if [ "$ACCESS_LOG_CAPTURE" = on ]; then
+  # the AI clients' routes: the front door, the OAuth issuer, outside servers
+  export CAPTURE_ROUTES='(proxy.route.name in ["bob-workspace-clients", "ledgerline-clients"] || proxy.route.name.startsWith("oauth-issuer") || proxy.route.name.startsWith("issuer-resource-") || proxy.route.name.startsWith("upstream-"))'
+  capture=$(render "$D/access-log-capture.yaml" | yq -o json -I0)
+  render "$D/telemetry.yaml" \
+    | CAPTURE=$capture yq '(select(.metadata.name == "access-log" and .metadata.namespace == "agentgateway-system") | .spec.frontend.accessLog.attributes.add) += env(CAPTURE)' \
+    | K apply -f - >/dev/null
+  ok "access log capture on: the AI clients' requests with their headers and bodies (ACCESS_LOG_CAPTURE)"
+else
+  apply_tmpl "$D/telemetry.yaml"
+fi
 rollout observatory deploy/observatory
 wait_for "https://observatory.$OPS_DOMAIN" 30 3 \
   sh -c "curl -s --cacert '$LAB_TRUST' -o /dev/null -w '%{http_code}' https://observatory.$OPS_DOMAIN/ | grep -q 302"

@@ -1,0 +1,32 @@
+# CLIENT_DOC: the gateway's own client ID metadata document for one outside
+# authorization server, ${UPSTREAM_CLIENT_ID}: its URL is the client_id the
+# issuer signs in with there, and that server fetches it to learn the
+# gateway's redirect URI and how it authenticates. Served by the edge itself.
+# Rendered by scripts/upstream-mcp.sh.
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: DirectResponse
+metadata:
+  name: upstream-${UPSTREAM_RESOURCE}-client
+  namespace: agentgateway-system
+  labels: {lab.solo.io/upstream-resource: "${UPSTREAM_RESOURCE}"}
+spec:
+  status: 200
+  body: ${UPSTREAM_CLIENT_DOC_BODY}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: upstream-${UPSTREAM_RESOURCE}-client
+  namespace: agentgateway-system
+  labels: {lab.solo.io/upstream-resource: "${UPSTREAM_RESOURCE}"}
+spec:
+  parentRefs: [{name: edge, namespace: kgateway-system, sectionName: https-sterling}]
+  hostnames: ["${UPSTREAM_CLIENT_HOST}"]
+  rules:
+  - matches: [{method: GET, path: {type: Exact, value: "${UPSTREAM_CLIENT_PATH}"}}]
+    filters:
+    - type: ResponseHeaderModifier
+      responseHeaderModifier:
+        set: [{name: content-type, value: application/json}, {name: cache-control, value: max-age=300}]
+    - type: ExtensionRef
+      extensionRef: {group: gateway.kgateway.dev, kind: DirectResponse, name: upstream-${UPSTREAM_RESOURCE}-client}

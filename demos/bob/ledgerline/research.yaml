@@ -1,6 +1,8 @@
 # Ledgerline Research's MCP service. Ledgerline is its own company: it trusts
 # only tokens from its own authorization server (which it mints from ID-JAGs),
-# and outsiders reach it only through the edge at https://mcp.ledgerline.lab.
+# and one more when LEDGERLINE_ALSO_ISSUER names it (scripts/idp.sh
+# ledgerline_research); outsiders reach it only through the edge at
+# https://mcp.ledgerline.lab.
 #
 # Protection is Ledgerline's own agentgateway, MCP-aware, plus STRICT mTLS and
 # an L4 pin on the pods.
@@ -132,8 +134,10 @@ spec:
           matchExpressions:
           - 'mcp.methodName == "tools/list"'
           # scope: a space-separated string, the list some authorization servers
-          # issue instead (Gluu), or that list written as a string ("[a, b]")
+          # issue instead (Gluu), or that list written as a string ("[a, b]");
+          # Okta's is a list named scp
           - 'mcp.tool.name in ["sector_outlook", "research_note"] && has(jwt.scope) && "research:read" in (type(jwt.scope) == string ? jwt.scope.replace("[", " ").replace("]", " ").replace(",", " ").split(" ") : jwt.scope)'
+          - 'mcp.tool.name in ["sector_outlook", "research_note"] && has(jwt.scp) && "research:read" in jwt.scp'
           - 'mcp.tool.name == "account_info" && has(jwt.sub)'
 ---
 # Ledgerline's identity team lets its gateway fetch the signing keys.

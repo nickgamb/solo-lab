@@ -8,7 +8,8 @@
 # issuer signs the user in at the server's authorization server
 # (${UPSTREAM_AS}) and keeps that token for the user. With
 # MCP_UPSTREAM_CIMD=true the issuer names itself there by its own client ID
-# metadata document, when that server supports them.
+# metadata document, when that server supports them; with CLIENT_DOC, by a
+# document of its own for that server (client-document.yaml).
 apiVersion: ${AGW_BACKEND_API}
 kind: ${AGW_BACKEND_KIND}
 metadata:
@@ -45,11 +46,10 @@ spec:
     entElicitation:
       brokered:
         mcpResourcePath: /mcp/${UPSTREAM_RESOURCE}
+        # its authorization server (baseUrl: found from it), or with CLIENT_DOC
+        # its endpoints and the gateway's own client there
         chainedAuth:
-          oauth:
-            baseUrl: ${UPSTREAM_AS}
-            scopes: ${UPSTREAM_SCOPES}
-            clientName: "${UPSTREAM_NAME}"
+          oauth: ${UPSTREAM_OAUTH}
     entTokenExchange:
       solo:
         elicitation: {}

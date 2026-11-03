@@ -112,6 +112,14 @@ sequenceDiagram
   `MCP_UPSTREAM_CIMD=true` (a public front door) and the server supports
   them, else it registers itself. The authorization server is set per
   resource, so an outside server can't redirect S&V's users elsewhere.
+  - With `CLIENT_DOC=<doc>`, the gateway names itself there by a client ID
+    metadata document of its own for that server instead, served by the
+    edge at `MCP_PUBLIC_URL/clients/<doc>.json` (or at `<doc>`, a path):
+    the issuer's redirect URI, the scopes, and how it authenticates. The
+    server's endpoints come from its metadata. `CLIENT_AUTH=private_key_jwt`
+    signs the issuer's token requests with an ES256 key of its own, whose
+    public key the document publishes (`jwks_uri`); the default is a public
+    client. PKCE S256 either way.
 - **No open registration (OSS).** Every client gets the one client S&V
   registered, `sv-mcp-client` (public, PKCE S256, loopback redirects only,
   no password grant); the gateway names itself the authorization server.

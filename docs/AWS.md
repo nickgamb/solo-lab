@@ -93,6 +93,7 @@ In `.env`:
 | `LAB_ACME_EMAIL` | | Let's Encrypt's contact for expiry notices |
 | `LAB_ACME_SERVER` | Let's Encrypt production | the staging directory for rehearsals |
 | `DATADOG_ENV` | `aws` | with `DATADOG_API_KEY` in `.env`: the instance's env tag in Datadog, apart from your local lab's ([DATADOG.md](DATADOG.md)) |
+| `LOG_ARCHIVE` | `off` | `s3://<bucket>/<prefix>` in `AWS_ENV`: the instance keeps its log archive as a service and copies it there every hour, with a role of its own (`<AWS_NAME>-log-archive`) that may write under that prefix; the bucket is made if missing. `local` keeps it on the instance only ([COMMANDS.md](COMMANDS.md#gateways)) |
 | `MCP_UPSTREAM_CIMD` | `false` | `true` in `AWS_ENV`: the gateway names itself to outside MCP servers' authorization servers by its own client ID metadata document (`make upstream-mcp`, [IDENTITY-FLOWS.md](IDENTITY-FLOWS.md)) |
 
 Let's Encrypt certificates are kept on the instance in `.lab/edge-certs/` and

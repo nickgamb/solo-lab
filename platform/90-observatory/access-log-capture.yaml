@@ -1,0 +1,16 @@
+# ACCESS_LOG_CAPTURE=on: what the ai-gateway's access log adds for each
+# request to an AI client's routes (the MCP front door, the OAuth issuer and
+# the outside MCP servers behind it), so a flow can be read end to end from
+# the log alone: the route, the request and response bodies (base64), whether
+# the request carried an Authorization header (its scheme, never its value),
+# and the response's WWW-Authenticate and Location (no query) headers. Bodies
+# hold authorization codes and tokens: for showing a flow, not for every day.
+# Appended to the access-log policy by install.sh.
+- {name: x.route, expression: 'proxy.route.name'}
+- {name: x.req.body, expression: '${CAPTURE_ROUTES} ? request.body : ""'}
+# not an event stream's body: it never ends
+- {name: x.resp.body, expression: '(${CAPTURE_ROUTES}) && !(request.method == "GET" && "accept" in request.headers && request.headers["accept"].contains("text/event-stream")) ? response.body : ""'}
+- {name: x.req.authorization, expression: '${CAPTURE_ROUTES} ? ("authorization" in request.headers ? "present (" + request.headers["authorization"].split(" ")[0] + " scheme)" : "absent") : ""'}
+- {name: x.resp.www_authenticate, expression: '(${CAPTURE_ROUTES}) && "www-authenticate" in response.headers ? response.headers["www-authenticate"] : ""'}
+- {name: x.resp.location, expression: '(${CAPTURE_ROUTES}) && "location" in response.headers ? response.headers["location"].split("?")[0] : ""'}
+- {name: x.req.content_type, expression: '(${CAPTURE_ROUTES}) && "content-type" in request.headers ? request.headers["content-type"] : ""'}

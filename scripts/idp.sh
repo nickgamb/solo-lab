@@ -180,6 +180,21 @@ ras_env() {
       || die "Ledgerline's AS: its token endpoint must be a plain https URL on its issuer's host ($LEDGERLINE_AS_TOKEN_URL)"
   fi
   export LEDGERLINE_AS_TOKEN_URL LEDGERLINE_AS_JWKS_URI
+  # the other authorization server Ledgerline accepts (LEDGERLINE_ALSO_ISSUER)
+  LEDGERLINE_ALSO_JWKS_URI=
+  if [ -n "$LEDGERLINE_ALSO_ISSUER" ]; then
+    [ -n "$LEDGERLINE_ALSO_AUDIENCE" ] && [ -n "$LEDGERLINE_ALSO_CLIENTS" ] \
+      || die "LEDGERLINE_ALSO_ISSUER needs LEDGERLINE_ALSO_AUDIENCE and LEDGERLINE_ALSO_CLIENTS"
+    [[ $LEDGERLINE_ALSO_ISSUER == https://* ]] && ! idp_internal "$LEDGERLINE_ALSO_ISSUER" \
+      || die "LEDGERLINE_ALSO_ISSUER: an https issuer outside the lab ($LEDGERLINE_ALSO_ISSUER)"
+    [ "${LEDGERLINE_ALSO_ISSUER%/}" != "${LEDGERLINE_AS_ISSUER%/}" ] || die "LEDGERLINE_ALSO_ISSUER is RESOURCE_AS's own issuer"
+    d=$(as_discover "$LEDGERLINE_ALSO_ISSUER")
+    [ "$(echo "$d" | jq -r .issuer)" = "$LEDGERLINE_ALSO_ISSUER" ] \
+      || die "LEDGERLINE_ALSO_ISSUER must match the issuer its metadata states: $(echo "$d" | jq -r .issuer)"
+    LEDGERLINE_ALSO_JWKS_URI=$(echo "$d" | jq -r .jwks_uri)
+    [[ $LEDGERLINE_ALSO_JWKS_URI == https://* ]] || die "LEDGERLINE_ALSO_ISSUER: no https jwks_uri in its metadata"
+  fi
+  export LEDGERLINE_ALSO_JWKS_URI
 }
 
 # idp_client_auth <name>: how S&V authenticates to an upstream: with its keys
@@ -410,23 +425,38 @@ ledgerline_realm() {
 
 # ledgerline_research: filters ledgerline/research.yaml for an AS outside the
 # lab: the MCP server and its gateway accept tokens from it, for the audience
-# it names Ledgerline's server by (LEDGERLINE_NAME_AUDIENCE)
+# it names Ledgerline's server by (LEDGERLINE_NAME_AUDIENCE); and from the
+# other one, when LEDGERLINE_ALSO_ISSUER names one
 ledgerline_research() {
-  if ! ras_external; then cat; return; fi
-  yq '
+  local f='.'
+  if ras_external; then
+    f='
     (select(.kind == "MCPServer") | .spec.deployment.env) |= (
       .RESEARCH_ISSUER = strenv(LEDGERLINE_AS_ISSUER) | .RESEARCH_JWKS_URL = strenv(LEDGERLINE_AS_JWKS_URI)
       | .RESEARCH_AUDIENCE = strenv(LEDGERLINE_AS_AUDIENCE))
     | (select(.metadata.name == "research-callers") | .spec.traffic.jwtAuthentication.providers[0]) |= (
       .issuer = strenv(LEDGERLINE_AS_ISSUER) | .audiences = [strenv(LEDGERLINE_AS_AUDIENCE)]
       | .jwks.remote = {"url": strenv(LEDGERLINE_AS_JWKS_URI), "cacheDuration": "5m"})'
+  fi
+  if [ -n "$LEDGERLINE_ALSO_ISSUER" ]; then
+    f="$f"'
+    | (select(.kind == "MCPServer") | .spec.deployment.env) |= (
+      .RESEARCH_ALSO_ISSUER = strenv(LEDGERLINE_ALSO_ISSUER) | .RESEARCH_ALSO_JWKS_URL = strenv(LEDGERLINE_ALSO_JWKS_URI)
+      | .RESEARCH_ALSO_AUDIENCE = strenv(LEDGERLINE_ALSO_AUDIENCE) | .RESEARCH_ALSO_CLIENTS = strenv(LEDGERLINE_ALSO_CLIENTS))
+    | (select(.metadata.name == "research-callers") | .spec.traffic.jwtAuthentication.providers) += [{
+      "issuer": strenv(LEDGERLINE_ALSO_ISSUER), "audiences": [strenv(LEDGERLINE_ALSO_AUDIENCE)],
+      "jwks": {"remote": {"url": strenv(LEDGERLINE_ALSO_JWKS_URI), "cacheDuration": "5m"}}}]'
+  fi
+  if [ "$f" = . ]; then cat; else yq "$f"; fi
 }
 
 # ledgerline_egress_hosts: internet hosts Ledgerline's own services reach: its
 # AS's keys when that AS is outside the lab (the MCP server verifies its
 # tokens). The lab's own hosts are reached through the edge.
 ledgerline_egress_hosts() {
-  if ras_external; then echo "$LEDGERLINE_AS_JWKS_URI" | sed -E 's#^https://([^/:]+).*#\1#'; fi
+  { if ras_external; then echo "$LEDGERLINE_AS_JWKS_URI"; fi
+    if [ -n "$LEDGERLINE_ALSO_JWKS_URI" ]; then echo "$LEDGERLINE_ALSO_JWKS_URI"; fi
+  } | sed -E 's#^https://([^/:]+).*#\1#' | sort -u
 }
 
 # ledgerline_egress: one ServiceEntry per host, bound to Ledgerline's egress

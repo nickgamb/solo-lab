@@ -48,6 +48,12 @@ if [ "$ED" = enterprise ]; then
   export MCP_ISSUER_CONFIG
 fi
 values_for "$D" values "$ED"
+# the controller from another image than the chart's (AGW_CONTROLLER_IMAGE)
+if [ "$ED" = enterprise ] && [ -n "$AGW_CONTROLLER_IMAGE" ]; then
+  [[ $AGW_CONTROLLER_IMAGE =~ ^(.+)/([^/:]+):([^/:]+)$ ]] || die "AGW_CONTROLLER_IMAGE: <registry>/<repository>:<tag>"
+  VALS+=(--set "controller.image.registry=${BASH_REMATCH[1]}" --set "controller.image.repository=${BASH_REMATCH[2]}" --set "controller.image.tag=${BASH_REMATCH[3]}")
+  ok "controller image: $AGW_CONTROLLER_IMAGE"
+fi
 helm_up "$AGW_RELEASE" "$AGW_CHART" "$AGW_VERSION" agentgateway-system ${VALS[@]+"${VALS[@]}"}
 # Enterprise: a controller that loses its leader lease can stay up without
 # serving; restart it when it stops answering (the chart sets no liveness probe)
