@@ -61,7 +61,7 @@ client_doc() {
   body=$(jq -nc --arg id "$UPSTREAM_CLIENT_ID" --arg r "$MCP_PUBLIC_URL/oauth-issuer/callback/upstream" \
     --arg s "$scopes" --arg a "$auth" --arg j "$MCP_PUBLIC_URL$UPSTREAM_CLIENT_JWKS_PATH" \
     '{client_id: $id, client_name: "Sterling & Vance (agentgateway)", redirect_uris: [$r],
-      grant_types: ["authorization_code"], response_types: ["code"], token_endpoint_auth_method: $a}
+      grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: $a}
      + (if $s != "" then {scope: $s} else {} end)
      + (if $a == "private_key_jwt" then {token_endpoint_auth_signing_alg: "ES256", jwks_uri: $j} else {} end)')
   export UPSTREAM_CLIENT_DOC_BODY UPSTREAM_CLIENT_JWKS_BODY
