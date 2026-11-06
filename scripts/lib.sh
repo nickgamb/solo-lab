@@ -420,6 +420,26 @@ restore_broker_groups() {
       || die "group $g at S&V's broker"
   done
 }
+# link_ledgerline_bob: Ledgerline onboards S&V's people: its Bob is S&V's Bob,
+# by the broker account the directory sync made for him from S&V's primary
+# IdP (the subject of the ID-JAGs S&V's broker vouches with). Ledgerline's
+# Keycloak keeps only its realm file across a restart, so heal links him again.
+link_ledgerline_bob() {
+  local bid lid code
+  K get deploy keycloak -n ledgerline-identity >/dev/null 2>&1 || return 0
+  bid=$(kc_admin sv-identity SV_KC_ADMIN_PASSWORD sterling-vance GET "/users?exact=true&briefRepresentation=true&email=bob%40$SV_MAIL_DOMAIN" | jq -r '.[0].id // empty')
+  lid=$(kc_admin ledgerline-identity LL_KC_ADMIN_PASSWORD ledgerline GET "/users?exact=true&briefRepresentation=true&email=bob%40$SV_MAIL_DOMAIN" | jq -r '.[0].id // empty')
+  if [ -n "$bid" ] && [ -n "$lid" ]; then
+    kc_admin ledgerline-identity LL_KC_ADMIN_PASSWORD ledgerline DELETE "/users/$lid/federated-identity/sterling-vance" -o /dev/null
+    code=$(kc_admin ledgerline-identity LL_KC_ADMIN_PASSWORD ledgerline POST "/users/$lid/federated-identity/sterling-vance" \
+      -H 'content-type: application/json' -o /dev/null -w '%{http_code}' \
+      --data "$(jq -nc --arg u "$bid" --arg n "bob@$SV_MAIL_DOMAIN" '{identityProvider: "sterling-vance", userId: $u, userName: $n}')")
+    [ "$code" = 204 ] || die "linking Ledgerline's Bob to S&V's broker account: HTTP $code"
+    ok "Ledgerline's Bob linked to S&V's broker account for bob@$SV_MAIL_DOMAIN"
+  else
+    warn "no S&V broker account for bob@$SV_MAIL_DOMAIN yet (the directory sync makes it from S&V's primary IdP): Ledgerline can't link him"
+  fi
+}
 # restart_workers: Substrate's worker pods register their address once, when
 # they start. A pod whose containers came back in place (the nodes restarted)
 # has a new address under its old registration, and actors routed to it hang:
