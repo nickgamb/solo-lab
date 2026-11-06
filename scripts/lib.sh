@@ -377,6 +377,22 @@ refresh_no_internet() {
     | [.metadata.namespace, .metadata.name, (.spec.podSelector | tojson)] | @tsv' |
   while IFS=$'\t' read -r ns name sel; do _no_internet "$ns" "$name" "$sel"; echo "$ns/$name"; done
 }
+# reenroll_mesh: after the nodes restart, istio-cni can fail to add a pod to
+# ztunnel while the pod's loopback is still coming up ("got ack error ...
+# AddrNotAvailable"); the pod then has no HBONE listener and every STRICT
+# peer resets it. The CNI agent doesn't retry: restart it, and it adds every
+# pod again.
+reenroll_mesh() {
+  local p
+  K get daemonset -n istio-system istio-cni-node >/dev/null 2>&1 || return 0
+  for p in $(K get pods -n istio-system -l k8s-app=istio-cni-node -o name); do
+    K logs -n istio-system "$p" 2>/dev/null | grep -q 'add-workload: got ack error' || continue
+    K rollout restart daemonset/istio-cni-node -n istio-system >/dev/null
+    rollout istio-system daemonset/istio-cni-node
+    ok "istio-cni restarted: every pod added to ztunnel again"
+    return 0
+  done
+}
 # rejoin_valkey: Agent Substrate's valkey cluster keeps its peers' pod
 # addresses; pods that come back with new ones leave it in cluster_state:fail.
 # Introduce every member at its address now (slots and data stay).
