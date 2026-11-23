@@ -393,20 +393,32 @@ reenroll_mesh() {
     return 0
   done
 }
+# valkey_settled: every member sees the cluster ok with no member failing, and
+# every replica follows its master
+valkey_settled() {
+  local i
+  for i in $(seq 0 $(( $(K get statefulset -n ate-system valkey-cluster -o jsonpath='{.spec.replicas}') - 1 ))); do
+    K exec -n ate-system "valkey-cluster-$i" -- valkey-cli cluster info 2>/dev/null | grep -q '^cluster_state:ok' || return 1
+    ! K exec -n ate-system "valkey-cluster-$i" -- valkey-cli cluster nodes 2>/dev/null | grep -q 'fail' || return 1
+    ! K exec -n ate-system "valkey-cluster-$i" -- valkey-cli info replication 2>/dev/null | grep -q '^master_link_status:down' || return 1
+  done
+}
 # rejoin_valkey: Agent Substrate's valkey cluster keeps its peers' pod
-# addresses; pods that come back with new ones leave it in cluster_state:fail.
-# Introduce every member at its address now (slots and data stay).
+# addresses; pods that come back with new ones leave it in cluster_state:fail,
+# or leave a replica following its master's old address (it then serves what
+# it held before the restart). Introduce every member at its address now
+# (slots and data stay).
 rejoin_valkey() {
   local i ip ips=""
   K get statefulset -n ate-system valkey-cluster >/dev/null 2>&1 || return 0
-  K exec -n ate-system valkey-cluster-0 -- valkey-cli cluster info 2>/dev/null | grep -q '^cluster_state:ok' && return 0
+  valkey_settled && return 0
   for i in $(seq 0 $(( $(K get statefulset -n ate-system valkey-cluster -o jsonpath='{.spec.replicas}') - 1 ))); do
     ips="$ips $(K get pod -n ate-system "valkey-cluster-$i" -o jsonpath='{.status.podIP}')"
   done
   for i in $(seq 0 $(( $(echo $ips | wc -w) - 1 ))); do
     for ip in $ips; do K exec -n ate-system "valkey-cluster-$i" -- valkey-cli cluster meet "$ip" 6379 >/dev/null; done
   done
-  wait_for "valkey cluster_state:ok" 30 3 sh -c "kubectl --context $KCTX exec -n ate-system valkey-cluster-0 -- valkey-cli cluster info 2>/dev/null | grep -q '^cluster_state:ok'"
+  wait_for "valkey's members settled" 30 3 valkey_settled
 }
 # restore_broker_groups: S&V's broker starts from its realm file, without the
 # profile's groups (the directory sync creates them). The IdPs' group mappers
@@ -452,6 +464,27 @@ restart_workers() {
     K rollout restart -n "${d%/*}" deployment "${d#*/}" >/dev/null && K rollout status -n "${d%/*}" deployment "${d#*/}" --timeout=180s >/dev/null \
       && ok "worker pool ${d#*/} registered again"
   done
+}
+# forget_gone_workers: Substrate keeps one registration for each worker pod
+# (worker:<namespace>:<pool>:<pod> in its valkey) and drops it when the pod is
+# deleted. A pod deleted while the nodes were restarting stays registered, and
+# an actor placed on it fails ("worker pod not found"): the registrations of
+# pods that are gone are removed, and the API server reads them again.
+forget_gone_workers() {
+  local live i key ns pod gone=0
+  K get statefulset -n ate-system valkey-cluster >/dev/null 2>&1 || return 0
+  live=$(K get pods -A -l ate.dev/worker-pool -o json | jq -r '.items[] | .metadata.namespace + ":" + .metadata.name') || return 1
+  for i in $(seq 0 $(( $(K get statefulset -n ate-system valkey-cluster -o jsonpath='{.spec.replicas}') - 1 ))); do
+    for key in $(K exec -n ate-system "valkey-cluster-$i" -- valkey-cli --scan --pattern 'worker:*' 2>/dev/null); do
+      IFS=: read -r _ ns _ pod <<<"$key"
+      grep -qxF "$ns:$pod" <<<"$live" && continue
+      # -c: a replica sends the delete to the key's master; 1 = it was there
+      [ "$(K exec -n ate-system "valkey-cluster-$i" -- valkey-cli -c del "$key" 2>/dev/null)" = 1 ] && gone=$((gone + 1))
+    done
+  done
+  [ "$gone" -gt 0 ] || return 0
+  K rollout restart -n ate-system deployment/ate-api-server-deployment >/dev/null && rollout ate-system deployment/ate-api-server-deployment
+  ok "$gone worker registrations of pods that are gone removed"
 }
 _no_internet() {  # _no_internet <ns> <policy name> <podSelector>
   local pods svcs api nodes cfg
