@@ -14,7 +14,8 @@
 // means (the processor's failureMode): params it can't read are an error to
 // it, never a pass. Plain gRPC (h2c) on LISTEN: the mesh's mTLS covers the
 // hop. One JSON log line per call: the tool, the symbol when there is one,
-// the decision, and the caller's subject and client; never a token.
+// the decision, the caller's subject and client, and whether the gateway
+// also handed it the caller's token (metadata "token"); never the token.
 package main
 
 import (
@@ -76,8 +77,10 @@ func (g guard) decide(params []byte) (reason, tool, symbol string, err error) {
 	return "", call.Name, symbol, nil
 }
 
-// caller: who the verified token says is calling (metadata "claims")
-func caller(md *structpb.Struct) (subject, client string) {
+// caller: who the verified token says is calling (metadata "claims"), and
+// whether the token itself came too (metadata "token")
+func caller(md *structpb.Struct) (subject, client string, token bool) {
+	token = md.GetFields()["token"].GetStringValue() != ""
 	claims := md.GetFields()["claims"].GetStructValue().GetFields()
 	subject = claims["sub"].GetStringValue()
 	for _, k := range []string{"azp", "client_id", "cid"} {
@@ -85,7 +88,7 @@ func caller(md *structpb.Struct) (subject, client string) {
 			break
 		}
 	}
-	return subject, client
+	return subject, client, token
 }
 
 func (g guard) CheckRequest(_ context.Context, r *extmcp.McpRequest) (*extmcp.McpRequestResult, error) {
@@ -93,17 +96,17 @@ func (g guard) CheckRequest(_ context.Context, r *extmcp.McpRequest) (*extmcp.Mc
 		return &extmcp.McpRequestResult{Result: &extmcp.McpRequestResult_Pass{Pass: pass}}, nil
 	}
 	reason, tool, symbol, err := g.decide(r.GetMcpRequest())
-	subject, client := caller(r.GetMetadataContext())
+	subject, client, token := caller(r.GetMetadataContext())
 	if err != nil {
 		slog.Warn("unreadable call", "target", r.GetServiceNames(), "subject", subject, "client", client, "err", err)
 		return nil, status.Error(codes.InvalidArgument, "unreadable tools/call params")
 	}
 	if reason != "" {
-		slog.Info("refused", "tool", tool, "symbol", symbol, "subject", subject, "client", client, "reason", reason)
+		slog.Info("refused", "tool", tool, "symbol", symbol, "subject", subject, "client", client, "token", token, "reason", reason)
 		return &extmcp.McpRequestResult{Result: &extmcp.McpRequestResult_Error{Error: &extmcp.AuthorizationError{
 			Code: extmcp.AuthorizationError_PERMISSION_DENIED, Reason: reason}}}, nil
 	}
-	slog.Info("passed", "tool", tool, "symbol", symbol, "subject", subject, "client", client)
+	slog.Info("passed", "tool", tool, "symbol", symbol, "subject", subject, "client", client, "token", token)
 	return &extmcp.McpRequestResult{Result: &extmcp.McpRequestResult_Pass{Pass: pass}}, nil
 }
 

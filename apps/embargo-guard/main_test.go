@@ -91,10 +91,22 @@ func TestCheckRequest(t *testing.T) {
 		t.Errorf("embargoed symbol: %v", refused)
 	}
 	for _, want := range []string{`"msg":"refused"`, `"tool":"research_note"`, `"symbol":"NVDA"`,
-		`"subject":"11ed0000-0000-4000-8000-000000000b0b"`, `"client":"sterling-vance-kagent"`} {
+		`"subject":"11ed0000-0000-4000-8000-000000000b0b"`, `"client":"sterling-vance-kagent"`, `"token":false`} {
 		if !strings.Contains(log.String(), want) {
 			t.Errorf("log lacks %s: %s", want, log.String())
 		}
+	}
+
+	// handed the token too: said so in the log, the token itself never
+	withToken := claims(t)
+	withToken.Fields["token"] = structpb.NewStringValue("header.payload.signature")
+	log.Reset()
+	if got, err := c.CheckRequest(ctx, &extmcp.McpRequest{Method: "tools/call",
+		McpRequest: []byte(`{"name":"account_info","arguments":{}}`), MetadataContext: withToken}); err != nil || got.GetPass() == nil {
+		t.Errorf("with the token: %v, %v; want pass", got, err)
+	}
+	if !strings.Contains(log.String(), `"token":true`) || strings.Contains(log.String(), "header.payload.signature") {
+		t.Errorf("log with the token: %s", log.String())
 	}
 
 	for _, r := range []*extmcp.McpRequest{

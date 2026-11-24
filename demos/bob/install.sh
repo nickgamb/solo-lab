@@ -37,7 +37,8 @@ mkdir -p "$LAB_STATE/realm"
 ledgerline_realm "$D/ledgerline/realm-ledgerline.json" >"$LAB_STATE/realm/realm-ledgerline.json"
 deploy_keycloak ledgerline-identity "$LEDGERLINE_DOMAIN" https-ledgerline "$LAB_STATE/realm/realm-ledgerline.json" identity-assertion-jwt
 # the policy server Ledgerline's gateway asks before each tool call
-# (LEDGERLINE_TOOL_CHECK; example: the lab's own, apps/embargo-guard)
+# (LEDGERLINE_TOOL_CHECK): the lab's own (example, apps/embargo-guard), or one
+# outside the lab
 if [ "$LEDGERLINE_TOOL_CHECK" = example ]; then
   EMBARGO_GUARD_IMAGE=$(lab_build ledgerline/embargo-guard "$LAB_ROOT/apps/embargo-guard"); export EMBARGO_GUARD_IMAGE
   apply_tmpl "$D/ledgerline/embargo-guard.yaml"
@@ -47,10 +48,9 @@ else
   K delete "$AGW_POLICY_KIND" embargo-guard-timeout embargo-guard-route -n ledgerline --ignore-not-found >/dev/null 2>&1
 fi
 if [[ $LEDGERLINE_TOOL_CHECK == https://* ]]; then apply_tmpl "$D/ledgerline/tool-check.yaml"
-else K delete "$AGW_POLICY_KIND","$AGW_BACKEND_KIND" tool-check -n ledgerline --ignore-not-found >/dev/null 2>&1; fi
+else K delete "$AGW_POLICY_KIND","$AGW_BACKEND_KIND",networkpolicy tool-check -n ledgerline --ignore-not-found >/dev/null 2>&1; fi
 render "$D/ledgerline/research.yaml" | ledgerline_research | K apply -f - >/dev/null
-apply_tmpl "$D/ledgerline/identity.yaml"
-render "$D/ledgerline/egress.yaml" | ledgerline_egress_callers | K apply -f - >/dev/null
+apply_tmpl "$D/ledgerline/identity.yaml" "$D/ledgerline/egress.yaml"
 deny_internet ledgerline ledgerline-identity
 ledgerline_egress
 K delete networkpolicy research-to-as -n ledgerline --ignore-not-found >/dev/null   # earlier labs

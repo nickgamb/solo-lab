@@ -320,8 +320,11 @@ refusal reaches the agent as the tool's error, with the server's reason.
 The check runs ahead of the gateway's own tool rules and fails closed: no
 answer within `LEDGERLINE_TOOL_CHECK_TIMEOUT` (2 s) refuses the call. Of the
 request's headers the server gets only those in
-`LEDGERLINE_TOOL_CHECK_HEADERS` (`traceparent`); add `authorization` to hand
-it the token itself.
+`LEDGERLINE_TOOL_CHECK_HEADERS` (`traceparent`).
+`LEDGERLINE_TOOL_CHECK_TOKEN=on` also hands it the caller's token itself,
+for a server that verifies the token on its own. A server outside the lab
+is reached over TLS by Ledgerline's gateway alone, at that server's address
+and port and nowhere else outside.
 
 The voucher is chosen for each session. An IdP listed in `XAA_VOUCHER`
 vouches for its own sign-ins, from the ID token it issued; every other

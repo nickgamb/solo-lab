@@ -21,3 +21,16 @@ spec:
   targetRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: tool-check}]
   backend:
     http: {requestTimeout: ${LEDGERLINE_TOOL_CHECK_TIMEOUT}, version: HTTP2}
+---
+# Ledgerline's pods reach nothing outside the lab (no-internet). Its gateway
+# alone reaches the policy server, and nothing else there: the server's
+# addresses when the lab was installed, on its port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: tool-check, namespace: ledgerline}
+spec:
+  podSelector: {matchLabels: {gateway.networking.k8s.io/gateway-name: mcp-gateway}}
+  policyTypes: [Egress]
+  egress:
+  - to: ${LEDGERLINE_TOOL_CHECK_ADDRESSES}
+    ports: [{port: ${LEDGERLINE_TOOL_CHECK_PORT}, protocol: TCP}]
