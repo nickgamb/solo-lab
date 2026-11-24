@@ -197,6 +197,26 @@ ras_env() {
   export LEDGERLINE_ALSO_JWKS_URI
 }
 
+# tool_check_env: the policy server Ledgerline's gateway asks before each tool
+# call (LEDGERLINE_TOOL_CHECK), as the guardrail names it
+# (LEDGERLINE_TOOL_CHECK_REF): the lab's example, a Service beside the gateway,
+# or one outside the lab, a backend of the gateway's reached over TLS
+tool_check_env() {
+  LEDGERLINE_TOOL_CHECK_HOST="" LEDGERLINE_TOOL_CHECK_PORT="" LEDGERLINE_TOOL_CHECK_REF=""
+  export LEDGERLINE_TOOL_CHECK_HOST LEDGERLINE_TOOL_CHECK_PORT LEDGERLINE_TOOL_CHECK_REF
+  [ -n "$LEDGERLINE_TOOL_CHECK" ] || return 0
+  [ "$AGW_EDITION" = enterprise ] || die "LEDGERLINE_TOOL_CHECK needs agentgateway Enterprise (MCP guardrails)"
+  if [ "$LEDGERLINE_TOOL_CHECK" = example ]; then
+    LEDGERLINE_TOOL_CHECK_HOST=embargo-guard.ledgerline.svc LEDGERLINE_TOOL_CHECK_PORT=4445
+    LEDGERLINE_TOOL_CHECK_REF='{"name": "embargo-guard", "port": 4445}'
+    return 0
+  fi
+  [[ $LEDGERLINE_TOOL_CHECK =~ ^https://([^/:]+)(:([0-9]+))?/?$ ]] \
+    || die "LEDGERLINE_TOOL_CHECK: example, or https://host[:port] without a path (now $LEDGERLINE_TOOL_CHECK)"
+  LEDGERLINE_TOOL_CHECK_HOST=${BASH_REMATCH[1]} LEDGERLINE_TOOL_CHECK_PORT=${BASH_REMATCH[3]:-443}
+  LEDGERLINE_TOOL_CHECK_REF=$(jq -nc --arg g "$AGW_BACKEND_GROUP" --arg k "$AGW_BACKEND_KIND" '{group: $g, kind: $k, name: "tool-check"}')
+}
+
 # idp_client_auth <name>: how S&V authenticates to an upstream: with its keys
 # (private_key_jwt) unless the upstream was given a client secret in .env
 idp_client_auth() { if [ -n "$(_idp_var "$1" CLIENT_SECRET)" ]; then echo client_secret_post; else echo private_key_jwt; fi; }
@@ -447,23 +467,53 @@ ledgerline_research() {
       "issuer": strenv(LEDGERLINE_ALSO_ISSUER), "audiences": [strenv(LEDGERLINE_ALSO_AUDIENCE)],
       "jwks": {"remote": {"url": strenv(LEDGERLINE_ALSO_JWKS_URI), "cacheDuration": "5m"}}}]'
   fi
+  # the policy server asked before each tool call (LEDGERLINE_TOOL_CHECK): a
+  # request-phase guardrail, ahead of the rules above, that fails closed. It is
+  # sent the tool's name and arguments, the verified token's claims, and only
+  # the request headers named (LEDGERLINE_TOOL_CHECK_HEADERS): without that
+  # list it would get them all, the caller's token among them.
+  if [ -n "$LEDGERLINE_TOOL_CHECK" ]; then
+    local headers; headers=$(jq -nc '$ARGS.positional' --args $LEDGERLINE_TOOL_CHECK_HEADERS)
+    [ "$headers" != '[]' ] || die "LEDGERLINE_TOOL_CHECK_HEADERS: at least one header (traceparent)"
+    f="$f"'
+    | (select(.metadata.name == "research-tools") | .spec.backend.mcp.guardrails) = {"processors": [{
+      "remote": {"backendRef": '"$LEDGERLINE_TOOL_CHECK_REF"',
+                 "failureMode": "FailClosed", "metadata": {"claims": "jwt"}, "allowedRequestHeaders": '"$headers"'},
+      "methods": {"tools/call": "Request"}}]}'
+  fi
   if [ "$f" = . ]; then cat; else yq "$f"; fi
+}
+
+# ledgerline_egress_callers: a filter over egress.yaml. Ledgerline's gateway
+# joins the callers of its egress waypoint when the policy server it asks
+# before a tool call is outside the lab (LEDGERLINE_TOOL_CHECK=https://...)
+ledgerline_egress_callers() {
+  if [[ $LEDGERLINE_TOOL_CHECK == https://* ]]; then
+    yq '(select(.metadata.name == "egress-callers") | .spec.rules[0].from[0].source.principals) += ["cluster.local/ns/ledgerline/sa/mcp-gateway"]'
+  else cat; fi
 }
 
 # ledgerline_egress_hosts: internet hosts Ledgerline's own services reach: its
 # AS's keys when that AS is outside the lab (the MCP server verifies its
-# tokens). The lab's own hosts are reached through the edge.
+# tokens), and the policy server its gateway asks before each tool call, when
+# that is outside the lab. The lab's own hosts are reached through the edge.
 ledgerline_egress_hosts() {
   { if ras_external; then echo "$LEDGERLINE_AS_JWKS_URI"; fi
     if [ -n "$LEDGERLINE_ALSO_JWKS_URI" ]; then echo "$LEDGERLINE_ALSO_JWKS_URI"; fi
+    if [[ $LEDGERLINE_TOOL_CHECK == https://* ]]; then echo "$LEDGERLINE_TOOL_CHECK"; fi
   } | sed -E 's#^https://([^/:]+).*#\1#' | sort -u
 }
 
 # ledgerline_egress: one ServiceEntry per host, bound to Ledgerline's egress
 # waypoint (ledgerline/egress.yaml); stale ones removed
 ledgerline_egress() {
-  local h hosts; hosts=$(ledgerline_egress_hosts)
+  local h hosts ports; hosts=$(ledgerline_egress_hosts)
   for h in $hosts; do
+    ports='{name: tls, number: 443, protocol: TLS}'
+    # the policy server's own port, when it isn't 443
+    if [[ $LEDGERLINE_TOOL_CHECK == https://* ]] && [ "$h" = "$LEDGERLINE_TOOL_CHECK_HOST" ] && [ "$LEDGERLINE_TOOL_CHECK_PORT" != 443 ]; then
+      ports="$ports, {name: tool-check, number: $LEDGERLINE_TOOL_CHECK_PORT, protocol: TLS}"
+    fi
     K apply -f - >/dev/null <<YAML
 apiVersion: networking.istio.io/v1
 kind: ServiceEntry
@@ -476,7 +526,7 @@ spec:
   exportTo: [., ledgerline, ledgerline-identity, agentgateway-system]
   location: MESH_EXTERNAL
   resolution: DNS
-  ports: [{name: tls, number: 443, protocol: TLS}]
+  ports: [$ports]
 YAML
   done
   K get serviceentry -n ledgerline-egress -l lab.solo.io/egress=ledgerline -o json \

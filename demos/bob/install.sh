@@ -8,7 +8,7 @@ need_cluster
 # Ledgerline's authorization server (RESOURCE_AS), which redeems the ID-JAGs
 # S&V's broker vouches with: scripts/idp.sh
 . "$LAB_ROOT/scripts/idp.sh"
-ras_env; xaa_env
+ras_env; xaa_env; tool_check_env
 
 step "Images (local registry)"
 # tagged by a hash of their source (lab_build)
@@ -36,8 +36,21 @@ secret_apply ledgerline-identity kc-secrets \
 mkdir -p "$LAB_STATE/realm"
 ledgerline_realm "$D/ledgerline/realm-ledgerline.json" >"$LAB_STATE/realm/realm-ledgerline.json"
 deploy_keycloak ledgerline-identity "$LEDGERLINE_DOMAIN" https-ledgerline "$LAB_STATE/realm/realm-ledgerline.json" identity-assertion-jwt
+# the policy server Ledgerline's gateway asks before each tool call
+# (LEDGERLINE_TOOL_CHECK; example: the lab's own, apps/embargo-guard)
+if [ "$LEDGERLINE_TOOL_CHECK" = example ]; then
+  EMBARGO_GUARD_IMAGE=$(lab_build ledgerline/embargo-guard "$LAB_ROOT/apps/embargo-guard"); export EMBARGO_GUARD_IMAGE
+  apply_tmpl "$D/ledgerline/embargo-guard.yaml"
+  rollout ledgerline deploy/embargo-guard
+else
+  K delete deploy,svc,pdb,sa,httproute embargo-guard -n ledgerline --ignore-not-found >/dev/null 2>&1
+  K delete "$AGW_POLICY_KIND" embargo-guard-timeout embargo-guard-route -n ledgerline --ignore-not-found >/dev/null 2>&1
+fi
+if [[ $LEDGERLINE_TOOL_CHECK == https://* ]]; then apply_tmpl "$D/ledgerline/tool-check.yaml"
+else K delete "$AGW_POLICY_KIND","$AGW_BACKEND_KIND" tool-check -n ledgerline --ignore-not-found >/dev/null 2>&1; fi
 render "$D/ledgerline/research.yaml" | ledgerline_research | K apply -f - >/dev/null
-apply_tmpl "$D/ledgerline/identity.yaml" "$D/ledgerline/egress.yaml"
+apply_tmpl "$D/ledgerline/identity.yaml"
+render "$D/ledgerline/egress.yaml" | ledgerline_egress_callers | K apply -f - >/dev/null
 deny_internet ledgerline ledgerline-identity
 ledgerline_egress
 K delete networkpolicy research-to-as -n ledgerline --ignore-not-found >/dev/null   # earlier labs
@@ -46,6 +59,7 @@ K delete gateway waypoint -n ledgerline --ignore-not-found >/dev/null
 K delete requestauthentication ledgerline-tokens -n ledgerline --ignore-not-found >/dev/null
 K delete authorizationpolicy research-access pods-only-from-waypoint -n ledgerline --ignore-not-found >/dev/null
 ok "https://mcp.$LEDGERLINE_DOMAIN  authorization server: ${RESOURCE_AS} ($LEDGERLINE_AS_ISSUER)"
+[ -z "$LEDGERLINE_TOOL_CHECK" ] || ok "Ledgerline's gateway asks $LEDGERLINE_TOOL_CHECK_HOST:$LEDGERLINE_TOOL_CHECK_PORT before each tool call (${LEDGERLINE_TOOL_CHECK_TIMEOUT} to answer, else refused)"
 
 # Ledgerline onboards S&V's people (link_ledgerline_bob, scripts/lib.sh)
 link_ledgerline_bob

@@ -229,6 +229,12 @@ if last:
     else res no "the ID-JAG lives no longer than a minted tool token ($MCP_TOKEN_LIFETIME)" "${life:-no ID-JAG}s"; fi
   fi
   check 'overweight'                              "sector_outlook through XAA"                       $AGENT $XAA call sector_outlook '{"sector":"technology"}' --token "$BOB"
+  # the lab's example policy server, asked by Ledgerline's gateway before each call
+  if [ "$LEDGERLINE_TOOL_CHECK" = example ]; then
+    check 'isError": false.*MSFT'                 "the policy server passes a research note (MSFT)"  $AGENT $XAA call research_note '{"symbol":"MSFT"}' --token "$BOB"
+    check 'isError": true.*is under embargo'      "and refuses one under embargo (${LEDGERLINE_EMBARGO%%[, ]*}): the agent is told why" \
+                                                  $AGENT $XAA call research_note "{\"symbol\":\"${LEDGERLINE_EMBARGO%%[, ]*}\"}" --token "$BOB"
+  fi
   check "$ACCOUNT"                                "another user's ID token is replaced: still Bob"   $AGENT $XAA call account_info '{}' --token "$BOB" --header "x-id-token=$OTHER_ID"
   # every call vouched afresh: as many distinct ID-JAGs as calls through the leg
   # to Ledgerline's AS; and, at Ledgerline's own AS, a token no longer lived
@@ -285,6 +291,17 @@ fi
 # Ledgerline answers nothing without its own token: not even its tool list
 check 'http": 401'                              "Ledgerline with no token: 401, nothing listed" $AGENT https://mcp.$LEDGERLINE_DOMAIN/mcp list
 check 'http": 401'                              "a research call with no Ledgerline token: 401 at Ledgerline's gateway" $AGENT https://mcp.$LEDGERLINE_DOMAIN/mcp call sector_outlook '{"sector": "technology"}'
+# the policy server Ledgerline's gateway asks before each tool call
+if [ -n "$LEDGERLINE_TOOL_CHECK" ]; then
+  tool_check_env
+  if [ "$LEDGERLINE_TOOL_CHECK" = example ]; then to=embargo-guard deadline=embargo-guard-timeout; else to=tool-check deadline=tool-check; fi
+  got=$(K get "$AGW_POLICY_KIND" research-tools -n ledgerline -o json 2>&1 | jq -c '.spec.backend.mcp.guardrails.processors[0]
+    | {methods, to: .remote.backendRef.name, failureMode: .remote.failureMode, headers: .remote.allowedRequestHeaders}' 2>&1) || got=${got:-none}
+  expect_res "\"methods\":\{\"tools/call\":\"Request\"\},\"to\":\"$to\",\"failureMode\":\"FailClosed\",\"headers\":\[\"" \
+    "Ledgerline's gateway asks the policy server ($LEDGERLINE_TOOL_CHECK_HOST:$LEDGERLINE_TOOL_CHECK_PORT) before each tool call: request phase, failing closed, named headers only" "$got"
+  got=$(K get "$AGW_POLICY_KIND" "$deadline" -n ledgerline -o jsonpath='{.spec.backend.http.requestTimeout} {.status.ancestors[0].conditions[?(@.type=="Attached")].status}' 2>&1) || true
+  expect_res "^$LEDGERLINE_TOOL_CHECK_TIMEOUT True\$" "no answer from it within $LEDGERLINE_TOOL_CHECK_TIMEOUT refuses the call" "$got"
+fi
 # and through Bob's agent itself, as in the chat (the model picks the tool)
 if ! why=$(llm_ready); then
   skipped "Bob's agent, in chat: needs the model ($why)"

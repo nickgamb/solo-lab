@@ -1,0 +1,23 @@
+# A policy server outside the lab that Ledgerline's gateway asks before each
+# tool call (LEDGERLINE_TOOL_CHECK=https://..., Enterprise): an ExtMCP server,
+# gRPC over TLS. The guardrail that calls it is on the tools' policy
+# (research-tools, research.yaml; scripts/idp.sh adds it): request phase,
+# tools/call only, failing closed. Here: where the server is, verified against
+# the lab's trust bundle (its CA and the public roots), and how long the
+# gateway waits for its answer. Without a deadline a slow server holds the
+# call open instead of failing it.
+apiVersion: ${AGW_BACKEND_API}
+kind: ${AGW_BACKEND_KIND}
+metadata: {name: tool-check, namespace: ledgerline}
+spec:
+  static: {host: "${LEDGERLINE_TOOL_CHECK_HOST}", port: ${LEDGERLINE_TOOL_CHECK_PORT}}
+  policies:
+    tls: {sni: "${LEDGERLINE_TOOL_CHECK_HOST}", caCertificateRefs: [{name: lab-ca-bundle}]}
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: tool-check, namespace: ledgerline}
+spec:
+  targetRefs: [{group: ${AGW_BACKEND_GROUP}, kind: ${AGW_BACKEND_KIND}, name: tool-check}]
+  backend:
+    http: {requestTimeout: ${LEDGERLINE_TOOL_CHECK_TIMEOUT}, version: HTTP2}

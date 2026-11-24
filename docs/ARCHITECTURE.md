@@ -67,6 +67,7 @@ Every workload has its own ServiceAccount. The SPIFFE ID is
 | `sv-u4a` | `u4a-adapter` (UMA client: holds Bob's agent's key) | `u4a-adapter` | S&V / Bob | ai-gateway only |
 | `ledgerline-identity` | Keycloak `ledgerline` (ID-JAG receiver) | `keycloak` | Ledgerline | edge (the realm only); `ledgerline-research` (JWKS) |
 | `ledgerline` | `ledgerline-research` (kmcp) behind `mcp-gateway`, Ledgerline's agentgateway | `ledgerline-research` | Ledgerline | edge (Ledgerline token for calls, verified again by the server) |
+| `ledgerline` | `embargo-guard` (with `LEDGERLINE_TOOL_CHECK=example`: the policy server `mcp-gateway` asks before each tool call) | `embargo-guard` | Ledgerline | `mcp-gateway` only |
 | `ledgerline-egress` | `egress-waypoint` (Istio waypoint for the internet hosts Ledgerline reaches: its AS's keys, when that AS is outside the lab) | `egress-waypoint` | Ledgerline | `ledgerline-research` and Ledgerline's Keycloak only |
 | `alice-identity` | Keycloak `alice` | `keycloak` | Alice | edge; `alice/uma-as` (JWKS) |
 | `alice` | uma-as (Alice's AS) | `uma-as` | Alice | its waypoint only: the edge (grant surface, and Meridian's uma-pep calling the protection API through it) and the portal (owner API) |

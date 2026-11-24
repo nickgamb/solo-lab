@@ -1,0 +1,90 @@
+# embargo-guard: the lab's example of a policy server for Ledgerline's gateway
+# (apps/embargo-guard; LEDGERLINE_TOOL_CHECK=example). The gateway asks it
+# before each tool call (tool-check.yaml; the guardrail on research-tools,
+# research.yaml) and it refuses research notes on the symbols under embargo.
+# Only Ledgerline's gateway reaches it (pods-only-from-gateway, research.yaml).
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: embargo-guard, namespace: ledgerline}
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: embargo-guard, namespace: ledgerline}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: embargo-guard}}
+  template:
+    metadata:
+      labels: {app: embargo-guard}
+    spec:
+      serviceAccountName: embargo-guard
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector: {matchLabels: {app: embargo-guard}}
+      containers:
+      - name: embargo-guard
+        image: ${EMBARGO_GUARD_IMAGE}
+        env:
+        - {name: EMBARGO, value: "${LEDGERLINE_EMBARGO}"}
+        ports:
+        - {name: grpc, containerPort: 4445}
+        readinessProbe: {grpc: {port: 4445}, timeoutSeconds: 3}
+        livenessProbe: {grpc: {port: 4445}, timeoutSeconds: 3, periodSeconds: 10, failureThreshold: 6}
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {memory: 64Mi}
+        securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: embargo-guard, namespace: ledgerline}
+spec:
+  minAvailable: 1
+  selector: {matchLabels: {app: embargo-guard}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: embargo-guard, namespace: ledgerline}
+spec:
+  selector: {app: embargo-guard}
+  ports:
+  - {name: grpc, port: 4445, targetPort: grpc, appProtocol: kubernetes.io/h2c}
+---
+# A deadline for the guardrail callout, after which the call is refused
+# (FailClosed), as for S&V's own guards (manifests/25-mcp-guard.yaml): a
+# backend policy on the Service, which attaches once a route references the
+# Service. The route exists only for that: its hostname is a placeholder, and
+# anything sent to it is refused.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: embargo-guard, namespace: ledgerline}
+spec:
+  parentRefs: [{name: mcp-gateway, sectionName: http}]
+  hostnames: [embargo-guard.internal]
+  rules:
+  - backendRefs: [{name: embargo-guard, port: 4445}]
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: embargo-guard-timeout, namespace: ledgerline}
+spec:
+  targetRefs: [{group: "", kind: Service, name: embargo-guard}]
+  backend:
+    http:
+      requestTimeout: ${LEDGERLINE_TOOL_CHECK_TIMEOUT}
+---
+apiVersion: ${AGW_POLICY_API}
+kind: ${AGW_POLICY_KIND}
+metadata: {name: embargo-guard-route, namespace: ledgerline}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: embargo-guard}]
+  traffic:
+    authorization:
+      action: Deny
+      policy:
+        matchExpressions: ["true"]
