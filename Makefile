@@ -48,8 +48,8 @@ routes: ## where sign-ins go now: each routing rule's IdP, and where sample sign
 	@./scripts/routes.sh
 xaa-keys: ## public keys other parties register: S&V clients (private_key_jwt), S&V IdP, Ledgerline SSO client
 	@./scripts/xaa-keys.sh
-heal: ## after the nodes restart (Docker restarted, an instance stopped and started): no-internet policies follow the API server, pods istio-cni missed rejoin the mesh, Substrate's valkey rejoins, its workers register again and the ones that are gone are forgotten, S&V's broker gets its groups back, Ledgerline's Bob is linked to his broker account again
-	@bash -c '. scripts/lib.sh && need_cluster && refresh_no_internet && reenroll_mesh && rejoin_valkey && restart_workers && forget_gone_workers && restore_broker_groups && link_ledgerline_bob'
+heal: ## after the nodes restart (Docker restarted, an instance stopped and started): waits for the nodes, gives each its own pod range back, no-internet policies follow the API server, pods rejoin the mesh, Substrate's valkey rejoins, its workers register again and the ones that are gone are forgotten, a Postgres replica left waiting comes up, pods in a restart back-off start now, S&V's broker gets its groups back, Ledgerline's Bob is linked to his broker account again; ends when every pod is Ready
+	@bash -c '. scripts/lib.sh && need_cluster && settle_nodes && refresh_no_internet && repair_pod_ranges && reenroll_mesh && rejoin_valkey && restart_workers && forget_gone_workers && wake_postgres && restart_stuck && restore_broker_groups && link_ledgerline_bob && report_ready'
 totp: ## one-time code for signing in at S&V's own Keycloak as bob (or: make totp EMPLOYEE=carol)
 	@bash -c '. scripts/lib.sh && totp_code $(or $(EMPLOYEE),bob)'
 upstream-mcp: ## an outside MCP server at the front door, signed in at its own AS (Enterprise): make upstream-mcp NAME=x URL=https://... AS=https://... SCOPES="a b" [CLIENT_DOC=name] [CLIENT_AUTH=private_key_jwt]
