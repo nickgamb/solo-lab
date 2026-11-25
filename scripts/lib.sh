@@ -377,21 +377,85 @@ refresh_no_internet() {
     | [.metadata.namespace, .metadata.name, (.spec.podSelector | tojson)] | @tsv' |
   while IFS=$'\t' read -r ns name sel; do _no_internet "$ns" "$name" "$sel"; echo "$ns/$name"; done
 }
+# nodes_settled: every node Ready
+nodes_settled() {
+  [ "$(K get nodes -o json 2>/dev/null | jq '[.items[] | select(any(.status.conditions[]; .type == "Ready" and .status == "True") | not)] | length')" = 0 ]
+}
+# settle_nodes: heal's other steps look at pods, so it starts once the nodes
+# are back: every node Ready, with the pod network and kube-proxy running on
+# each (right after the nodes restart the API server answers while containers
+# are still coming back)
+settle_nodes() {
+  local d
+  wait_for "every node Ready" 60 5 nodes_settled
+  for d in kindnet kube-proxy; do
+    K get daemonset -n kube-system "$d" >/dev/null 2>&1 || continue
+    rollout kube-system "daemonset/$d" || die "kube-system/$d is not running on every node"
+  done
+}
+# in_range <address> <range>: an IPv4 address inside a CIDR range
+_ip_num() { local a b c d; IFS=. read -r a b c d <<<"$1"; echo $(( (a << 24) | (b << 16) | (c << 8) | d )); }
+in_range() {
+  local bits=${2#*/} mask
+  mask=$(( (0xffffffff << (32 - bits)) & 0xffffffff ))
+  [ $(( $(_ip_num "$1") & mask )) -eq $(( $(_ip_num "${2%/*}") & mask )) ]
+}
+# kindnet_range <node>: the pod range kindnet hands out on a node now
+kindnet_range() {
+  docker exec "$1" cat /etc/cni/net.d/10-kindnet.conflist 2>/dev/null \
+    | jq -r '[.plugins[] | (.ipam.ranges // [])[][] | .subnet] | first // empty' 2>/dev/null
+}
+_kindnet_has() { [ "$(kindnet_range "$1")" = "$2" ]; }
+# repair_pod_ranges: Docker hands the node containers their addresses again
+# when it restarts them. kindnet finds its node by the address its pod had
+# before, so on a node that came back on another node's address it hands out
+# that node's pod range, and pods there get addresses nothing routes to (the
+# mesh's node agents can't reach istiod, pods stay Unknown). Where a node's
+# range is not the one the cluster gave it: kindnet restarts and reads the
+# nodes again, the node's leftover route to its own range goes, and the pods
+# holding an address outside it get a new sandbox from the kubelet.
+repair_pod_ranges() {
+  local n want all off="" id ip moved=0
+  K get daemonset -n kube-system kindnet >/dev/null 2>&1 || return 0
+  for n in $(K get nodes -o jsonpath='{.items[*].metadata.name}'); do
+    want=$(K get node "$n" -o jsonpath='{.spec.podCIDR}')
+    _kindnet_has "$n" "$want" || { [ -z "$(kindnet_range "$n")" ] && continue; off="$off $n"; }
+  done
+  [ -n "$off" ] || return 0
+  all=$(K -n kube-system get cm kubeadm-config -o jsonpath='{.data.ClusterConfiguration}' | awk '/podSubnet/{print $2}')
+  K rollout restart daemonset/kindnet -n kube-system >/dev/null && rollout kube-system daemonset/kindnet || die "kindnet did not restart"
+  for n in $(K get nodes -o jsonpath='{.items[*].metadata.name}'); do
+    want=$(K get node "$n" -o jsonpath='{.spec.podCIDR}')
+    wait_for "kindnet handing out $want on $n" 30 3 _kindnet_has "$n" "$want"
+    docker exec "$n" sh -c "ip route show exact $want | grep -q ' via ' && ip route del $want; true"
+    while read -r id ip; do
+      [ -n "$ip" ] && [ "${ip#*:}" = "$ip" ] || continue
+      in_range "$ip" "$all" && ! in_range "$ip" "$want" || continue
+      docker exec "$n" crictl stopp "$id" >/dev/null 2>&1 && moved=$((moved + 1))
+    done < <(docker exec "$n" sh -c 'for id in $(crictl pods -q --state ready); do
+        echo "$id $(crictl inspectp --output go-template --template "{{.status.network.ip}}" "$id" 2>/dev/null)"; done')
+  done
+  ok "pod ranges repaired on$off: $moved pods given an address in their node's range"
+}
 # reenroll_mesh: after the nodes restart, istio-cni can fail to add a pod to
 # ztunnel while the pod's loopback is still coming up ("got ack error ...
 # AddrNotAvailable"); the pod then has no HBONE listener and every STRICT
-# peer resets it. The CNI agent doesn't retry: restart it, and it adds every
-# pod again.
+# peer resets it. The CNI agent doesn't retry: once ztunnel is back on every
+# node the agents that came back with their node restart (their containers
+# restarted in place), and they add every pod again.
 reenroll_mesh() {
-  local p
+  local p again=""
   K get daemonset -n istio-system istio-cni-node >/dev/null 2>&1 || return 0
+  [ "$(K get pods -n istio-system -l k8s-app=istio-cni-node -o json | jq '[.items[] | select(any(.status.containerStatuses[]?; .restartCount > 0))] | length')" = 0 ] || again=1
   for p in $(K get pods -n istio-system -l k8s-app=istio-cni-node -o name); do
-    K logs -n istio-system "$p" 2>/dev/null | grep -q 'add-workload: got ack error' || continue
-    K rollout restart daemonset/istio-cni-node -n istio-system >/dev/null
-    rollout istio-system daemonset/istio-cni-node
-    ok "istio-cni restarted: every pod added to ztunnel again"
-    return 0
+    [ -z "$again" ] || break
+    K logs -n istio-system "$p" 2>/dev/null | grep -q 'add-workload: got ack error' && again=1
   done
+  [ -n "$again" ] || return 0
+  rollout istio-system daemonset/ztunnel || die "ztunnel is not running on every node"
+  K rollout restart daemonset/istio-cni-node -n istio-system >/dev/null
+  rollout istio-system daemonset/istio-cni-node || die "istio-cni did not restart"
+  ok "istio-cni restarted: every pod added to ztunnel again"
 }
 # valkey_settled: every member sees the cluster ok with no member failing, and
 # every replica follows its master
@@ -403,6 +467,12 @@ valkey_settled() {
     ! K exec -n ate-system "valkey-cluster-$i" -- valkey-cli info replication 2>/dev/null | grep -q '^master_link_status:down' || return 1
   done
 }
+# valkey_running: every member's container is up and has an address
+valkey_running() {
+  [ "$(K get pods -n ate-system -l "$(K get statefulset -n ate-system valkey-cluster -o json | jq -r '.spec.selector.matchLabels | to_entries | map(.key + "=" + .value) | join(",")')" -o json \
+    | jq --argjson want "$(K get statefulset -n ate-system valkey-cluster -o jsonpath='{.spec.replicas}')" \
+      '[.items[] | select((.status.podIP // "") != "" and (.metadata.deletionTimestamp == null) and any(.status.containerStatuses[]?; .name == "valkey" and .state.running != null))] | length == $want')" = true ]
+}
 # rejoin_valkey: Agent Substrate's valkey cluster keeps its peers' pod
 # addresses; pods that come back with new ones leave it in cluster_state:fail,
 # or leave a replica following its master's old address (it then serves what
@@ -411,6 +481,7 @@ valkey_settled() {
 rejoin_valkey() {
   local i ip ips=""
   K get statefulset -n ate-system valkey-cluster >/dev/null 2>&1 || return 0
+  wait_for "valkey's pods running" 60 5 valkey_running
   valkey_settled && return 0
   for i in $(seq 0 $(( $(K get statefulset -n ate-system valkey-cluster -o jsonpath='{.spec.replicas}') - 1 ))); do
     ips="$ips $(K get pod -n ate-system "valkey-cluster-$i" -o jsonpath='{.status.podIP}')"
@@ -426,6 +497,7 @@ rejoin_valkey() {
 restore_broker_groups() {
   local g
   K get identitycontinuity sterling-vance -n sv-identity >/dev/null 2>&1 || return 0
+  rollout sv-identity deployment/keycloak || die "S&V's broker is not running"
   for g in $(K get identitycontinuity sterling-vance -n sv-identity -o json | jq -r '.spec.profile.groups[]?'); do
     kc_admin sv-identity SV_KC_ADMIN_PASSWORD sterling-vance POST /groups -H content-type:application/json \
       --data "$(jq -nc --arg n "$g" '{name: $n}')" -o /dev/null -w '%{http_code}' | grep -qE '^(201|409)$' \
@@ -439,6 +511,7 @@ restore_broker_groups() {
 link_ledgerline_bob() {
   local bid lid code
   K get deploy keycloak -n ledgerline-identity >/dev/null 2>&1 || return 0
+  rollout ledgerline-identity deployment/keycloak || die "Ledgerline's Keycloak is not running"
   bid=$(kc_admin sv-identity SV_KC_ADMIN_PASSWORD sterling-vance GET "/users?exact=true&briefRepresentation=true&email=bob%40$SV_MAIL_DOMAIN" | jq -r '.[0].id // empty')
   lid=$(kc_admin ledgerline-identity LL_KC_ADMIN_PASSWORD ledgerline GET "/users?exact=true&briefRepresentation=true&email=bob%40$SV_MAIL_DOMAIN" | jq -r '.[0].id // empty')
   if [ -n "$bid" ] && [ -n "$lid" ]; then
@@ -485,6 +558,65 @@ forget_gone_workers() {
   [ "$gone" -gt 0 ] || return 0
   K rollout restart -n ate-system deployment/ate-api-server-deployment >/dev/null && rollout ate-system deployment/ate-api-server-deployment
   ok "$gone worker registrations of pods that are gone removed"
+}
+# wake_postgres: a CloudNativePG replica that restarted with its primary can
+# wait for a position in the log the primary has not reached (nothing has
+# written since), and never accepts connections. The primary of a cluster with
+# an instance missing writes one record and checkpoints: the replica passes
+# that position and comes up.
+_postgres_ready() { K get clusters.postgresql.cnpg.io -n "$1" "$2" -o json | jq -e '(.status.readyInstances // 0) >= (.spec.instances // 1)'; }
+wake_postgres() {
+  local c ns name primary wrote
+  K get crd clusters.postgresql.cnpg.io >/dev/null 2>&1 || return 0
+  for c in $(K get clusters.postgresql.cnpg.io -A -o json | jq -r '.items[]
+      | select((.status.readyInstances // 0) < (.spec.instances // 1))
+      | .metadata.namespace + "/" + .metadata.name + "/" + (.status.currentPrimary // "")'); do
+    IFS=/ read -r ns name primary <<<"$c"
+    [ -n "$primary" ] || { warn "postgres $ns/$name has no primary yet"; continue; }
+    wrote=""
+    for _ in $(seq 1 36); do
+      _postgres_ready "$ns" "$name" >/dev/null 2>&1 && break
+      [ -n "$wrote" ] || ! K exec -n "$ns" "$primary" -c postgres -- psql -qAt \
+        -c "select pg_logical_emit_message(true, 'lab', 'heal')" -c checkpoint >/dev/null 2>&1 || wrote=1
+      sleep 5
+    done
+    if _postgres_ready "$ns" "$name" >/dev/null 2>&1; then ok "postgres $ns/$name: every instance ready again"
+    else warn "postgres $ns/$name still has an instance missing (kubectl get pods -n $ns)"; fi
+  done
+}
+# restart_stuck: a pod that crashed while what it needs was still coming back
+# waits out a growing back-off (five minutes at most) before it tries again.
+# Pods waiting in it are deleted, and their controllers start them now (a
+# Job's pods are its own to retry).
+restart_stuck() {
+  local ns pod n=0
+  while read -r ns pod; do
+    [ -n "$pod" ] || continue
+    K delete pod -n "$ns" "$pod" --wait=false >/dev/null 2>&1 && n=$((n + 1))
+  done < <(K get pods -A -o json | jq -r '.items[]
+      | select((.metadata.ownerReferences // []) | length > 0)
+      | select(any(.metadata.ownerReferences[]; .kind == "Job") | not)
+      | select(any(.status.containerStatuses[]?, .status.initContainerStatuses[]?;
+          .state.waiting.reason == "CrashLoopBackOff" or (.restartCount > 0 and (.state.terminated.exitCode // 0) != 0)))
+      | .metadata.namespace + " " + .metadata.name')
+  [ "$n" -eq 0 ] || ok "$n pods waiting in a restart back-off started again"
+}
+# unready_pods: pods of long-running workloads that are not Ready (a Job's
+# pods finish, or are its own to retry)
+unready_pods() {
+  K get pods -A -o json | jq -r '.items[]
+    | select(.metadata.deletionTimestamp == null and .status.phase != "Succeeded")
+    | select(any(.metadata.ownerReferences[]?; .kind == "Job") | not)
+    | select(any(.status.conditions[]?; .type == "Ready" and .status == "True") | not)
+    | .metadata.namespace + "/" + .metadata.name'
+}
+_all_ready() { [ -z "$(unready_pods)" ]; }
+# report_ready: heal ends when every pod is Ready, or names the ones that are
+# not after five minutes
+report_ready() {
+  local i
+  for i in $(seq 1 60); do _all_ready && { ok "every pod is Ready"; return 0; }; sleep 5; done
+  warn "not Ready yet: $(unready_pods | tr '\n' ' ')"
 }
 _no_internet() {  # _no_internet <ns> <policy name> <podSelector>
   local pods svcs api nodes cfg

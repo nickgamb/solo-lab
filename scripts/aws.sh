@@ -187,7 +187,8 @@ sync_lab() {
   fi
   # this .env, then what makes it the public lab
   {
-    [ -f "$LAB_ROOT/.env" ] && cat "$LAB_ROOT/.env"
+    # without this machine's AWS CLI profile: the instance has its own role
+    [ -f "$LAB_ROOT/.env" ] && { grep -v '^AWS_PROFILE=' "$LAB_ROOT/.env" || true; }
     echo
     echo "# >>> scripts/aws.sh: the lab under public names"
     echo "LAB_TLD=$tld"
@@ -327,8 +328,9 @@ case "$cmd" in
     ip_or_die; ensure_sg >/dev/null
     wait_for "SSH on $IP" 60 5 R true
     wait_for "the cluster back" 60 10 R "kubectl get nodes >/dev/null 2>&1"
-    # the nodes and pods can come back on other addresses (make heal)
-    R "cd $REMOTE && make heal >/dev/null" || warn "make heal on the instance failed: run make aws-run-heal"
+    # the nodes and pods can come back on other addresses: heal waits for the
+    # nodes, repairs what moved and ends when every pod is Ready
+    R "cd $REMOTE && make heal" || warn "make heal on the instance failed: run make aws-run-heal"
     ok "$id running"; status ;;
   status) status ;;
   down)

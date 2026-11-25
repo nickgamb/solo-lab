@@ -197,6 +197,34 @@ ras_env() {
   export LEDGERLINE_ALSO_JWKS_URI
 }
 
+# tool_check_env: the policy server Ledgerline's gateway asks before each tool
+# call (LEDGERLINE_TOOL_CHECK), as the guardrail names it
+# (LEDGERLINE_TOOL_CHECK_REF): the lab's example, a Service beside the
+# gateway, or one outside the lab, a backend of the gateway's (tool-check.yaml)
+# at the addresses its name has now (LEDGERLINE_TOOL_CHECK_ADDRESSES)
+tool_check_env() {
+  LEDGERLINE_TOOL_CHECK_HOST="" LEDGERLINE_TOOL_CHECK_PORT="" LEDGERLINE_TOOL_CHECK_REF="" LEDGERLINE_TOOL_CHECK_ADDRESSES=""
+  export LEDGERLINE_TOOL_CHECK_HOST LEDGERLINE_TOOL_CHECK_PORT LEDGERLINE_TOOL_CHECK_REF LEDGERLINE_TOOL_CHECK_ADDRESSES
+  [ -n "$LEDGERLINE_TOOL_CHECK" ] || return 0
+  [ "$AGW_EDITION" = enterprise ] || die "LEDGERLINE_TOOL_CHECK needs agentgateway Enterprise (MCP guardrails)"
+  if [ "$LEDGERLINE_TOOL_CHECK" = example ]; then
+    LEDGERLINE_TOOL_CHECK_HOST=embargo-guard.ledgerline.svc LEDGERLINE_TOOL_CHECK_PORT=4445
+    LEDGERLINE_TOOL_CHECK_REF='{"name": "embargo-guard", "port": 4445}'
+    return 0
+  fi
+  [[ $LEDGERLINE_TOOL_CHECK =~ ^https://([^/:]+)(:([0-9]+))?/?$ ]] \
+    || die "LEDGERLINE_TOOL_CHECK: example, or https://host[:port] without a path (now $LEDGERLINE_TOOL_CHECK)"
+  LEDGERLINE_TOOL_CHECK_HOST=${BASH_REMATCH[1]} LEDGERLINE_TOOL_CHECK_PORT=${BASH_REMATCH[3]:-443}
+  LEDGERLINE_TOOL_CHECK_REF=$(jq -nc --arg g "$AGW_BACKEND_GROUP" --arg k "$AGW_BACKEND_KIND" '{group: $g, kind: $k, name: "tool-check"}')
+  # the only addresses outside the lab Ledgerline's gateway may reach
+  LEDGERLINE_TOOL_CHECK_ADDRESSES=$(python3 -c '
+import json, socket, sys
+print(json.dumps([{"ipBlock": {"cidr": a + "/32"}} for a in sorted({i[4][0] for i in socket.getaddrinfo(sys.argv[1], None, socket.AF_INET)})]))' \
+    "$LEDGERLINE_TOOL_CHECK_HOST" 2>/dev/null) || LEDGERLINE_TOOL_CHECK_ADDRESSES=""
+  [ -n "$LEDGERLINE_TOOL_CHECK_ADDRESSES" ] && [ "$LEDGERLINE_TOOL_CHECK_ADDRESSES" != '[]' ] \
+    || die "LEDGERLINE_TOOL_CHECK: $LEDGERLINE_TOOL_CHECK_HOST has no address"
+}
+
 # idp_client_auth <name>: how S&V authenticates to an upstream: with its keys
 # (private_key_jwt) unless the upstream was given a client secret in .env
 idp_client_auth() { if [ -n "$(_idp_var "$1" CLIENT_SECRET)" ]; then echo client_secret_post; else echo private_key_jwt; fi; }
@@ -446,6 +474,24 @@ ledgerline_research() {
     | (select(.metadata.name == "research-callers") | .spec.traffic.jwtAuthentication.providers) += [{
       "issuer": strenv(LEDGERLINE_ALSO_ISSUER), "audiences": [strenv(LEDGERLINE_ALSO_AUDIENCE)],
       "jwks": {"remote": {"url": strenv(LEDGERLINE_ALSO_JWKS_URI), "cacheDuration": "5m"}}}]'
+  fi
+  # the policy server asked before each tool call (LEDGERLINE_TOOL_CHECK): a
+  # request-phase guardrail, ahead of the rules above, that fails closed. It is
+  # sent the tool's name and arguments, the verified token's claims, and only
+  # the request headers named (LEDGERLINE_TOOL_CHECK_HEADERS): without that
+  # list it would get them all, the caller's token among them. The token
+  # itself goes to it only when asked for (LEDGERLINE_TOOL_CHECK_TOKEN=on).
+  if [ -n "$LEDGERLINE_TOOL_CHECK" ]; then
+    local headers md; headers=$(jq -nc '$ARGS.positional' --args $LEDGERLINE_TOOL_CHECK_HEADERS)
+    [ "$headers" != '[]' ] || die "LEDGERLINE_TOOL_CHECK_HEADERS: at least one header (traceparent)"
+    case "$LEDGERLINE_TOOL_CHECK_TOKEN" in on|off) ;; *) die "LEDGERLINE_TOOL_CHECK_TOKEN: on or off" ;; esac
+    md=$(jq -nc --arg t "$LEDGERLINE_TOOL_CHECK_TOKEN" '{claims: "jwt"}
+      + (if $t == "on" then {token: "request.headers[\"authorization\"].split(\" \")[1]"} else {} end)')
+    f="$f"'
+    | (select(.metadata.name == "research-tools") | .spec.backend.mcp.guardrails) = {"processors": [{
+      "remote": {"backendRef": '"$LEDGERLINE_TOOL_CHECK_REF"',
+                 "failureMode": "FailClosed", "metadata": '"$md"', "allowedRequestHeaders": '"$headers"'},
+      "methods": {"tools/call": "Request"}}]}'
   fi
   if [ "$f" = . ]; then cat; else yq "$f"; fi
 }

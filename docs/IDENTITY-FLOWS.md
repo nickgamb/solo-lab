@@ -307,6 +307,25 @@ Three settings in `config/lab.env` (`scripts/idp.sh`):
 
 Each is configured by name ([IDPS.md](IDPS.md)).
 
+Ledgerline's gateway can also ask a policy server before each tool call
+(Enterprise: an MCP guardrail with a remote processor, ExtMCP over gRPC).
+`LEDGERLINE_TOOL_CHECK=https://host[:port]` names one outside the lab, and
+`example` runs the lab's own in Ledgerline's namespace
+(`apps/embargo-guard`), which refuses
+`research_note` for the symbols in `LEDGERLINE_EMBARGO` (`NVDA`). Unset, the
+default, there is no such check. For every `tools/call` the
+gateway sends it the tool's name, its arguments and the claims of the
+caller's verified token, and the server passes or refuses the call; a
+refusal reaches the agent as the tool's error, with the server's reason.
+The check runs ahead of the gateway's own tool rules and fails closed: no
+answer within `LEDGERLINE_TOOL_CHECK_TIMEOUT` (2 s) refuses the call. Of the
+request's headers the server gets only those in
+`LEDGERLINE_TOOL_CHECK_HEADERS` (`traceparent`).
+`LEDGERLINE_TOOL_CHECK_TOKEN=on` also hands it the caller's token itself,
+for a server that verifies the token on its own. A server outside the lab
+is reached over TLS by Ledgerline's gateway alone, at that server's address
+and port and nowhere else outside.
+
 The voucher is chosen for each session. An IdP listed in `XAA_VOUCHER`
 vouches for its own sign-ins, from the ID token it issued; every other
 session gets S&V's broker, which vouches for every S&V user whichever IdP

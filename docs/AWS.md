@@ -71,7 +71,7 @@ When it finishes, `make aws-status` prints the names. Start at
 | `make aws-sync` | copy the lab over again after a change here; then `make aws-run-platform` |
 | `make aws-ssh` | a shell there, in the lab's directory |
 | `make aws-stop` | stop the instance: no compute charge, the disk and address stay |
-| `make aws-start` | start it again; the cluster comes back with Docker |
+| `make aws-start` | start it again; the cluster comes back with Docker, and `make heal` runs there until every pod is Ready |
 | `make aws-status` | the instance, its address and the lab's names |
 | `make aws-down` | terminate the instance and its disk; the address, security group and key pair stay, so the names stay |
 | `make aws-down ALL=1` | remove everything |
